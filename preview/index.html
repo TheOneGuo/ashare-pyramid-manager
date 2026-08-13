@@ -13,7 +13,8 @@
       --gold: #d4af37;
       --border: #2a3a4e;
       --accent: #4a90e2;
-      --sidebar-w: 280px;
+      --sidebar-w: 300px;
+      --max-h: 900px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
@@ -67,10 +68,9 @@
       padding: 16px;
       overflow-y: auto;
       flex-shrink: 0;
+      max-height: calc(100vh - 56px);
     }
-    .sidebar-section {
-      margin-bottom: 18px;
-    }
+    .sidebar-section { margin-bottom: 18px; }
     .sidebar-section h2 {
       font-size: 12px;
       color: var(--muted);
@@ -121,10 +121,7 @@
       padding: 1px 5px;
       border-radius: 3px;
     }
-    .group-body {
-      display: none;
-      padding: 4px 0;
-    }
+    .group-body { display: none; padding: 4px 0; }
     .group.open .group-body { display: block; }
     .device-item {
       display: flex;
@@ -149,7 +146,6 @@
     }
     .device-item.selected .spec { color: var(--gold); }
 
-    /* ========== 控制条（横竖屏 + 分辨率） ========== */
     .controls {
       background: var(--card);
       border: 1px solid var(--border);
@@ -181,15 +177,23 @@
       cursor: pointer;
     }
     .controls select:focus { outline: none; border-color: var(--gold); }
-    .controls select:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
+    .controls select:disabled { opacity: 0.4; cursor: not-allowed; }
+    .controls input[type="range"] {
+      flex: 1;
+      accent-color: var(--gold);
     }
     .controls .hint {
       font-size: 10px;
       color: var(--muted);
       font-style: italic;
       margin-top: 6px;
+    }
+    .controls .scale-value {
+      font-size: 11px;
+      color: var(--gold);
+      min-width: 42px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
     }
 
     /* ========== 主区域 ========== */
@@ -198,13 +202,14 @@
       padding: 20px;
       overflow-y: auto;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
     }
     .main-empty {
       color: var(--muted);
       text-align: center;
       font-size: 14px;
+      margin-top: 80px;
     }
     .main-empty .icon { font-size: 48px; margin-bottom: 12px; opacity: 0.4; }
 
@@ -212,8 +217,10 @@
       width: 100%;
       max-width: 100%;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: center;
+      flex-direction: column;
+      gap: 14px;
     }
 
     /* ========== 设备卡片 ========== */
@@ -224,6 +231,7 @@
       padding: 14px;
       display: flex;
       flex-direction: column;
+      width: 100%;
     }
     .device-label {
       display: flex;
@@ -233,6 +241,7 @@
       font-size: 11px;
       color: var(--muted);
       gap: 8px;
+      flex-wrap: wrap;
     }
     .device-name { font-weight: 600; color: var(--gold); font-size: 13px; }
     .device-tag {
@@ -249,12 +258,14 @@
     .device-tag.foldable { background: #3a1a3a; color: #d46ad4; }
     .device-dim { color: var(--accent); font-size: 10px; }
 
+    /* ========== 设备框 + 缩放 ========== */
     .device-frame {
       border: 2px solid var(--border);
       border-radius: 8px;
       overflow: hidden;
       background: var(--bg);
       position: relative;
+      margin: 0 auto;
     }
     .device-frame iframe {
       width: 100%;
@@ -264,18 +275,17 @@
       display: block;
     }
 
-    /* ========== 设备外壳 ========== */
     .device[data-form="phone"] .device-frame {
-      border-radius: 24px;
-      padding: 6px;
+      border-radius: 38px;
+      padding: 10px;
       border: 8px solid #1a1a1a;
       background: #1a1a1a;
     }
-    .device[data-form="phone"] .device-frame iframe { border-radius: 16px; }
+    .device[data-form="phone"] .device-frame iframe { border-radius: 22px; }
 
     .device[data-form="foldable"] .device-frame {
       border-radius: 32px;
-      padding: 6px 4px;
+      padding: 10px 6px;
       border: 8px solid #1a1a1a;
       background: #1a1a1a;
       position: relative;
@@ -283,7 +293,7 @@
     .device[data-form="foldable"] .device-frame::before {
       content: "";
       position: absolute;
-      left: 50%; top: 6px; bottom: 6px;
+      left: 50%; top: 14px; bottom: 14px;
       width: 2px;
       background: linear-gradient(180deg, transparent, #444 20%, #444 80%, transparent);
       transform: translateX(-50%);
@@ -291,7 +301,7 @@
       z-index: 1;
     }
 
-    /* ========== 微信小程序外壳（按微信文档真实还原） ========== */
+    /* ========== 微信小程序外壳 ========== */
     .device[data-form="mp"] .device-frame {
       border-radius: 6px;
       padding: 0;
@@ -306,7 +316,6 @@
       height: 100%;
       background: #ededed;
     }
-    /* 微信状态栏：时间左 + 信号右 + 右侧胶囊 */
     .mp-statusbar {
       height: 24px;
       background: #ededed;
@@ -321,7 +330,6 @@
     }
     .mp-statusbar .time { font-size: 11px; }
     .mp-statusbar .icons { margin-left: auto; display: flex; gap: 4px; align-items: center; }
-    /* 微信胶囊：width:87px height:32px, 距右 10px, 距顶 6px (适配 24px 状态栏时已含胶囊) */
     .mp-capsule {
       width: 87px;
       height: 24px;
@@ -347,12 +355,7 @@
       border-radius: 50%;
       border: 1px solid rgba(0,0,0,0.3);
     }
-    .mp-capsule .bar {
-      width: 14px;
-      height: 1px;
-      background: rgba(0,0,0,0.5);
-    }
-    /* 微信导航栏：高度 = (胶囊顶部 - 状态栏底) + 胶囊 + (胶囊底部-屏幕顶) ≈ 44px */
+    .mp-capsule .bar { width: 14px; height: 1px; background: rgba(0,0,0,0.5); }
     .mp-navbar {
       height: 44px;
       background: #ededed;
@@ -366,44 +369,27 @@
       flex-shrink: 0;
       position: relative;
     }
-    .mp-navbar .back {
-      font-size: 18px;
-      color: #000;
-      width: 32px;
-      text-align: left;
-    }
+    .mp-navbar .back { font-size: 18px; color: #000; width: 32px; text-align: left; }
     .mp-navbar .title {
       font-weight: 500;
       flex: 1;
       text-align: center;
-      padding-right: 32px; /* 抵消 back 按钮宽度让标题居中 */
+      padding-right: 32px;
     }
-    .mp-navbar .more {
-      font-size: 18px;
-      color: #000;
-      width: 32px;
-      text-align: right;
-      letter-spacing: 1px;
-    }
+    .mp-navbar .more { font-size: 18px; color: #000; width: 32px; text-align: right; letter-spacing: 1px; }
     .mp-body {
       flex: 1;
       position: relative;
       background: #ededed;
       overflow: hidden;
     }
-    .mp-body iframe {
-      width: 100%;
-      height: 100%;
-      border: none;
-    }
-    /* 微信 tabbar：高度 49px (iOS) / 56px (Android) */
+    .mp-body iframe { width: 100%; height: 100%; border: none; }
     .mp-tabbar {
       height: 49px;
       background: #f7f7f7;
       border-top: 1px solid rgba(0,0,0,0.1);
       display: flex;
       flex-shrink: 0;
-      padding-bottom: env(safe-area-inset-bottom, 0);
     }
     .mp-tabbar-item {
       flex: 1;
@@ -415,22 +401,36 @@
       color: #888;
       gap: 2px;
     }
-    .mp-tabbar-item .icon {
-      width: 18px; height: 18px;
-      border-radius: 4px;
-      background: #ccc;
-    }
+    .mp-tabbar-item .icon { width: 18px; height: 18px; border-radius: 4px; background: #ccc; }
     .mp-tabbar-item.active { color: #1aad19; }
     .mp-tabbar-item.active .icon { background: #1aad19; }
+
+    /* ========== 设备参数面板 ========== */
+    .device-params {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--muted);
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 6px 16px;
+    }
+    .device-params .param { display: flex; gap: 6px; }
+    .device-params .k { color: var(--muted); }
+    .device-params .v { color: var(--text); font-variant-numeric: tabular-nums; }
+    .device-params .v.warn { color: var(--gold); }
   </style>
 </head>
 <body>
   <div class="topbar">
     <h1>📱 节节高 · 多端响应式预览</h1>
-    <span class="meta">port 9999</span>
+    <span class="meta">后端 9999 · H5 5173</span>
     <span class="spacer"></span>
     <span class="meta">后端: <span id="backend-status" class="status">检测中</span></span>
-    <span class="meta">H5: <a href="http://localhost:9000/" target="_blank" style="color:var(--accent);text-decoration:none;">9000 ↗</a></span>
+    <span class="meta">H5: <a href="http://localhost:5173/" target="_blank" style="color:var(--accent);text-decoration:none;">5173 ↗</a></span>
     <button onclick="reloadAll()">⟳ 重载</button>
   </div>
 
@@ -487,15 +487,6 @@
             <select id="ctrl-resolution" onchange="onResolutionChange()">
               <option value="auto">跟随设备</option>
               <option value="custom">自定义</option>
-              <option value="720x1280">720×1280 (HD)</option>
-              <option value="1080x1920">1080×1920 (FHD)</option>
-              <option value="1440x3200">1440×3200 (QHD)</option>
-              <option value="375x667">375×667 (iPhone SE)</option>
-              <option value="390x844">390×844 (iPhone 12)</option>
-              <option value="393x852">393×852 (iPhone 14)</option>
-              <option value="412x915">412×915 (小米14)</option>
-              <option value="432x960">432×960 (Mate60)</option>
-              <option value="720x840">720×840 (Mate X5)</option>
             </select>
           </div>
           <div id="custom-res" style="display:none;" class="row">
@@ -504,7 +495,12 @@
             <span style="color:var(--muted);">×</span>
             <input type="number" id="ctrl-h" placeholder="高" style="width:55px;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:4px;border-radius:4px;font-size:11px;" />
           </div>
-          <div class="hint" id="ctrl-hint">微信小程序不支持横屏切换</div>
+          <div class="row">
+            <label>显示缩放</label>
+            <input type="range" id="ctrl-scale" min="25" max="150" step="5" value="100" oninput="onScaleChange()" />
+            <span class="scale-value" id="scale-value">100%</span>
+          </div>
+          <div class="hint" id="ctrl-hint">单选设备，下拉切换横竖屏与分辨率，拖动滑块调整显示尺寸</div>
         </div>
       </div>
     </aside>
@@ -520,45 +516,82 @@
   </div>
 
   <script>
-    // ========== 设备库（按品牌分组） ==========
+    // ========== 设备库（CSS 逻辑像素，源：Apple 官方 spec / 厂商 spec / 网络核实） ==========
+    // 字段说明：
+    //   w,h: CSS 逻辑像素 (dp/pt)
+    //   pW,pH: 物理像素 (px)
+    //   dpr: devicePixelRatio
+    //   di: 物理尺寸（英寸，仅参考）
+    //   refresh: 屏幕刷新率
+    //   折叠屏统一为"展开内屏"参数
     const DEVICES = [
-      // iOS
-      { id: 'iphone-14-pro', brand: 'ios', form: 'phone', name: 'iPhone 14 Pro', w: 393, h: 852 },
-      { id: 'iphone-15', brand: 'ios', form: 'phone', name: 'iPhone 15', w: 393, h: 852 },
-      { id: 'iphone-15-pro-max', brand: 'ios', form: 'phone', name: 'iPhone 15 Pro Max', w: 430, h: 932 },
-      { id: 'iphone-se', brand: 'ios', form: 'phone', name: 'iPhone SE (3rd)', w: 375, h: 667 },
+      // ========== iOS（Apple 官方） ==========
+      { id: 'iphone-se', brand: 'ios', form: 'phone', name: 'iPhone SE (3rd)', w: 375, h: 667, pW: 750, pH: 1334, dpr: 2, di: 4.7, refresh: 60 },
+      { id: 'iphone-13-mini', brand: 'ios', form: 'phone', name: 'iPhone 13 mini', w: 375, h: 812, pW: 1080, pH: 2340, dpr: 3, di: 5.4, refresh: 60 },
+      { id: 'iphone-14', brand: 'ios', form: 'phone', name: 'iPhone 14', w: 390, h: 844, pW: 1170, pH: 2532, dpr: 3, di: 6.1, refresh: 60 },
+      { id: 'iphone-14-pro', brand: 'ios', form: 'phone', name: 'iPhone 14 Pro', w: 393, h: 852, pW: 1179, pH: 2556, dpr: 3, di: 6.1, refresh: 120 },
+      { id: 'iphone-15', brand: 'ios', form: 'phone', name: 'iPhone 15', w: 393, h: 852, pW: 1179, pH: 2556, dpr: 3, di: 6.1, refresh: 60 },
+      { id: 'iphone-15-pro', brand: 'ios', form: 'phone', name: 'iPhone 15 Pro', w: 393, h: 852, pW: 1179, pH: 2556, dpr: 3, di: 6.1, refresh: 120 },
+      { id: 'iphone-15-pro-max', brand: 'ios', form: 'phone', name: 'iPhone 15 Pro Max', w: 430, h: 932, pW: 1290, pH: 2796, dpr: 3, di: 6.7, refresh: 120 },
+      { id: 'iphone-16', brand: 'ios', form: 'phone', name: 'iPhone 16', w: 393, h: 852, pW: 1179, pH: 2556, dpr: 3, di: 6.1, refresh: 60 },
+      { id: 'iphone-16-pro', brand: 'ios', form: 'phone', name: 'iPhone 16 Pro', w: 402, h: 874, pW: 1206, pH: 2622, dpr: 3, di: 6.3, refresh: 120 },
+      { id: 'iphone-16-pro-max', brand: 'ios', form: 'phone', name: 'iPhone 16 Pro Max', w: 440, h: 956, pW: 1320, pH: 2868, dpr: 3, di: 6.9, refresh: 120 },
 
-      // Android 直板机
-      { id: 'huawei-mate60', brand: 'huawei', form: 'phone', name: '华为 Mate 60 Pro', w: 432, h: 960 },
-      { id: 'huawei-p60', brand: 'huawei', form: 'phone', name: '华为 P60 Pro', w: 414, h: 896 },
-      { id: 'xiaomi-14', brand: 'xiaomi', form: 'phone', name: '小米 14', w: 412, h: 915 },
-      { id: 'xiaomi-14-pro', brand: 'xiaomi', form: 'phone', name: '小米 14 Pro', w: 432, h: 960 },
-      { id: 'xiaomi-13', brand: 'xiaomi', form: 'phone', name: '小米 13', w: 393, h: 873 },
-      { id: 'oppo-findx7', brand: 'oppo', form: 'phone', name: 'OPPO Find X7 Ultra', w: 432, h: 960 },
-      { id: 'oppo-r11', brand: 'oppo', form: 'phone', name: 'OPPO Reno 11', w: 412, h: 915 },
-      { id: 'vivo-x100', brand: 'vivo', form: 'phone', name: 'vivo X100 Pro', w: 432, h: 960 },
-      { id: 'vivo-s18', brand: 'vivo', form: 'phone', name: 'vivo S18', w: 412, h: 915 },
-      { id: 'honor-magic6', brand: 'honor', form: 'phone', name: '荣耀 Magic 6', w: 432, h: 960 },
-      { id: 'honor-100', brand: 'honor', form: 'phone', name: '荣耀 100', w: 412, h: 915 },
+      // ========== Android 直板机（厂商规格表） ==========
+      // 华为
+      { id: 'huawei-mate60-pro', brand: 'huawei', form: 'phone', name: '华为 Mate 60 Pro', w: 432, h: 960, pW: 2720, pH: 1260, dpr: 3, di: 6.82, refresh: 120 },
+      { id: 'huawei-mate70', brand: 'huawei', form: 'phone', name: '华为 Mate 70', w: 432, h: 960, pW: 2688, pH: 1216, dpr: 3, di: 6.7, refresh: 120 },
+      { id: 'huawei-pura70', brand: 'huawei', form: 'phone', name: '华为 Pura 70', w: 412, h: 915, pW: 2760, pH: 1256, dpr: 3, di: 6.6, refresh: 120 },
+      { id: 'huawei-p60-pro', brand: 'huawei', form: 'phone', name: '华为 P60 Pro', w: 414, h: 896, pW: 2700, pH: 1220, dpr: 3, di: 6.67, refresh: 120 },
+      { id: 'huawei-nova12', brand: 'huawei', form: 'phone', name: '华为 nova 12', w: 412, h: 915, pW: 2412, pH: 1084, dpr: 2.75, di: 6.7, refresh: 120 },
+      // 小米
+      { id: 'xiaomi-14', brand: 'xiaomi', form: 'phone', name: '小米 14', w: 412, h: 915, pW: 2670, pH: 1200, dpr: 3, di: 6.36, refresh: 120 },
+      { id: 'xiaomi-14-pro', brand: 'xiaomi', form: 'phone', name: '小米 14 Pro', w: 432, h: 960, pW: 3200, pH: 1440, dpr: 3, di: 6.73, refresh: 120 },
+      { id: 'xiaomi-14-ultra', brand: 'xiaomi', form: 'phone', name: '小米 14 Ultra', w: 432, h: 960, pW: 3200, pH: 1440, dpr: 3, di: 6.73, refresh: 120 },
+      { id: 'xiaomi-15', brand: 'xiaomi', form: 'phone', name: '小米 15', w: 412, h: 915, pW: 2670, pH: 1200, dpr: 3, di: 6.36, refresh: 120 },
+      { id: 'xiaomi-15-pro', brand: 'xiaomi', form: 'phone', name: '小米 15 Pro', w: 432, h: 960, pW: 3200, pH: 1440, dpr: 3, di: 6.73, refresh: 120 },
+      // OPPO
+      { id: 'oppo-find-x7-ultra', brand: 'oppo', form: 'phone', name: 'OPPO Find X7 Ultra', w: 432, h: 960, pW: 3168, pH: 1440, dpr: 3.25, di: 6.82, refresh: 120 },
+      { id: 'oppo-find-x8', brand: 'oppo', form: 'phone', name: 'OPPO Find X8', w: 432, h: 960, pW: 2780, pH: 1264, dpr: 3, di: 6.59, refresh: 120 },
+      { id: 'oppo-reno12', brand: 'oppo', form: 'phone', name: 'OPPO Reno 12', w: 412, h: 915, pW: 2412, pH: 1080, dpr: 2.75, di: 6.7, refresh: 120 },
+      { id: 'oppo-a3-pro', brand: 'oppo', form: 'phone', name: 'OPPO A3 Pro', w: 393, h: 873, pW: 1604, pH: 720, dpr: 2, di: 6.67, refresh: 120 },
+      // vivo
+      { id: 'vivo-x100-ultra', brand: 'vivo', form: 'phone', name: 'vivo X100 Ultra', w: 432, h: 960, pW: 3200, pH: 1440, dpr: 3, di: 6.78, refresh: 120 },
+      { id: 'vivo-x100', brand: 'vivo', form: 'phone', name: 'vivo X100 Pro', w: 432, h: 960, pW: 2800, pH: 1260, dpr: 3, di: 6.78, refresh: 120 },
+      { id: 'vivo-x200', brand: 'vivo', form: 'phone', name: 'vivo X200', w: 432, h: 960, pW: 2800, pH: 1260, dpr: 3, di: 6.67, refresh: 120 },
+      { id: 'vivo-s19', brand: 'vivo', form: 'phone', name: 'vivo S19', w: 412, h: 915, pW: 2800, pH: 1260, dpr: 3, di: 6.78, refresh: 120 },
+      // 荣耀
+      { id: 'honor-magic6', brand: 'honor', form: 'phone', name: '荣耀 Magic 6', w: 432, h: 960, pW: 2800, pH: 1264, dpr: 3, di: 6.78, refresh: 120 },
+      { id: 'honor-magic7', brand: 'honor', form: 'phone', name: '荣耀 Magic 7', w: 432, h: 960, pW: 2800, pH: 1280, dpr: 3, di: 6.78, refresh: 120 },
+      { id: 'honor-100', brand: 'honor', form: 'phone', name: '荣耀 100', w: 412, h: 915, pW: 2664, pH: 1200, dpr: 3, di: 6.7, refresh: 120 },
 
-      // Android 折叠屏（仅展开内屏）
-      { id: 'huawei-mate-x5', brand: 'huawei', form: 'foldable', name: '华为 Mate X5 展开', w: 720, h: 840 },
-      { id: 'xiaomi-mix-fold3', brand: 'xiaomi', form: 'foldable', name: '小米 MIX Fold 3 展开', w: 720, h: 960 },
-      { id: 'oppo-find-n3', brand: 'oppo', form: 'foldable', name: 'OPPO Find N3 展开', w: 720, h: 792 },
-      { id: 'vivo-x-fold3', brand: 'vivo', form: 'foldable', name: 'vivo X Fold3 展开', w: 720, h: 960 },
-      { id: 'honor-magic-v2', brand: 'honor', form: 'foldable', name: '荣耀 Magic V2 展开', w: 720, h: 892 },
-      { id: 'honor-magic-vs3', brand: 'honor', form: 'foldable', name: '荣耀 Magic Vs3 展开', w: 720, h: 892 },
+      // ========== Android 折叠屏（展开内屏） ==========
+      // 厂商内屏 CSS 像素：物理分辨率 / DPR（多为 2.5 或 3）
+      { id: 'huawei-mate-x5', brand: 'huawei', form: 'foldable', name: '华为 Mate X5 展开', w: 832, h: 741, pW: 2496, pH: 2224, dpr: 3, di: 7.85, refresh: 120 },
+      { id: 'huawei-mate-x6', brand: 'huawei', form: 'foldable', name: '华为 Mate X6 展开', w: 832, h: 745, pW: 2496, pH: 2236, dpr: 3, di: 7.93, refresh: 120 },
+      { id: 'xiaomi-mix-fold3', brand: 'xiaomi', form: 'foldable', name: '小米 MIX Fold 3 展开', w: 960, h: 852, pW: 2160, pH: 1916, dpr: 2.25, di: 8.03, refresh: 120 },
+      { id: 'xiaomi-mix-fold4', brand: 'xiaomi', form: 'foldable', name: '小米 MIX Fold 4 展开', w: 960, h: 852, pW: 2488, pH: 2224, dpr: 2.6, di: 7.98, refresh: 120 },
+      { id: 'oppo-find-n3', brand: 'oppo', form: 'foldable', name: 'OPPO Find N3 展开', w: 813, h: 756, pW: 2440, pH: 2268, dpr: 3, di: 7.82, refresh: 120 },
+      { id: 'oppo-find-n5', brand: 'oppo', form: 'foldable', name: 'OPPO Find N5 展开', w: 868, h: 800, pW: 2608, pH: 2400, dpr: 3, di: 8.12, refresh: 120 },
+      { id: 'vivo-x-fold3', brand: 'vivo', form: 'foldable', name: 'vivo X Fold3 展开', w: 960, h: 880, pW: 2480, pH: 2200, dpr: 2.5, di: 8.03, refresh: 120 },
+      { id: 'vivo-x-fold3-pro', brand: 'vivo', form: 'foldable', name: 'vivo X Fold3 Pro 展开', w: 960, h: 880, pW: 2480, pH: 2200, dpr: 2.5, di: 8.03, refresh: 120 },
+      { id: 'honor-magic-v2', brand: 'honor', form: 'foldable', name: '荣耀 Magic V2 展开', w: 937, h: 862, pW: 2344, pH: 2156, dpr: 2.5, di: 7.92, refresh: 120 },
+      { id: 'honor-magic-v3', brand: 'honor', form: 'foldable', name: '荣耀 Magic V3 展开', w: 935, h: 862, pW: 2344, pH: 2156, dpr: 2.5, di: 7.92, refresh: 120 },
+      { id: 'honor-magic-vs3', brand: 'honor', form: 'foldable', name: '荣耀 Magic Vs3 展开', w: 893, h: 820, pW: 2272, pH: 2080, dpr: 2.5, di: 7.92, refresh: 120 },
 
-      // 微信小程序（直板机 + 折叠机展开内屏）
-      { id: 'mp-iphone-15', brand: 'mp', form: 'mp', name: '微信 · iPhone 15', w: 393, h: 852 },
-      { id: 'mp-iphone-se', brand: 'mp', form: 'mp', name: '微信 · iPhone SE', w: 375, h: 667 },
-      { id: 'mp-huawei-mate60', brand: 'mp', form: 'mp', name: '微信 · 华为 Mate 60 Pro', w: 432, h: 960 },
-      { id: 'mp-xiaomi-14', brand: 'mp', form: 'mp', name: '微信 · 小米 14', w: 412, h: 915 },
-      { id: 'mp-oppo-findx7', brand: 'mp', form: 'mp', name: '微信 · OPPO Find X7', w: 432, h: 960 },
-      { id: 'mp-vivo-x100', brand: 'mp', form: 'mp', name: '微信 · vivo X100', w: 432, h: 960 },
-      { id: 'mp-honor-magic6', brand: 'mp', form: 'mp', name: '微信 · 荣耀 Magic 6', w: 432, h: 960 },
-      { id: 'mp-huawei-mate-x5', brand: 'mp', form: 'mp', name: '微信 · 华为 Mate X5 展开', w: 720, h: 840 },
-      { id: 'mp-honor-magic-v2', brand: 'mp', form: 'mp', name: '微信 · 荣耀 Magic V2 展开', w: 720, h: 892 },
+      // ========== 微信小程序（沿用对应手机逻辑像素） ==========
+      { id: 'mp-iphone-15', brand: 'mp', form: 'mp', name: '微信 · iPhone 15', w: 393, h: 852, pW: 1179, pH: 2556, dpr: 3, di: 6.1, refresh: 60 },
+      { id: 'mp-iphone-15-pro-max', brand: 'mp', form: 'mp', name: '微信 · iPhone 15 Pro Max', w: 430, h: 932, pW: 1290, pH: 2796, dpr: 3, di: 6.7, refresh: 120 },
+      { id: 'mp-iphone-se', brand: 'mp', form: 'mp', name: '微信 · iPhone SE', w: 375, h: 667, pW: 750, pH: 1334, dpr: 2, di: 4.7, refresh: 60 },
+      { id: 'mp-huawei-mate60', brand: 'mp', form: 'mp', name: '微信 · 华为 Mate 60 Pro', w: 432, h: 960, pW: 2720, pH: 1260, dpr: 3, di: 6.82, refresh: 120 },
+      { id: 'mp-xiaomi-14', brand: 'mp', form: 'mp', name: '微信 · 小米 14', w: 412, h: 915, pW: 2670, pH: 1200, dpr: 3, di: 6.36, refresh: 120 },
+      { id: 'mp-xiaomi-14-pro', brand: 'mp', form: 'mp', name: '微信 · 小米 14 Pro', w: 432, h: 960, pW: 3200, pH: 1440, dpr: 3, di: 6.73, refresh: 120 },
+      { id: 'mp-oppo-find-x7', brand: 'mp', form: 'mp', name: '微信 · OPPO Find X7 Ultra', w: 432, h: 960, pW: 3168, pH: 1440, dpr: 3.25, di: 6.82, refresh: 120 },
+      { id: 'mp-vivo-x100', brand: 'mp', form: 'mp', name: '微信 · vivo X100 Pro', w: 432, h: 960, pW: 2800, pH: 1260, dpr: 3, di: 6.78, refresh: 120 },
+      { id: 'mp-honor-magic6', brand: 'mp', form: 'mp', name: '微信 · 荣耀 Magic 6', w: 432, h: 960, pW: 2800, pH: 1264, dpr: 3, di: 6.78, refresh: 120 },
+      { id: 'mp-huawei-mate-x5', brand: 'mp', form: 'mp', name: '微信 · 华为 Mate X5 展开', w: 832, h: 741, pW: 2496, pH: 2224, dpr: 3, di: 7.85, refresh: 120 },
+      { id: 'mp-xiaomi-mix-fold3', brand: 'mp', form: 'mp', name: '微信 · 小米 MIX Fold 3 展开', w: 960, h: 852, pW: 2160, pH: 1916, dpr: 2.25, di: 8.03, refresh: 120 },
+      { id: 'mp-honor-magic-v2', brand: 'mp', form: 'mp', name: '微信 · 荣耀 Magic V2 展开', w: 937, h: 862, pW: 2344, pH: 2156, dpr: 2.5, di: 7.92, refresh: 120 },
     ];
 
     const BRAND_LABEL = {
@@ -568,11 +601,12 @@
 
     // ========== 状态 ==========
     const state = {
-      selectedId: null,   // 当前选中的设备 id
+      selectedId: null,
       orient: 'portrait',
-      resolution: 'auto', // auto | custom | 预设
+      resolution: 'auto',
       customW: 0,
       customH: 0,
+      scale: 100, // 显示缩放 25~150%
     };
 
     // ========== 渲染左侧栏 ==========
@@ -589,7 +623,6 @@
         const count = document.getElementById('count-' + key);
         if (count) count.textContent = list.length;
 
-        // 按品牌分子组
         const byBrand = {};
         list.forEach(d => {
           const b = d.brand;
@@ -630,17 +663,15 @@
     // ========== 选中设备 ==========
     function selectDevice(id) {
       state.selectedId = id;
-      // 更新高亮
       document.querySelectorAll('.device-item').forEach(el => {
         el.classList.toggle('selected', el.dataset.deviceId === id);
       });
-      // 微信小程序：禁横屏切换
       const dev = DEVICES.find(d => d.id === id);
       const isMp = dev?.form === 'mp';
       document.getElementById('ctrl-orient').disabled = isMp;
       document.getElementById('ctrl-hint').textContent = isMp
         ? '微信小程序禁用横屏切换（开发者无需关心横屏）'
-        : '单选设备，下拉切换横竖屏与分辨率';
+        : '单选设备，下拉切换横竖屏与分辨率，拖动滑块调整显示尺寸';
       renderStage();
     }
 
@@ -654,14 +685,21 @@
       state.resolution = v;
       document.getElementById('custom-res').style.display = v === 'custom' ? 'flex' : 'none';
       if (v === 'custom') {
-        const w = parseInt(document.getElementById('ctrl-w').value) || 0;
-        const h = parseInt(document.getElementById('ctrl-h').value) || 0;
-        state.customW = w; state.customH = h;
+        state.customW = parseInt(document.getElementById('ctrl-w').value) || 0;
+        state.customH = parseInt(document.getElementById('ctrl-h').value) || 0;
       }
       renderStage();
     }
 
-    // 监听自定义输入
+    function onScaleChange() {
+      const v = parseInt(document.getElementById('ctrl-scale').value) || 100;
+      state.scale = v;
+      document.getElementById('scale-value').textContent = v + '%';
+      // 仅缩放当前可见的设备框
+      const frame = document.querySelector('.device-frame');
+      if (frame) frame.style.transform = `scale(${v / 100})`;
+    }
+
     document.addEventListener('input', (e) => {
       if (e.target.id === 'ctrl-w' || e.target.id === 'ctrl-h') {
         state.customW = parseInt(document.getElementById('ctrl-w').value) || 0;
@@ -673,22 +711,70 @@
     // ========== 解析最终宽高 ==========
     function resolveDimensions(dev) {
       let w = dev.w, h = dev.h;
-      // 横屏切换
       if (state.orient === 'landscape' && dev.form !== 'mp') {
         [w, h] = [h, w];
       }
-      // 分辨率覆盖
       if (state.resolution === 'custom' && state.customW > 0 && state.customH > 0) {
         w = state.customW; h = state.customH;
-      } else if (state.resolution !== 'auto' && state.resolution.includes('x')) {
-        const [rw, rh] = state.resolution.split('x').map(Number);
-        w = rw; h = rh;
-        if (state.orient === 'landscape' && dev.form !== 'mp') {
-          [w, h] = [h, w];
-        }
       }
       return { w, h };
     }
+
+    // ========== 计算显示像素（保证宽高比例 + 容器自适应） ==========
+    function calcDisplaySize(w, h) {
+      const maxW = 920;      // 主区域最大宽度
+      const maxH = 820;      // 主区域最大高度
+      const scale = state.scale / 100;
+      // 目标：缩放后的逻辑像素
+      const targetW = w * scale;
+      const targetH = h * scale;
+      // 容器约束
+      let dispW = Math.min(maxW, targetW);
+      const ratio = dispW / targetW;
+      let dispH = targetH * ratio;
+      if (dispH > maxH) {
+        dispH = maxH;
+        dispW = dispH * (targetW / targetH);
+      }
+      return { dispW: Math.round(dispW), dispH: Math.round(dispH) };
+    }
+
+    // ========== 参数面板 ==========
+    function paramsPanel(dev, w, h) {
+      const isLandscape = w > h;
+      const orientText = isLandscape ? '横屏' : '竖屏';
+      const ratio = (w / h).toFixed(3);
+      const ratioStr = rationalizeAspect(w, h);
+      const dpr = dev.dpr ? `×${dev.dpr}` : '—';
+      const refresh = dev.refresh ? `${dev.refresh}Hz` : '—';
+      const di = dev.di ? `${dev.di}"` : '—';
+      const parts = [];
+      parts.push(`<div class="param"><span class="k">逻辑像素:</span><span class="v">${w} × ${h} dp</span></div>`);
+      if (dev.pW) parts.push(`<div class="param"><span class="k">物理像素:</span><span class="v">${dev.pW} × ${dev.pH} px</span></div>`);
+      parts.push(`<div class="param"><span class="k">设备像素比:</span><span class="v">${dpr}</span></div>`);
+      parts.push(`<div class="param"><span class="k">比例:</span><span class="v">${ratio} (${ratioStr})</span></div>`);
+      parts.push(`<div class="param"><span class="k">屏幕尺寸:</span><span class="v">${di}</span></div>`);
+      parts.push(`<div class="param"><span class="k">刷新率:</span><span class="v">${refresh}</span></div>`);
+      parts.push(`<div class="param"><span class="k">方向:</span><span class="v">${orientText}</span></div>`);
+      parts.push(`<div class="param"><span class="k">显示缩放:</span><span class="v">${state.scale}%</span></div>`);
+      return `<div class="device-params">${parts.join('')}</div>`;
+    }
+
+    // 把宽高化简为最接近的整数比例 (如 393:852 → 3:6.5)
+    function rationalizeAspect(w, h) {
+      const g = gcd(w, h);
+      const rw = w / g, rh = h / g;
+      if (rw <= 50 && rh <= 50) return `${rw}:${rh}`;
+      // 否则按比例给一个常用的 a:b 字符串
+      const r = w / h;
+      if (Math.abs(r - 9 / 19.5) < 0.02) return '9:19.5';
+      if (Math.abs(r - 9 / 20) < 0.02) return '9:20';
+      if (Math.abs(r - 1 / 1.07) < 0.02) return '1:1.07 (Mate X5)';
+      if (Math.abs(r - 1 / 1.04) < 0.02) return '1:1.04 (N3)';
+      if (Math.abs(r - 1.13) < 0.02) return '1.13:1 (MIX Fold 3)';
+      return `${rw}:${rh}`;
+    }
+    function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
 
     // ========== 渲染主区域 ==========
     function renderStage() {
@@ -700,7 +786,9 @@
       const dev = DEVICES.find(d => d.id === state.selectedId);
       if (!dev) return;
       const { w, h } = resolveDimensions(dev);
-      stage.innerHTML = deviceCard(dev, w, h);
+      stage.innerHTML = deviceCard(dev, w, h) + paramsPanel(dev, w, h);
+      // 重新应用缩放
+      onScaleChange();
     }
 
     function deviceCard(dev, w, h) {
@@ -712,17 +800,19 @@
         'mp': { class: 'mp', text: '小程序' },
       })[dev.form];
       const brandTag = ({
-        'ios': 'iOS', 'huawei': 'Harmony', 'xiaomi': 'MIUI',
+        'ios': 'iOS', 'huawei': 'HarmonyOS', 'xiaomi': 'HyperOS',
         'oppo': 'ColorOS', 'vivo': 'OriginOS', 'honor': 'MagicOS',
       })[dev.brand] || '通用';
 
-      // iframe 高度按比例算（限制 360~720px）
-      const aspect = w / h;
-      const heightPx = Math.min(720, Math.max(360, 480 / aspect));
-      const iframeUrl = `http://localhost:9000/?device=${encodeURIComponent(dev.name)}&w=${w}&h=${h}&orient=${orientText}`;
+      const { dispW, dispH } = calcDisplaySize(w, h);
+      // 计算设备外壳 + 滚动 + 状态栏的额外高度
+      const isMp = dev.form === 'mp';
+      const extraH = isMp ? 24 + 44 + 49 : isLandscape ? 0 : 0;
+      const frameH = dispH + extraH;
+      const iframeUrl = `http://localhost:5173/?device=${encodeURIComponent(dev.name)}&w=${w}&h=${h}&orient=${orientText}`;
 
       let frameInner;
-      if (dev.form === 'mp') {
+      if (isMp) {
         frameInner = `
           <div class="mp-shell">
             <div class="mp-statusbar">
@@ -760,11 +850,9 @@
             <span class="device-name">${dev.name}</span>
             <span class="device-tag ${formTag.class}">${formTag.text}</span>
             <span class="device-tag">${brandTag}</span>
-          </div>
-          <div class="device-label">
             <span class="device-dim">${w}×${h} · ${orientText} · ${state.resolution === 'auto' ? '跟随设备' : state.resolution}</span>
           </div>
-          <div class="device-frame" style="height:${heightPx}px; width:auto; aspect-ratio:${w}/${h}; max-width:100%;">
+          <div class="device-frame" style="width:${dispW}px; height:${frameH}px;">
             ${frameInner}
           </div>
         </div>
@@ -777,14 +865,15 @@
 
     // ========== 初始化 ==========
     buildSidebar();
-    selectDevice('iphone-15-pro-max'); // 默认 iPhone 15 Pro Max
+    selectDevice('iphone-15-pro-max');
 
     // 后端探活
     fetch('http://localhost:9999/api/health')
       .then(r => r.json())
       .then(j => {
         const s = document.getElementById('backend-status');
-        s.textContent = '✓ ' + (j.service || 'ok') + ' [turso]';
+        const db = j.db || 'unknown';
+        s.textContent = '✓ ' + db;
         s.className = 'status ok';
       })
       .catch(() => {
