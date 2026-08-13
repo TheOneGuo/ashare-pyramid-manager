@@ -17,6 +17,7 @@
  * 开发期：NEWS_SOURCE_MODE=mock，使用本地 mock 数据
  */
 import { fetchNews, upsertNews } from './db.js';
+import { fetchAllReal, REAL_SOURCES } from './news-sources.js';
 
 const MODE = (process.env.NEWS_SOURCE_MODE || 'mock').toLowerCase();
 console.log(`[news-collector] mode=${MODE}`);
@@ -49,29 +50,8 @@ export function pickIntervalMs(now = new Date()) {
 
 // ========================================================================
 // 数据源（生产）
+// 真实源定义在 news-sources.js，全部走公开 JSON / RSS，无 API key
 // ========================================================================
-
-async function fetchWallstreetcn() {
-  // TODO: 实际接华尔街见闻 RSS / API
-  // 当前用占位实现，等代理 / 抓取方案定下来
-  return [];
-}
-
-async function fetchJin10() {
-  // TODO: 金十数据 API
-  return [];
-}
-
-async function fetchRSS() {
-  // TODO: 通用 RSS 抓取
-  return [];
-}
-
-const SOURCES = [
-  { name: '华尔街见闻', fn: fetchWallstreetcn },
-  { name: '金十数据', fn: fetchJin10 },
-  { name: 'FinanceNewsDaily', fn: fetchRSS },
-];
 
 // ========================================================================
 // Mock 数据（开发期）
@@ -119,19 +99,18 @@ async function collectOnce() {
   let items = [];
   if (MODE === 'mock') {
     items = genMockItems();
+  } else if (MODE === 'real' || MODE === 'live') {
+    // 真实模式：拉 4 个公开源（财联社 / 新浪 / 东方财富 / BBC）
+    items = await fetchAllReal();
   } else {
-    for (const src of SOURCES) {
-      try {
-        const got = await src.fn();
-        items.push(...got.map((it) => ({ ...it, source: src.name })));
-      } catch (e) {
-        console.warn(`[news-collector] ${src.name} failed: ${e.message}`);
-      }
-    }
+    console.warn(`[news-collector] unknown mode=${MODE}, fall back to mock`);
+    items = genMockItems();
   }
   if (items.length) {
     const n = await upsertNews(items);
-    console.log(`[news-collector] upserted ${n} items in ${Date.now() - start}ms`);
+    console.log(`[news-collector] mode=${MODE} upserted ${n} items in ${Date.now() - start}ms`);
+  } else {
+    console.log(`[news-collector] mode=${MODE} got 0 items in ${Date.now() - start}ms`);
   }
   return items.length;
 }

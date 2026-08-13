@@ -74,10 +74,17 @@ let initialized = false;
 
 export async function initDb() {
   if (initialized) return;
-  // libSQL 支持一次执行多语句
+  // libSQL 在 batch 模式下 CREATE INDEX IF NOT EXISTS 会报 400，逐条容错执行
   const stmts = SCHEMA.split(';').map((s) => s.trim()).filter(Boolean);
   for (const sql of stmts) {
-    await client.execute(sql);
+    try {
+      await client.execute(sql);
+    } catch (e) {
+      // 索引已存在等幂等错误可忽略；表已存在也忽略
+      if (!/already exists|duplicate/i.test(String(e.message))) {
+        console.warn(`[db] init stmt skipped: ${sql.slice(0, 40)}... (${e.message?.slice(0, 60)})`);
+      }
+    }
   }
   initialized = true;
   console.log('[db] schema initialized');
@@ -91,26 +98,42 @@ export function getMode() {
   return mode;
 }
 
-/** 写入新闻（upsert by id） */
+/** 写入新闻（upsert by id），逐条容错：失败的跳过不挂整批 */
 export async function upsertNews(items) {
   if (!items?.length) return 0;
+  let ok = 0;
   for (const it of items) {
-    await client.execute({
-      sql: `INSERT INTO news_items (id,title,summary,source,url,published_at,fetched_at,tags)
-            VALUES (?,?,?,?,?,?,?,?)
-            ON CONFLICT(id) DO UPDATE SET
-              title=excluded.title, summary=excluded.summary,
-              source=excluded.source, url=excluded.url,
-              published_at=excluded.published_at, fetched_at=excluded.fetched_at,
-              tags=excluded.tags`,
-      args: [
-        it.id, it.title, it.summary ?? null, it.source,
-        it.url ?? null, it.published_at, it.fetched_at,
-        it.tags ? JSON.stringify(it.tags) : null,
-      ],
-    });
+    try {
+      // 统一字段类型（防御 libSQL/Turso 的严格类型检查）
+      const id = String(it.id ?? '');
+      if (!id) continue;
+      const title = String(it.title ?? '').slice(0, 500);
+      const summary = it.summary ? String(it.summary).slice(0, 1000) : null;
+      const source = String(it.source ?? 'unknown').slice(0, 80);
+      const url = it.url ? String(it.url).slice(0, 500) : null;
+      const pubAt = Number(it.published_at) || Date.now();
+      const fetchedAt = Number(it.fetched_at) || Date.now();
+      let tagsJson = null;
+      if (Array.isArray(it.tags) && it.tags.length) {
+        tagsJson = JSON.stringify(it.tags.map((t) => String(t).slice(0, 50)));
+      }
+
+      await client.execute({
+        sql: `INSERT INTO news_items (id,title,summary,source,url,published_at,fetched_at,tags)
+              VALUES (?,?,?,?,?,?,?,?)
+              ON CONFLICT(id) DO UPDATE SET
+                title=excluded.title, summary=excluded.summary,
+                source=excluded.source, url=excluded.url,
+                published_at=excluded.published_at, fetched_at=excluded.fetched_at,
+                tags=excluded.tags`,
+        args: [id, title, summary, source, url, pubAt, fetchedAt, tagsJson],
+      });
+      ok++;
+    } catch (e) {
+      console.warn(`[db] upsertNews skip id=${it.id}: ${e.message?.slice(0, 80)}`);
+    }
   }
-  return items.length;
+  return ok;
 }
 
 /** 读取最新 N 条新闻 */

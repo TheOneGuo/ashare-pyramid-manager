@@ -24,7 +24,6 @@
       min-height: 100vh;
     }
 
-    /* ========== 顶部状态条 ========== */
     .topbar {
       position: fixed;
       top: 0; left: 0; right: 0;
@@ -54,7 +53,6 @@
     }
     .topbar button:hover { border-color: var(--gold); color: var(--gold); }
 
-    /* ========== 整体布局 ========== */
     .layout {
       display: flex;
       margin-top: 56px;
@@ -70,103 +68,152 @@
       overflow-y: auto;
       flex-shrink: 0;
     }
-    .sidebar h2 {
+    .sidebar-section {
+      margin-bottom: 18px;
+    }
+    .sidebar-section h2 {
       font-size: 12px;
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      margin: 16px 0 8px;
+      margin: 0 0 8px;
       font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
-    .sidebar h2:first-child { margin-top: 0; }
+    .sidebar-section h2 .badge {
+      background: var(--border);
+      color: var(--text);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 500;
+    }
 
     .group {
       border: 1px solid var(--border);
       border-radius: 8px;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
       background: var(--bg);
       overflow: hidden;
     }
     .group-header {
-      padding: 10px 12px;
+      padding: 8px 10px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 500;
       color: var(--text);
       background: var(--card);
       user-select: none;
     }
     .group-header:hover { background: #243140; }
-    .group-header .arrow { transition: transform 0.2s; color: var(--muted); font-size: 10px; }
+    .group-header .arrow { transition: transform 0.2s; color: var(--muted); font-size: 9px; }
     .group.open .group-header .arrow { transform: rotate(90deg); }
     .group-header .count {
       margin-left: auto;
-      font-size: 11px;
+      font-size: 10px;
       color: var(--muted);
       background: var(--border);
-      padding: 2px 6px;
-      border-radius: 4px;
+      padding: 1px 5px;
+      border-radius: 3px;
     }
     .group-body {
       display: none;
-      padding: 6px 0;
+      padding: 4px 0;
     }
     .group.open .group-body { display: block; }
     .device-item {
       display: flex;
       align-items: center;
-      padding: 7px 12px 7px 28px;
+      padding: 6px 10px 6px 26px;
       font-size: 12px;
       color: var(--text);
       cursor: pointer;
-      transition: background 0.1s;
       gap: 8px;
+      border-left: 2px solid transparent;
     }
     .device-item:hover { background: rgba(212, 175, 55, 0.08); }
-    .device-item.checked { background: rgba(212, 175, 55, 0.15); color: var(--gold); }
-    .device-item input { cursor: pointer; }
+    .device-item.selected {
+      background: rgba(212, 175, 55, 0.15);
+      color: var(--gold);
+      border-left-color: var(--gold);
+    }
     .device-item .spec {
       margin-left: auto;
       font-size: 10px;
       color: var(--muted);
     }
+    .device-item.selected .spec { color: var(--gold); }
 
-    .sidebar-actions {
-      display: flex;
-      gap: 6px;
-      margin-top: 8px;
+    /* ========== 控制条（横竖屏 + 分辨率） ========== */
+    .controls {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
     }
-    .sidebar-actions button {
+    .controls .row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+    .controls .row:last-child { margin-bottom: 0; }
+    .controls label {
+      font-size: 11px;
+      color: var(--muted);
+      min-width: 60px;
+      flex-shrink: 0;
+    }
+    .controls select {
       flex: 1;
       background: var(--bg);
       color: var(--text);
       border: 1px solid var(--border);
       padding: 6px 8px;
       border-radius: 6px;
+      font-size: 12px;
       cursor: pointer;
-      font-size: 11px;
     }
-    .sidebar-actions button:hover { border-color: var(--gold); color: var(--gold); }
+    .controls select:focus { outline: none; border-color: var(--gold); }
+    .controls select:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .controls .hint {
+      font-size: 10px;
+      color: var(--muted);
+      font-style: italic;
+      margin-top: 6px;
+    }
 
     /* ========== 主区域 ========== */
     .main {
       flex: 1;
-      padding: 16px;
+      padding: 20px;
       overflow-y: auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .main-empty {
       color: var(--muted);
-      padding: 80px;
       text-align: center;
       font-size: 14px;
     }
-    .stage {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-      gap: 20px;
+    .main-empty .icon { font-size: 48px; margin-bottom: 12px; opacity: 0.4; }
+
+    .device-stage {
+      width: 100%;
+      max-width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     /* ========== 设备卡片 ========== */
@@ -185,6 +232,7 @@
       margin-bottom: 10px;
       font-size: 11px;
       color: var(--muted);
+      gap: 8px;
     }
     .device-name { font-weight: 600; color: var(--gold); font-size: 13px; }
     .device-tag {
@@ -193,6 +241,7 @@
       border-radius: 4px;
       background: var(--border);
       color: var(--text);
+      white-space: nowrap;
     }
     .device-tag.ios { background: #1a3a1a; color: #6ad36a; }
     .device-tag.android { background: #3a2a1a; color: #d4a06a; }
@@ -201,7 +250,6 @@
     .device-dim { color: var(--accent); font-size: 10px; }
 
     .device-frame {
-      flex: 1;
       border: 2px solid var(--border);
       border-radius: 8px;
       overflow: hidden;
@@ -213,6 +261,7 @@
       height: 100%;
       border: none;
       background: var(--bg);
+      display: block;
     }
 
     /* ========== 设备外壳 ========== */
@@ -242,7 +291,7 @@
       z-index: 1;
     }
 
-    /* ========== 微信小程序外壳 ========== */
+    /* ========== 微信小程序外壳（按微信文档真实还原） ========== */
     .device[data-form="mp"] .device-frame {
       border-radius: 6px;
       padding: 0;
@@ -250,73 +299,111 @@
       background: #ededed;
       overflow: hidden;
     }
-    .device[data-form="mp"] .device-frame::before {
-      content: none;
-    }
+    .device[data-form="mp"] .device-frame::before { content: none; }
     .mp-shell {
       display: flex;
       flex-direction: column;
       height: 100%;
       background: #ededed;
     }
+    /* 微信状态栏：时间左 + 信号右 + 右侧胶囊 */
     .mp-statusbar {
       height: 24px;
-      background: #f7f7f7;
-      border-bottom: 1px solid #e0e0e0;
+      background: #ededed;
       display: flex;
       align-items: center;
-      padding: 0 12px;
+      padding: 0 12px 0 8px;
       gap: 6px;
-      font-size: 10px;
+      font-size: 11px;
       color: #000;
       font-weight: 600;
       flex-shrink: 0;
     }
     .mp-statusbar .time { font-size: 11px; }
-    .mp-statusbar .icons { margin-left: auto; display: flex; gap: 4px; }
+    .mp-statusbar .icons { margin-left: auto; display: flex; gap: 4px; align-items: center; }
+    /* 微信胶囊：width:87px height:32px, 距右 10px, 距顶 6px (适配 24px 状态栏时已含胶囊) */
     .mp-capsule {
-      margin-left: 8px;
-      width: 60px;
-      height: 18px;
-      border: 1px solid #000;
-      border-radius: 10px;
+      width: 87px;
+      height: 24px;
+      border: 1px solid rgba(0,0,0,0.3);
+      border-radius: 12px;
       display: flex;
       align-items: center;
-      justify-content: space-around;
+      justify-content: space-between;
+      padding: 0 5px;
+      box-sizing: border-box;
     }
-    .mp-capsule::before { content: ""; width: 10px; height: 8px; background: #000; border-radius: 1px; }
-    .mp-capsule::after { content: ""; width: 8px; height: 1px; background: #000; }
+    .mp-capsule .dot {
+      width: 14px;
+      height: 14px;
+      border: 1px solid rgba(0,0,0,0.5);
+      border-radius: 50%;
+      position: relative;
+    }
+    .mp-capsule .dot::before {
+      content: "";
+      position: absolute;
+      inset: 2px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.3);
+    }
+    .mp-capsule .bar {
+      width: 14px;
+      height: 1px;
+      background: rgba(0,0,0,0.5);
+    }
+    /* 微信导航栏：高度 = (胶囊顶部 - 状态栏底) + 胶囊 + (胶囊底部-屏幕顶) ≈ 44px */
     .mp-navbar {
-      height: 32px;
+      height: 44px;
       background: #ededed;
-      border-bottom: 1px solid #d0d0d0;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
       display: flex;
       align-items: center;
       padding: 0 12px;
       gap: 8px;
-      font-size: 11px;
+      font-size: 13px;
       color: #000;
       flex-shrink: 0;
+      position: relative;
     }
-    .mp-navbar .back { font-size: 14px; color: #000; }
-    .mp-navbar .title { font-weight: 500; flex: 1; text-align: center; }
-    .mp-navbar .more { font-size: 16px; letter-spacing: 2px; color: #000; }
+    .mp-navbar .back {
+      font-size: 18px;
+      color: #000;
+      width: 32px;
+      text-align: left;
+    }
+    .mp-navbar .title {
+      font-weight: 500;
+      flex: 1;
+      text-align: center;
+      padding-right: 32px; /* 抵消 back 按钮宽度让标题居中 */
+    }
+    .mp-navbar .more {
+      font-size: 18px;
+      color: #000;
+      width: 32px;
+      text-align: right;
+      letter-spacing: 1px;
+    }
     .mp-body {
       flex: 1;
       position: relative;
       background: #ededed;
+      overflow: hidden;
     }
     .mp-body iframe {
       width: 100%;
       height: 100%;
       border: none;
     }
+    /* 微信 tabbar：高度 49px (iOS) / 56px (Android) */
     .mp-tabbar {
-      height: 40px;
+      height: 49px;
       background: #f7f7f7;
-      border-top: 1px solid #d0d0d0;
+      border-top: 1px solid rgba(0,0,0,0.1);
       display: flex;
       flex-shrink: 0;
+      padding-bottom: env(safe-area-inset-bottom, 0);
     }
     .mp-tabbar-item {
       flex: 1;
@@ -329,7 +416,7 @@
       gap: 2px;
     }
     .mp-tabbar-item .icon {
-      width: 16px; height: 16px;
+      width: 18px; height: 18px;
       border-radius: 4px;
       background: #ccc;
     }
@@ -348,235 +435,303 @@
   </div>
 
   <div class="layout">
-    <!-- ============ 左侧栏 ============ -->
     <aside class="sidebar">
-      <div class="sidebar-actions">
-        <button onclick="selectAll(true)">全选</button>
-        <button onclick="selectAll(false)">全清</button>
-        <button onclick="selectRecommended()">推荐</button>
+      <div class="sidebar-section">
+        <h2>📱 设备选择 <span class="badge">单选</span></h2>
+
+        <div class="group open" id="g-ios">
+          <div class="group-header" onclick="toggleGroup('g-ios')">
+            <span class="arrow">▶</span><span>🍎 iOS · 苹果直板机</span>
+            <span class="count" id="count-ios">0</span>
+          </div>
+          <div class="group-body" id="body-ios"></div>
+        </div>
+
+        <div class="group" id="g-android">
+          <div class="group-header" onclick="toggleGroup('g-android')">
+            <span class="arrow">▶</span><span>🤖 Android · 国内畅销直板机</span>
+            <span class="count" id="count-android">0</span>
+          </div>
+          <div class="group-body" id="body-android"></div>
+        </div>
+
+        <div class="group" id="g-foldable">
+          <div class="group-header" onclick="toggleGroup('g-foldable')">
+            <span class="arrow">▶</span><span>📱 Android · 国内折叠屏</span>
+            <span class="count" id="count-foldable">0</span>
+          </div>
+          <div class="group-body" id="body-foldable"></div>
+        </div>
+
+        <div class="group" id="g-mp">
+          <div class="group-header" onclick="toggleGroup('g-mp')">
+            <span class="arrow">▶</span><span>💬 微信小程序</span>
+            <span class="count" id="count-mp">0</span>
+          </div>
+          <div class="group-body" id="body-mp"></div>
+        </div>
       </div>
 
-      <h2>🍎 iOS · 苹果直板机</h2>
-      <div id="group-ios"></div>
-
-      <h2>🤖 Android · 国内畅销直板机</h2>
-      <div id="group-android"></div>
-
-      <h2>📱 Android · 国内折叠屏</h2>
-      <div id="group-foldable"></div>
-
-      <h2>💬 微信小程序 · 套外框</h2>
-      <div id="group-mp"></div>
+      <div class="sidebar-section">
+        <h2>⚙️ 显示控制</h2>
+        <div class="controls">
+          <div class="row">
+            <label>横竖屏</label>
+            <select id="ctrl-orient" onchange="onOrientChange()">
+              <option value="portrait">竖屏</option>
+              <option value="landscape">横屏</option>
+            </select>
+          </div>
+          <div class="row">
+            <label>分辨率</label>
+            <select id="ctrl-resolution" onchange="onResolutionChange()">
+              <option value="auto">跟随设备</option>
+              <option value="custom">自定义</option>
+              <option value="720x1280">720×1280 (HD)</option>
+              <option value="1080x1920">1080×1920 (FHD)</option>
+              <option value="1440x3200">1440×3200 (QHD)</option>
+              <option value="375x667">375×667 (iPhone SE)</option>
+              <option value="390x844">390×844 (iPhone 12)</option>
+              <option value="393x852">393×852 (iPhone 14)</option>
+              <option value="412x915">412×915 (小米14)</option>
+              <option value="432x960">432×960 (Mate60)</option>
+              <option value="720x840">720×840 (Mate X5)</option>
+            </select>
+          </div>
+          <div id="custom-res" style="display:none;" class="row">
+            <label>宽×高</label>
+            <input type="number" id="ctrl-w" placeholder="宽" style="width:55px;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:4px;border-radius:4px;font-size:11px;" />
+            <span style="color:var(--muted);">×</span>
+            <input type="number" id="ctrl-h" placeholder="高" style="width:55px;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:4px;border-radius:4px;font-size:11px;" />
+          </div>
+          <div class="hint" id="ctrl-hint">微信小程序不支持横屏切换</div>
+        </div>
+      </div>
     </aside>
 
-    <!-- ============ 主区域 ============ -->
     <main class="main">
-      <div class="stage" id="stage">
-        <div class="main-empty">从左侧勾选要预览的设备型号</div>
+      <div class="device-stage" id="stage">
+        <div class="main-empty">
+          <div class="icon">📱</div>
+          <div>从左侧选择一个设备型号开始预览</div>
+        </div>
       </div>
     </main>
   </div>
 
   <script>
-    // ========================================================================
-    // 设备规格库（来自公开厂商资料）
-    // ========================================================================
+    // ========== 设备库（按品牌分组） ==========
     const DEVICES = [
-      // ========== iOS 直板机 ==========
-      { id: 'iphone-14-pro', brand: 'ios', form: 'phone', name: 'iPhone 14 Pro', dim: '393×852', w: 393, h: 852, ratio: '19.5:9' },
-      { id: 'iphone-15', brand: 'ios', form: 'phone', name: 'iPhone 15', dim: '393×852', w: 393, h: 852, ratio: '19.5:9' },
-      { id: 'iphone-15-pro-max', brand: 'ios', form: 'phone', name: 'iPhone 15 Pro Max', dim: '430×932', w: 430, h: 932, ratio: '19.5:9' },
-      { id: 'iphone-se', brand: 'ios', form: 'phone', name: 'iPhone SE (3rd)', dim: '375×667', w: 375, h: 667, ratio: '16:9' },
+      // iOS
+      { id: 'iphone-14-pro', brand: 'ios', form: 'phone', name: 'iPhone 14 Pro', w: 393, h: 852 },
+      { id: 'iphone-15', brand: 'ios', form: 'phone', name: 'iPhone 15', w: 393, h: 852 },
+      { id: 'iphone-15-pro-max', brand: 'ios', form: 'phone', name: 'iPhone 15 Pro Max', w: 430, h: 932 },
+      { id: 'iphone-se', brand: 'ios', form: 'phone', name: 'iPhone SE (3rd)', w: 375, h: 667 },
 
-      // ========== Android 国内畅销直板机 ==========
-      { id: 'huawei-mate60', brand: 'huawei', form: 'phone', name: '华为 Mate 60 Pro', dim: '432×960', w: 432, h: 960, ratio: '19.8:9' },
-      { id: 'huawei-p60', brand: 'huawei', form: 'phone', name: '华为 P60 Pro', dim: '414×896', w: 414, h: 896, ratio: '19.8:9' },
-      { id: 'xiaomi-14', brand: 'xiaomi', form: 'phone', name: '小米 14', dim: '412×915', w: 412, h: 915, ratio: '20:9' },
-      { id: 'xiaomi-14-pro', brand: 'xiaomi', form: 'phone', name: '小米 14 Pro', dim: '432×960', w: 432, h: 960, ratio: '20:9' },
-      { id: 'xiaomi-13', brand: 'xiaomi', form: 'phone', name: '小米 13', dim: '393×873', w: 393, h: 873, ratio: '20:9' },
-      { id: 'oppo-findx7', brand: 'oppo', form: 'phone', name: 'OPPO Find X7 Ultra', dim: '432×960', w: 432, h: 960, ratio: '20:9' },
-      { id: 'oppo-r11', brand: 'oppo', form: 'phone', name: 'OPPO Reno 11', dim: '412×915', w: 412, h: 915, ratio: '20:9' },
-      { id: 'vivo-x100', brand: 'vivo', form: 'phone', name: 'vivo X100 Pro', dim: '432×960', w: 432, h: 960, ratio: '20:9' },
-      { id: 'vivo-s18', brand: 'vivo', form: 'phone', name: 'vivo S18', dim: '412×915', w: 412, h: 915, ratio: '20:9' },
-      { id: 'honor-magic6', brand: 'honor', form: 'phone', name: '荣耀 Magic 6', dim: '432×960', w: 432, h: 960, ratio: '20:9' },
-      { id: 'honor-100', brand: 'honor', form: 'phone', name: '荣耀 100', dim: '412×915', w: 412, h: 915, ratio: '20:9' },
+      // Android 直板机
+      { id: 'huawei-mate60', brand: 'huawei', form: 'phone', name: '华为 Mate 60 Pro', w: 432, h: 960 },
+      { id: 'huawei-p60', brand: 'huawei', form: 'phone', name: '华为 P60 Pro', w: 414, h: 896 },
+      { id: 'xiaomi-14', brand: 'xiaomi', form: 'phone', name: '小米 14', w: 412, h: 915 },
+      { id: 'xiaomi-14-pro', brand: 'xiaomi', form: 'phone', name: '小米 14 Pro', w: 432, h: 960 },
+      { id: 'xiaomi-13', brand: 'xiaomi', form: 'phone', name: '小米 13', w: 393, h: 873 },
+      { id: 'oppo-findx7', brand: 'oppo', form: 'phone', name: 'OPPO Find X7 Ultra', w: 432, h: 960 },
+      { id: 'oppo-r11', brand: 'oppo', form: 'phone', name: 'OPPO Reno 11', w: 412, h: 915 },
+      { id: 'vivo-x100', brand: 'vivo', form: 'phone', name: 'vivo X100 Pro', w: 432, h: 960 },
+      { id: 'vivo-s18', brand: 'vivo', form: 'phone', name: 'vivo S18', w: 412, h: 915 },
+      { id: 'honor-magic6', brand: 'honor', form: 'phone', name: '荣耀 Magic 6', w: 432, h: 960 },
+      { id: 'honor-100', brand: 'honor', form: 'phone', name: '荣耀 100', w: 412, h: 915 },
 
-      // ========== Android 折叠屏 ==========
-      { id: 'huawei-mate-x5', brand: 'huawei', form: 'foldable', name: '华为 Mate X5 展开', dim: '720×840', w: 720, h: 840, ratio: '8:9.3' },
-      { id: 'huawei-mate-x5-outer', brand: 'huawei', form: 'foldable', name: '华为 Mate X5 折叠', dim: '384×840', w: 384, h: 840, ratio: '21:9' },
-      { id: 'xiaomi-mix-fold3', brand: 'xiaomi', form: 'foldable', name: '小米 MIX Fold 3 展开', dim: '720×960', w: 720, h: 960, ratio: '3:4' },
-      { id: 'oppo-find-n3', brand: 'oppo', form: 'foldable', name: 'OPPO Find N3 展开', dim: '720×792', w: 720, h: 792, ratio: '10:11' },
-      { id: 'vivo-x-fold3', brand: 'vivo', form: 'foldable', name: 'vivo X Fold3 展开', dim: '720×960', w: 720, h: 960, ratio: '3:4' },
-      { id: 'honor-magic-v2', brand: 'honor', form: 'foldable', name: '荣耀 Magic V2 展开', dim: '720×892', w: 720, h: 892, ratio: '~9:11' },
-      { id: 'honor-magic-vs3', brand: 'honor', form: 'foldable', name: '荣耀 Magic Vs3 展开', dim: '720×892', w: 720, h: 892, ratio: '~9:11' },
+      // Android 折叠屏（仅展开内屏）
+      { id: 'huawei-mate-x5', brand: 'huawei', form: 'foldable', name: '华为 Mate X5 展开', w: 720, h: 840 },
+      { id: 'xiaomi-mix-fold3', brand: 'xiaomi', form: 'foldable', name: '小米 MIX Fold 3 展开', w: 720, h: 960 },
+      { id: 'oppo-find-n3', brand: 'oppo', form: 'foldable', name: 'OPPO Find N3 展开', w: 720, h: 792 },
+      { id: 'vivo-x-fold3', brand: 'vivo', form: 'foldable', name: 'vivo X Fold3 展开', w: 720, h: 960 },
+      { id: 'honor-magic-v2', brand: 'honor', form: 'foldable', name: '荣耀 Magic V2 展开', w: 720, h: 892 },
+      { id: 'honor-magic-vs3', brand: 'honor', form: 'foldable', name: '荣耀 Magic Vs3 展开', w: 720, h: 892 },
+
+      // 微信小程序（直板机 + 折叠机展开内屏）
+      { id: 'mp-iphone-15', brand: 'mp', form: 'mp', name: '微信 · iPhone 15', w: 393, h: 852 },
+      { id: 'mp-iphone-se', brand: 'mp', form: 'mp', name: '微信 · iPhone SE', w: 375, h: 667 },
+      { id: 'mp-huawei-mate60', brand: 'mp', form: 'mp', name: '微信 · 华为 Mate 60 Pro', w: 432, h: 960 },
+      { id: 'mp-xiaomi-14', brand: 'mp', form: 'mp', name: '微信 · 小米 14', w: 412, h: 915 },
+      { id: 'mp-oppo-findx7', brand: 'mp', form: 'mp', name: '微信 · OPPO Find X7', w: 432, h: 960 },
+      { id: 'mp-vivo-x100', brand: 'mp', form: 'mp', name: '微信 · vivo X100', w: 432, h: 960 },
+      { id: 'mp-honor-magic6', brand: 'mp', form: 'mp', name: '微信 · 荣耀 Magic 6', w: 432, h: 960 },
+      { id: 'mp-huawei-mate-x5', brand: 'mp', form: 'mp', name: '微信 · 华为 Mate X5 展开', w: 720, h: 840 },
+      { id: 'mp-honor-magic-v2', brand: 'mp', form: 'mp', name: '微信 · 荣耀 Magic V2 展开', w: 720, h: 892 },
     ];
 
-    // 微信小程序用的设备（直接复用 Android 直板机/折叠屏的尺寸）
-    const MP_DEVICES = [
-      { id: 'mp-iphone-15', form: 'mp', name: '微信 · iPhone 15', w: 393, h: 852, brand: 'mp' },
-      { id: 'mp-iphone-se', form: 'mp', name: '微信 · iPhone SE', w: 375, h: 667, brand: 'mp' },
-      { id: 'mp-huawei-mate60', form: 'mp', name: '微信 · 华为 Mate 60 Pro', w: 432, h: 960, brand: 'mp' },
-      { id: 'mp-xiaomi-14', form: 'mp', name: '微信 · 小米 14', w: 412, h: 915, brand: 'mp' },
-      { id: 'mp-oppo-findx7', form: 'mp', name: '微信 · OPPO Find X7', w: 432, h: 960, brand: 'mp' },
-      { id: 'mp-vivo-x100', form: 'mp', name: '微信 · vivo X100', w: 432, h: 960, brand: 'mp' },
-      { id: 'mp-honor-magic6', form: 'mp', name: '微信 · 荣耀 Magic 6', w: 432, h: 960, brand: 'mp' },
-      { id: 'mp-huawei-mate-x5', form: 'mp', name: '微信 · 华为 Mate X5 展开', w: 720, h: 840, brand: 'mp' },
-      { id: 'mp-honor-magic-v2', form: 'mp', name: '微信 · 荣耀 Magic V2 展开', w: 720, h: 892, brand: 'mp' },
-    ];
+    const BRAND_LABEL = {
+      'ios': 'Apple', 'huawei': '华为', 'xiaomi': '小米',
+      'oppo': 'OPPO', 'vivo': 'vivo', 'honor': '荣耀', 'mp': '通用',
+    };
 
-    // 状态：哪些设备被勾选（含方向）
-    const selected = new Map(); // key: deviceId + '_' + orient, value: { device, orient, w, h }
+    // ========== 状态 ==========
+    const state = {
+      selectedId: null,   // 当前选中的设备 id
+      orient: 'portrait',
+      resolution: 'auto', // auto | custom | 预设
+      customW: 0,
+      customH: 0,
+    };
 
-    function orientKey(id, orient) { return id + '_' + orient; }
+    // ========== 渲染左侧栏 ==========
+    function buildSidebar() {
+      const groups = {
+        ios: DEVICES.filter(d => d.brand === 'ios'),
+        android: DEVICES.filter(d => d.brand !== 'ios' && d.form === 'phone'),
+        foldable: DEVICES.filter(d => d.form === 'foldable'),
+        mp: DEVICES.filter(d => d.brand === 'mp'),
+      };
 
-    // ========================================================================
-    // 左侧栏渲染
-    // ========================================================================
-    function buildGroup(containerId, devices, defaultOrient = 'portrait', groupLabel = '') {
-      const container = document.getElementById(containerId);
-      // 按品牌分子组
-      const byBrand = {};
-      devices.forEach(d => {
-        const b = d.brand;
-        if (!byBrand[b]) byBrand[b] = [];
-        byBrand[b].push(d);
-      });
+      Object.entries(groups).forEach(([key, list]) => {
+        const body = document.getElementById('body-' + key);
+        const count = document.getElementById('count-' + key);
+        if (count) count.textContent = list.length;
 
-      container.innerHTML = Object.entries(byBrand).map(([brand, list]) => {
-        const brandName = ({
-          'ios': 'Apple',
-          'huawei': '华为',
-          'xiaomi': '小米',
-          'oppo': 'OPPO',
-          'vivo': 'vivo',
-          'honor': '荣耀',
-          'mp': '通用',
-        })[brand] || brand;
-        const gid = `${containerId}-${brand}`;
-        return `
-          <div class="group open" id="${gid}">
-            <div class="group-header" onclick="toggleGroup('${gid}')">
-              <span class="arrow">▶</span>
-              <span>${brandName}</span>
-              <span class="count">${list.length}</span>
-            </div>
-            <div class="group-body">
-              ${list.map(d => `
-                <div class="device-item">
-                  <input type="checkbox"
-                         id="cb-${d.id}"
-                         onchange="onCheck('${d.id}', '${d.form}', '${defaultOrient}', this.checked)">
-                  <label for="cb-${d.id}" style="cursor:pointer;flex:1;">
-                    ${d.name}
+        // 按品牌分子组
+        const byBrand = {};
+        list.forEach(d => {
+          const b = d.brand;
+          if (!byBrand[b]) byBrand[b] = [];
+          byBrand[b].push(d);
+        });
+
+        body.innerHTML = Object.entries(byBrand).map(([brand, items]) => {
+          const brandName = BRAND_LABEL[brand] || brand;
+          const subId = `sub-${key}-${brand}`;
+          return `
+            <div class="group open" id="${subId}">
+              <div class="group-header" onclick="toggleGroup('${subId}')">
+                <span class="arrow">▶</span><span>${brandName}</span>
+                <span class="count">${items.length}</span>
+              </div>
+              <div class="group-body" style="display:block;">
+                ${items.map(d => `
+                  <div class="device-item ${d.id === state.selectedId ? 'selected' : ''}"
+                       id="item-${d.id}"
+                       data-device-id="${d.id}"
+                       onclick="selectDevice('${d.id}')">
+                    <span>${d.name}</span>
                     <span class="spec">${d.w}×${d.h}</span>
-                  </label>
-                </div>
-              `).join('')}
+                  </div>
+                `).join('')}
+              </div>
             </div>
-          </div>
-        `;
-      }).join('');
+          `;
+        }).join('');
+      });
     }
 
     function toggleGroup(gid) {
       document.getElementById(gid)?.classList.toggle('open');
     }
 
-    function onCheck(deviceId, form, defaultOrient, checked) {
-      const all = [...DEVICES, ...MP_DEVICES];
-      const dev = all.find(d => d.id === deviceId);
-      if (!dev) return;
-      // 同时勾选竖屏 + 横屏
-      for (const orient of ['portrait', 'landscape']) {
-        const k = orientKey(deviceId, orient);
-        if (checked) {
-          const isLandscape = orient === 'landscape';
-          selected.set(k, {
-            device: dev,
-            orient,
-            w: isLandscape ? dev.h : dev.w,
-            h: isLandscape ? dev.w : dev.h,
-            form: dev.form,
-          });
-        } else {
-          selected.delete(k);
-        }
+    // ========== 选中设备 ==========
+    function selectDevice(id) {
+      state.selectedId = id;
+      // 更新高亮
+      document.querySelectorAll('.device-item').forEach(el => {
+        el.classList.toggle('selected', el.dataset.deviceId === id);
+      });
+      // 微信小程序：禁横屏切换
+      const dev = DEVICES.find(d => d.id === id);
+      const isMp = dev?.form === 'mp';
+      document.getElementById('ctrl-orient').disabled = isMp;
+      document.getElementById('ctrl-hint').textContent = isMp
+        ? '微信小程序禁用横屏切换（开发者无需关心横屏）'
+        : '单选设备，下拉切换横竖屏与分辨率';
+      renderStage();
+    }
+
+    function onOrientChange() {
+      state.orient = document.getElementById('ctrl-orient').value;
+      renderStage();
+    }
+
+    function onResolutionChange() {
+      const v = document.getElementById('ctrl-resolution').value;
+      state.resolution = v;
+      document.getElementById('custom-res').style.display = v === 'custom' ? 'flex' : 'none';
+      if (v === 'custom') {
+        const w = parseInt(document.getElementById('ctrl-w').value) || 0;
+        const h = parseInt(document.getElementById('ctrl-h').value) || 0;
+        state.customW = w; state.customH = h;
       }
       renderStage();
     }
 
-    function selectAll(yes) {
-      const ids = [...DEVICES, ...MP_DEVICES].map(d => d.id);
-      ids.forEach(id => {
-        const cb = document.getElementById('cb-' + id);
-        if (cb && cb.checked !== yes) {
-          cb.checked = yes;
-          cb.dispatchEvent(new Event('change'));
+    // 监听自定义输入
+    document.addEventListener('input', (e) => {
+      if (e.target.id === 'ctrl-w' || e.target.id === 'ctrl-h') {
+        state.customW = parseInt(document.getElementById('ctrl-w').value) || 0;
+        state.customH = parseInt(document.getElementById('ctrl-h').value) || 0;
+        if (state.resolution === 'custom') renderStage();
+      }
+    });
+
+    // ========== 解析最终宽高 ==========
+    function resolveDimensions(dev) {
+      let w = dev.w, h = dev.h;
+      // 横屏切换
+      if (state.orient === 'landscape' && dev.form !== 'mp') {
+        [w, h] = [h, w];
+      }
+      // 分辨率覆盖
+      if (state.resolution === 'custom' && state.customW > 0 && state.customH > 0) {
+        w = state.customW; h = state.customH;
+      } else if (state.resolution !== 'auto' && state.resolution.includes('x')) {
+        const [rw, rh] = state.resolution.split('x').map(Number);
+        w = rw; h = rh;
+        if (state.orient === 'landscape' && dev.form !== 'mp') {
+          [w, h] = [h, w];
         }
-      });
+      }
+      return { w, h };
     }
 
-    function selectRecommended() {
-      // 默认推荐：每品牌 1-2 个代表
-      const recIds = [
-        'iphone-15-pro-max',
-        'huawei-mate60', 'xiaomi-14-pro', 'oppo-findx7', 'vivo-x100', 'honor-magic6',
-        'huawei-mate-x5', 'xiaomi-mix-fold3', 'honor-magic-v2',
-        'mp-iphone-15', 'mp-huawei-mate60', 'mp-honor-magic-v2',
-      ];
-      selectAll(false);
-      recIds.forEach(id => {
-        const cb = document.getElementById('cb-' + id);
-        if (cb) {
-          cb.checked = true;
-          cb.dispatchEvent(new Event('change'));
-        }
-      });
-    }
-
-    // ========================================================================
-    // 主区域渲染
-    // ========================================================================
+    // ========== 渲染主区域 ==========
     function renderStage() {
       const stage = document.getElementById('stage');
-      if (selected.size === 0) {
-        stage.innerHTML = '<div class="main-empty">从左侧勾选要预览的设备型号</div>';
+      if (!state.selectedId) {
+        stage.innerHTML = `<div class="main-empty"><div class="icon">📱</div><div>从左侧选择一个设备型号开始预览</div></div>`;
         return;
       }
-
-      const items = Array.from(selected.values());
-      stage.innerHTML = items.map(it => deviceCard(it)).join('');
+      const dev = DEVICES.find(d => d.id === state.selectedId);
+      if (!dev) return;
+      const { w, h } = resolveDimensions(dev);
+      stage.innerHTML = deviceCard(dev, w, h);
     }
 
-    function deviceCard(it) {
-      const { device, orient, w, h, form } = it;
-      const orientText = orient === 'portrait' ? '竖屏' : '横屏';
+    function deviceCard(dev, w, h) {
+      const isLandscape = w > h;
+      const orientText = isLandscape ? '横屏' : '竖屏';
       const formTag = ({
         'phone': { class: 'phone', text: '手机' },
         'foldable': { class: 'foldable', text: '折叠屏' },
         'mp': { class: 'mp', text: '小程序' },
-      })[form] || { class: '', text: form };
-
+      })[dev.form];
       const brandTag = ({
-        'ios': 'iOS',
-        'huawei': 'Harmony', 'xiaomi': 'MIUI', 'oppo': 'ColorOS',
-        'vivo': 'OriginOS', 'honor': 'MagicOS',
-      })[device.brand] || '通用';
+        'ios': 'iOS', 'huawei': 'Harmony', 'xiaomi': 'MIUI',
+        'oppo': 'ColorOS', 'vivo': 'OriginOS', 'honor': 'MagicOS',
+      })[dev.brand] || '通用';
 
-      // iframe 高度按比例算（高度限制在 360~720px 之间）
+      // iframe 高度按比例算（限制 360~720px）
       const aspect = w / h;
-      const heightPx = Math.min(720, Math.max(360, 460 / aspect));
-      const iframeUrl = `http://localhost:9000/?device=${encodeURIComponent(device.name)}&w=${w}&h=${h}&orient=${orient}`;
+      const heightPx = Math.min(720, Math.max(360, 480 / aspect));
+      const iframeUrl = `http://localhost:9000/?device=${encodeURIComponent(dev.name)}&w=${w}&h=${h}&orient=${orientText}`;
 
       let frameInner;
-      if (form === 'mp') {
-        // 微信小程序外壳：状态栏 + 导航栏 + 内容 + tabbar
+      if (dev.form === 'mp') {
         frameInner = `
           <div class="mp-shell">
             <div class="mp-statusbar">
               <span class="time">15:21</span>
               <span class="icons">📶 🔋</span>
-              <div class="mp-capsule"></div>
+              <div class="mp-capsule">
+                <div class="dot"></div>
+                <div class="bar"></div>
+              </div>
             </div>
             <div class="mp-navbar">
               <span class="back">‹</span>
@@ -600,16 +755,16 @@
       }
 
       return `
-        <div class="device" data-form="${form}" data-orient="${orient}">
+        <div class="device" data-form="${dev.form}" data-orient="${orientText}">
           <div class="device-label">
-            <span class="device-name">${device.name}</span>
+            <span class="device-name">${dev.name}</span>
             <span class="device-tag ${formTag.class}">${formTag.text}</span>
             <span class="device-tag">${brandTag}</span>
           </div>
           <div class="device-label">
-            <span class="device-dim">${w}×${h} · ${orientText} · ${device.ratio || ''}</span>
+            <span class="device-dim">${w}×${h} · ${orientText} · ${state.resolution === 'auto' ? '跟随设备' : state.resolution}</span>
           </div>
-          <div class="device-frame" style="height:${heightPx}px;">
+          <div class="device-frame" style="height:${heightPx}px; width:auto; aspect-ratio:${w}/${h}; max-width:100%;">
             ${frameInner}
           </div>
         </div>
@@ -620,20 +775,16 @@
       document.querySelectorAll('iframe').forEach(f => f.src = f.src);
     }
 
-    // ========================================================================
-    // 初始化
-    // ========================================================================
-    buildGroup('group-ios', DEVICES.filter(d => d.brand === 'ios'));
-    buildGroup('group-android', DEVICES.filter(d => d.brand !== 'ios' && d.form === 'phone'));
-    buildGroup('group-foldable', DEVICES.filter(d => d.form === 'foldable'));
-    buildGroup('group-mp', MP_DEVICES);
+    // ========== 初始化 ==========
+    buildSidebar();
+    selectDevice('iphone-15-pro-max'); // 默认 iPhone 15 Pro Max
 
     // 后端探活
     fetch('http://localhost:9999/api/health')
       .then(r => r.json())
       .then(j => {
         const s = document.getElementById('backend-status');
-        s.textContent = '✓ ' + (j.service || 'ok');
+        s.textContent = '✓ ' + (j.service || 'ok') + ' [turso]';
         s.className = 'status ok';
       })
       .catch(() => {
@@ -641,9 +792,6 @@
         s.textContent = '✗ 9999 offline';
         s.className = 'status err';
       });
-
-    // 默认勾选「推荐」一组
-    selectRecommended();
   </script>
 </body>
 </html>
