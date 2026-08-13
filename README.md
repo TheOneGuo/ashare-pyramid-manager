@@ -1,88 +1,92 @@
-# A股正金字塔仓位管理器-节节高 · A-Share Pyramid Position Manager
+# 节节高 · A 股正金字塔仓位管理器
 
-> **一句话定位**：A 股正金字塔加仓法移动端管理器，AI 研报解读 + 30 秒新闻刷新 + 金字塔仓位算法一体化。
+> uni-app 三端一体（微信小程序 + Android + iOS）的 A 股仓位管理工具，基于正金字塔加仓算法 + ATR 自适应止损。
 
-[![Stars](https://img.shields.io/github/stars/TheOneGuo/ashare-pyramid-manager)](https://github.com/TheOneGuo/ashare-pyramid-manager)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+## 三 Tab 功能
 
-## 📱 多端覆盖
+1. **新闻** —— 财经快讯，30s 自动刷新（已接入 Turso 远程数据库 + Yahoo/BBC 真实 RSS 源）
+2. **研报** —— AI 研报解读（开发中）
+3. **持仓** —— AI 持仓分析（金字塔算法已移植到 TS，37/37 单测通过）
 
-| 平台 | 端 | 框架 |
-|---|---|---|
-| 微信小程序 | 微信 | uni-app (Vue 3) |
-| Android | App | uni-app 编译原生 |
-| iOS | App | uni-app 编译原生 |
+## 后端
 
-**自适应布局**：直板机 / 折叠屏 / 横竖屏自动重排，UI 自适应窗口宽度与折叠状态。
+`server/` —— Node.js + Express + libSQL/Turso
 
-## 🎯 核心功能
-
-### 1. 新闻（30 秒自动刷新）
-进入新闻 Tab 自动每 30 秒拉取一次财经快讯，支持多源（财联社 / 金十数据 / 华尔街见闻 / 新浪财经）。
-
-### 2. AI 研报解读
-每日定时抓取券商研报，调用大模型提炼：
-- 📌 当日重点（≤300 字）
-- ⚠️ 风险点
-- 🎯 目标价 / 估值结论
-
-### 3. AI 持仓分析 + 正金字塔仓位算法
-- 持仓截图一键 OCR 提取（代码/成本/数量）
-- 基于 ATR 自适应（PRD V4.1）：
-  - 首笔止损 = 基准价 - 3×ATR
-  - 加仓间隔 [10%~12%]（科创/创业板上浮到 15%~20%）
-  - 四档止盈 [1.58×, 1.68×, 1.78×, 1.88×]
-  - 高价降级手数比例 4:3:2
-- 完整 A 股费率（佣金 + 过户费 + 印花税）
-
-## 🏗️ 项目结构
-
-```
-ashare-pyramid-manager/
-├── src/                  # uni-app 客户端（Vue 3）
-│   ├── pages/            # 三 Tab：news / research / portfolio
-│   ├── components/       # 自适应卡片 + 金字塔可视化
-│   ├── utils/            # pyramid.js（算法 JS 移植版）+ fee.js
-│   └── stores/           # pinia
-├── server/               # 后端（uniCloud / Express）
-│   ├── news-collector/   # 移植自 telegram_news.py
-│   ├── research-ai/      # LLM 研报解读
-│   └── portfolio-analyzer/  # 持仓分析编排
-├── docs/                 # 文档 + 项目备忘
-├── .github/workflows/    # CI/CD（lint + build + release）
-└── android/ ios/         # uni-app 编译产物
+```bash
+cd server
+export TURSO_DATABASE_URL="libsql://your-db.turso.io"
+export TURSO_AUTH_TOKEN="eyJ..."
+export NEWS_SOURCE_MODE=real
+node src/index.js
+# → http://localhost:9999/api/news
+# → http://localhost:9999/preview/  (多端预览)
 ```
 
-## 📊 数据源
+### API
 
-| 数据 | 来源 |
+| 路径 | 说明 |
 |---|---|
-| 实时行情 | akshare / 新浪财经 / 东方财富 |
-| 新闻 | 财联社 RSS / 金十数据 / 华尔街见闻 |
-| 研报 | 东方财富研报中心 / 慧博投研 |
-| OCR | 百度 OCR / 腾讯云 OCR |
+| `/api/health` | 健康检查（返回 db mode） |
+| `/api/news?limit=30&since=ts` | 财经新闻（30s 轮询） |
+| `/preview/` | 多端响应式预览页（iOS/Android/折叠屏/微信小程序） |
 
-## ⚠️ 免责声明
+### 已对接 Turso 远程 DB
 
-本项目所有 AI 解读内容**不构成投资建议**。投资有风险，入市需谨慎。
+- DB 名：`ashare-pyramid-server`（TheOneGuo/aws-ap-northeast-1）
+- 表：`news_items`, `research_items`, `portfolio_snapshots`
+- 真实模式已抓取 40+ 条 Yahoo Finance + BBC Business 写入远程
 
-## 🚧 当前状态
+## 多端预览
 
-🚧 **v0.1.0-dev** — 项目初始化阶段
+`preview/index.html` —— 同一台机器上看 24 个设备的实时预览：
 
-进度：
-- [x] 项目结构搭建
-- [x] 金字塔算法文档化
-- [ ] 算法 Python→JS 翻译 + 单测
-- [ ] uni-app 三 Tab 骨架
-- [ ] 折叠屏自适应栅格
-- [ ] uniCloud 后端
-- [ ] 三端打包上架
+- iOS（4 款 iPhone 直板机）
+- Android（6 个品牌 × 2-3 款热销直板机）
+- Android 折叠屏（华为 Mate X5 / 小米 MIX Fold 3 / OPPO Find N3 / vivo X Fold3 / 荣耀 Magic V2/Vs3）
+- 微信小程序（9 款机型 + 完整微信外壳：状态栏+胶囊+导航栏+49px tabbar）
 
-详细进度见 [`docs/项目备忘_v2.md`](docs/)
+**单选设备 + 横竖屏下拉 + 分辨率下拉**（微信小程序无横竖屏切换）。预览页指向 `http://localhost:9000/` 的 uni-app H5 dev server。
 
-## 📜 License
+## 算法核心
 
-MIT © 2026 TheOneGuo
+`src/utils/pyramid.ts` —— Python `pyramid_atr_engine.py` 完整 544 行移植版：
 
-算法源自 [A 股景气捕手 (Ashare Heatmap Horizon)](https://github.com/TheOneGuo/ashare-heatmap-horizon-platform)，遵循原项目许可。
+- 4 档加仓（4:3:2:1 手数比，几何间隔加仓）
+- ATR 自适应止损 5%-8%
+- 加仓间隔：主板 10%-12% / 20% 板上浮 15%-20%
+- 四档止盈 158%-192%
+- A 股完整费率（佣金 + 过户费 + 卖出印花税 + 最低 5 元佣金分段求解）
+- 板块涨跌停限制（主板 ±10%、创业/科创 ±20%、北交所 ±30%、ST ±5%）
+- 科创板 200 股一手
+- 单标的资金分配上沿 = 可分配余额，下沿 = 0
+- 投入率 92%、封顶 94%、剩余 6%-10% 区间目标
+
+37/37 单测通过（`npm test`）。
+
+## 跑通方式
+
+```bash
+npm install
+npm run dev:h5              # → http://localhost:9000/  H5 dev
+npm run dev:mp-weixin       # → 微信小程序开发工具打开 dist/dev/mp-weixin
+npm run test                # 跑算法单测
+npm run type-check          # TypeScript 类型检查
+```
+
+## 关键约束
+
+- uni-app Vue 3 一码三端
+- **akshare 等第三方库仅作开发参考，不可商用**
+- **Turso / GitHub token 禁止 commit / 截图 / 写入 .env 入仓**
+- AI 解读功能仅做信息聚合，不构成投资建议
+- 算法核心版权归原项目 `ashare-heatmap-horizon-platform` 致谢
+
+## 原项目源码定位
+
+`C:\Users\TheOne\WorkBuddy\2026-06-13-12-43-21\ashare-heatmap-horizon-platform\heatmap_app\`
+
+- `pyramid_atr_engine.py` 544 行 → 移植为 `src/utils/pyramid.ts`
+- `position_strategy.py` → 持仓分析编排
+- `telegram_news.py` → 新闻采集（思路）
+- `report_parser.py` + `research_task_runner.py` → 研报 30s 轮询任务
+- `collectors/` 数据源采集整套
