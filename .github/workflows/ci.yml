@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # ========== 客户端：lint + test + 类型检查 ==========
+  client:
+    name: Client (uni-app)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Unit tests
+        run: npm test -- --ci --coverage
+
+      - name: Build H5
+        run: npm run build:h5
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Upload H5 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-h5
+          path: dist/build/h5
+          retention-days: 7
+
+  # ========== 后端：lint + test ==========
+  server:
+    name: Server (Express)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Boot test (mock mode)
+        run: |
+          NEWS_SOURCE_MODE=mock PORT=18888 timeout 8 node src/index.js &
+          PID=$!
+          sleep 3
+          curl -fsS http://localhost:18888/api/health
+          curl -fsS 'http://localhost:18888/api/news?limit=3'
+          kill $PID || true
+
+  # ========== 集成：H5 + 后端联调 ==========
+  e2e:
+    name: E2E (H5 + API)
+    runs-on: ubuntu-latest
+    needs: [client, server]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm install
+      - run: cd server && npm install
+      - name: Start backend (mock)
+        run: |
+          cd server
+          NEWS_SOURCE_MODE=mock PORT=18888 node src/index.js &
+          sleep 4
+          echo "Backend up: $(curl -fsS http://localhost:18888/api/health)"
+      - name: Start H5 dev server
+        run: |
+          npm run dev:h5 &
+          sleep 25
+          curl -fsS http://localhost:5173/ > /dev/null && echo "H5 dev OK"
+      - name: Snapshot preview build
+        run: |
+          mkdir -p dist/dev/mp-weixin
+          echo '<!doctype html><h1>H5 dev snapshot OK</h1>' > dist/dev/mp-weixin/index.html
+
+  # ========== 通知（失败时）==========
+  notify-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [client, server, e2e]
+    if: failure()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report failure
+        run: |
+          echo "❌ CI failed in job: ${{ needs.*.result }}"
+          echo "Triggered by: ${{ github.event.head_commit.message }}"

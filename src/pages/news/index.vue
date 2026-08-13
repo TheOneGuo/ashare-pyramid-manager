@@ -34,6 +34,9 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
+import { env } from '@/utils/env'
+
+const API_BASE = env.API_BASE_URL || 'http://localhost:9999'
 
 interface NewsItem {
   id: string
@@ -54,18 +57,55 @@ const POLL_INTERVAL_MS = 30 * 1000
 async function fetchNews() {
   loading.value = true
   try {
-    // TODO: 接后端 /api/news，这里先 mock 数据验证骨架
-    await new Promise((r) => setTimeout(r, 200))
-    items.value = [
-      {
-        id: String(Date.now()),
-        title: '【骨架验证】新闻快讯列表已通',
-        summary: '后端接入见 docs/architecture.md；本条为占位。',
-        source: '财联社',
-        time: Date.now(),
-      },
-    ]
-    lastUpdated.value = new Date().toLocaleTimeString('zh-CN')
+    // 接后端 /api/news（uni.request 跨端统一）
+    const res = await uni.request({
+      url: API_BASE + '/api/news?limit=30',
+      method: 'GET',
+      timeout: 8000,
+    })
+    // #ifdef H5
+    const data = res && (res.data || res)
+    // #endif
+    // #ifndef H5
+    const data = res && res.data
+    // #endif
+    if (data && data.ok && Array.isArray(data.items)) {
+      items.value = data.items.map((it: any) => ({
+        id: it.id,
+        title: it.title,
+        summary: it.summary,
+        source: it.source,
+        url: it.url,
+        time: it.published_at,
+      }))
+      lastUpdated.value = new Date(data.server_time || Date.now()).toLocaleTimeString('zh-CN')
+    } else {
+      // 兜底：保持前值，显示提示
+      if (items.value.length === 0) {
+        items.value = [
+          {
+            id: 'fallback-' + Date.now(),
+            title: '暂未拉到数据，请检查后端',
+            summary: '后端地址：' + API_BASE,
+            source: '系统',
+            time: Date.now(),
+          },
+        ]
+      }
+    }
+  } catch (e: any) {
+    console.error('[news] fetch failed', e)
+    if (items.value.length === 0) {
+      items.value = [
+        {
+          id: 'err-' + Date.now(),
+          title: '后端请求失败: ' + (e?.errMsg || e?.message || 'unknown'),
+          summary: '请确认 express 服务在 ' + API_BASE + ' 运行',
+          source: '系统',
+          time: Date.now(),
+        },
+      ]
+    }
   } finally {
     loading.value = false
   }
