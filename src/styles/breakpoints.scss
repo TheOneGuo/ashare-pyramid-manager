@@ -1,0 +1,16 @@
+// 断点（rpx）。uni-app H5 端可用 @media。
+// 命名遵循 Tailwind 风格但以 rpx 为单位（750 设计稿）。
+$bp-sm:  400rpx;  // 小屏机
+$bp-md:  600rpx;  // 折叠屏 / 大屏机
+$bp-lg:  900rpx;  // 平板
+$bp-xl:  1200rpx; // 桌面
+
+// H5 / Web 专用：CSS 媒体查询。
+// 小程序端没有 @media 响应式，需要用 JS 监听 resize。
+@mixin sm { @media (min-width: #{$bp-sm}) { @content; } }
+@mixin md { @media (min-width: #{$bp-md}) { @content; } }
+@mixin lg { @media (min-width: #{$bp-lg}) { @content; } }
+@mixin xl { @media (min-width: #{$bp-xl}) { @content; } }
+
+@mixin landscape { @media (orientation: landscape) { @content; } }
+@mixin portrait  { @media (orientation: portrait)  { @content; } }

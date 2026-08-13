@@ -1,0 +1,93 @@
+/**
+ * uni-app 内置常用样式变量（保留）
+ * 插件市场（https://ext.dcloud.net.cn）大量三方插件依赖这些变量
+ */
+
+/* 行为相关颜色 */
+$uni-color-primary: #D4AF37;
+$uni-color-success: #00B578;
+$uni-color-warning: #F0AD4E;
+$uni-color-error:   #FF4D4F;
+
+/* 文字基本颜色 */
+$uni-text-color: #F5F5F7;
+$uni-text-color-inverse: #0D1B2A;
+$uni-text-color-grey: #8A8A8E;
+$uni-text-color-placeholder: #808080;
+$uni-text-color-disable: #c0c0c0;
+
+/* 背景颜色 */
+$uni-bg-color: #0D1B2A;
+$uni-bg-color-grey: #152739;
+$uni-bg-color-hover: #1B2C3F;
+$uni-bg-color-mask: rgba(0, 0, 0, 0.4);
+
+/* 边框颜色 */
+$uni-border-color: rgba(212, 175, 55, 0.18);
+
+/* 文字尺寸 */
+$uni-font-size-sm: 24rpx;
+$uni-font-size-base: 28rpx;
+$uni-font-size-lg: 32rpx;
+
+/* 图片尺寸 */
+$uni-img-size-sm: 20px;
+$uni-img-size-base: 26px;
+$uni-img-size-lg: 40px;
+
+/* Border Radius */
+$uni-border-radius-sm: 8rpx;
+$uni-border-radius-base: 12rpx;
+$uni-border-radius-lg: 20rpx;
+$uni-border-radius-circle: 50%;
+
+/* 水平间距 */
+$uni-spacing-row-sm: 5px;
+$uni-spacing-row-base: 10px;
+$uni-spacing-row-lg: 15px;
+
+/* 垂直间距 */
+$uni-spacing-col-sm: 4px;
+$uni-spacing-col-base: 8px;
+$uni-spacing-col-lg: 12px;
+
+/* 透明度 */
+$uni-opacity-disabled: 0.3;
+
+/* 文章场景相关 */
+$uni-color-title: #F5F5F7;
+$uni-font-size-title: 40rpx;
+$uni-color-subtitle: #C0C0C5;
+$uni-font-size-subtitle: 32rpx;
+$uni-color-paragraph: #D5D5DA;
+$uni-font-size-paragraph: 28rpx;
+
+
+/**
+ * 节节高项目自定义变量（追加在下方，全局可访问）
+ * 详见 src/styles/theme.scss 注释
+ */
+
+$app-bg:          #0D1B2A;
+$app-card-bg:     #152739;
+$app-border:      rgba(212, 175, 55, 0.18);
+$app-text:        #F5F5F7;
+$app-text-muted:  #8A8A8E;
+$app-text-inverse:#0D1B2A;
+$app-accent:      #D4AF37;
+$app-accent-soft: rgba(212, 175, 55, 0.35);
+$app-up:          #FF4D4F;
+$app-down:        #00B578;
+$app-warn:        #F0AD4E;
+$app-error:       #DD524D;
+
+$radius-sm:   8rpx;
+$radius-base: 12rpx;
+$radius-lg:   20rpx;
+$radius-xl:   28rpx;
+
+$spacing-sm:   8rpx;
+$spacing-base: 16rpx;
+$spacing-md:  24rpx;
+$spacing-lg:  32rpx;
+$spacing-xl:  48rpx;

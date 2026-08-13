@@ -1,0 +1,30 @@
+// 主题：深蓝 + 金，金融配色。
+// 这里只放节节高项目自定义的变量；
+// uni-app 内置的 $uni-* 变量在 src/uni.scss 里。
+
+// 颜色
+$app-bg:          #0D1B2A;  // 主背景（深蓝）
+$app-card-bg:     #152739;  // 卡片背景
+$app-border:      rgba(212, 175, 55, 0.18);
+$app-text:        #F5F5F7;
+$app-text-muted:  #8A8A8E;
+$app-text-inverse:#0D1B2A;
+$app-accent:      #D4AF37;  // 主金
+$app-accent-soft: rgba(212, 175, 55, 0.35);
+$app-up:          #FF4D4F;   // A 股红涨
+$app-down:        #00B578;   // A 股绿跌
+$app-warn:        #F0AD4E;
+$app-error:       #DD524D;
+
+// 圆角
+$radius-sm:   8rpx;
+$radius-base: 12rpx;
+$radius-lg:   20rpx;
+$radius-xl:   28rpx;
+
+// 间距
+$spacing-sm:  8rpx;
+$spacing-base: 16rpx;
+$spacing-md:  24rpx;
+$spacing-lg:  32rpx;
+$spacing-xl:  48rpx;

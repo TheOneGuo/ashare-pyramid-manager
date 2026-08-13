@@ -1,0 +1,49 @@
+{
+  "pages": [
+    {
+      "path": "pages/news/index",
+      "style": {
+        "navigationBarTitleText": "新闻快讯",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/research/index",
+      "style": {
+        "navigationBarTitleText": "AI 研报"
+      }
+    },
+    {
+      "path": "pages/portfolio/index",
+      "style": {
+        "navigationBarTitleText": "持仓分析"
+      }
+    }
+  ],
+  "tabBar": {
+    "color": "#8A8A8E",
+    "selectedColor": "#D4AF37",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/news/index",
+        "text": "新闻"
+      },
+      {
+        "pagePath": "pages/research/index",
+        "text": "研报"
+      },
+      {
+        "pagePath": "pages/portfolio/index",
+        "text": "持仓"
+      }
+    ]
+  },
+  "globalStyle": {
+    "navigationBarTextStyle": "white",
+    "navigationBarTitleText": "节节高",
+    "navigationBarBackgroundColor": "#0D1B2A",
+    "backgroundColor": "#0D1B2A"
+  }
+}
