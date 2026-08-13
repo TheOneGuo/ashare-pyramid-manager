@@ -1,0 +1,71 @@
+# 依赖
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# uni-app 编译产物
+unpackage/
+dist/build/
+dist/dev/
+
+# 微信小程序 IDE
+.project
+.miniprogram/
+
+# HBuilderX
+.hbuilderx/
+
+# 环境变量（绝对不能提交）
+.env
+.env.local
+.env.*.local
+*.env
+
+# 密钥（绝对不能提交）
+secret_key.txt
+*.pem
+*.key
+
+# 数据库
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.db
+
+# 日志
+*.log
+logs/
+
+# 缓存
+.cache/
+.runtime_cache/
+.external_cache/
+__pycache__/
+*.pyc
+
+# 打包
+release/
+releases/
+packaging/
+dist/AshareHeatmap/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+nul
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 工作区备份
+.qclaw-backups/
+*.bak
+
+# 工作区临时
+.runtime_cache/
+build/
