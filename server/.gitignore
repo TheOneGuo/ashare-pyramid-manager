@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+
+# 环境变量（不入仓，本地手填或通过 OS env 注入）
+.env
+.env.local
+
+# 本地数据库文件（开发用 Turso 远程，正式跑本地不会用文件 sqlite）
+*.sqlite
+*.sqlite-journal
+dev.sqlite
+
+# 日志
+*.log
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
