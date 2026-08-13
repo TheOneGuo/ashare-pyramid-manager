@@ -7,7 +7,9 @@ export interface AppEnv {
   TURSO_DATABASE_URL: string
   /** Turso 鉴权 token，敏感信息，仅运行时使用 */
   TURSO_AUTH_TOKEN: string
-  /** 后端 API base URL（uniCloud / 自托管服务） */
+  /** 后端 API base URL（uniCloud / 自托管服务）
+   *  ⚠️ 默认值只用于本地 dev（H5 dev → 5173 调 9999）。生产环境必须经 vite define / 小程序 getStorageSync 显式注入。
+   */
   API_BASE_URL: string
 }
 
@@ -30,5 +32,6 @@ function read(key: keyof AppEnv, fallback = ''): string {
 export const env: AppEnv = {
   TURSO_DATABASE_URL: read('TURSO_DATABASE_URL', ''),
   TURSO_AUTH_TOKEN: read('TURSO_AUTH_TOKEN', ''),
-  API_BASE_URL: read('API_BASE_URL', ''),
+  // 本地默认 dev 后端；小程序/App 端需要经 getStorageSync('ENV').API_BASE_URL 覆盖
+  API_BASE_URL: read('API_BASE_URL', 'http://localhost:9999'),
 }
