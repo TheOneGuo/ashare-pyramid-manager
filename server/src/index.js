@@ -30,6 +30,30 @@ const MODE = (process.env.NEWS_SOURCE_MODE || 'real').toLowerCase();
 const PREVIEW_DIR = path.resolve(__dirname, '../../preview');
 
 const app = express();
+
+// =====================================================
+// CORS - 开发模式允许所有 origin（H5 dev 5173 + preview file://）
+// 生产模式收窄为白名单
+// =====================================================
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || '*').split(',').map(s => s.trim());
+app.use((req, res, next) => {
+  const origin = req.headers.origin || '';
+  const allowed = CORS_ORIGINS.includes('*') ||
+    CORS_ORIGINS.includes(origin) ||
+    origin === 'null' ||  // file:// origin
+    /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
+    /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
+  if (allowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    res.setHeader('Access-Control-Max-Age', '600');
+  }
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
 app.use(express.json({ limit: '2mb' }));
 
 let lastRefreshAt = 0;
