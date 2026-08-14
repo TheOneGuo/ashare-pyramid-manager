@@ -615,6 +615,7 @@ function buildSteps(it: PlanItem): any[] {
   rows.forEach((r, i) => {
     const isOpen = i === 0
     cumShares += r.shares
+    // 开/加仓这一步
     steps.push({
       kind: isOpen ? 'open' : 'add',
       kindLabel: isOpen ? '首笔建仓' : `加仓·第${i}笔`,
@@ -625,21 +626,18 @@ function buildSteps(it: PlanItem): any[] {
       done: false,
       armed: false,
     })
-  })
-  const tp = it.plan_json?.tp_rows || []
-  if (tp.length) {
-    const last = tp[tp.length - 1]
+    // 紧接着：对“已持有的全部仓位”设置动态止损（级联）
     steps.push({
       kind: 'stop',
-      kindLabel: '动态止损（平仓）',
-      price: last.dynamic_stop ?? null,
+      kindLabel: i === 0 ? '动态止损（首笔）' : `动态止损（全部${cumShares}股）`,
+      price: r.stop,
       shares: cumShares,
       amount: 0,
-      info: last.dynamic_stop != null ? `触发价 ${fmtMoney(last.dynamic_stop, 2)} · 平仓 ${cumShares}股` : '全平',
+      info: `对全部 ${cumShares} 股设止损价 ${fmtMoney(r.stop, 2)}（本档全仓止损价）`,
       done: false,
       armed: false,
     })
-  }
+  })
   return steps
 }
 function onTrackEval() {
