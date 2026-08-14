@@ -98,6 +98,43 @@ CREATE TABLE IF NOT EXISTS portfolio_holdings (
   updated_at   INTEGER NOT NULL,
   PRIMARY KEY (stock_code)
 );
+
+CREATE TABLE IF NOT EXISTS portfolio_recommendations (
+  role         TEXT NOT NULL,    -- institution / hot_money / northbound / retail
+  stock_code   TEXT NOT NULL,
+  stock_name   TEXT NOT NULL DEFAULT '',
+  weight       REAL NOT NULL DEFAULT 0,
+  note         TEXT NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  PRIMARY KEY (role, stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rec_role ON portfolio_recommendations(role, weight DESC);
+
+-- 账户与保证金账本：事件流（init/deposit/withdraw/close_position/fee_rate_change）
+CREATE TABLE IF NOT EXISTS portfolio_ledger_events (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  type      TEXT NOT NULL,
+  payload   TEXT NOT NULL DEFAULT '{}',   -- 金额/代码/数量/费率等明细
+  ts        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_ts ON portfolio_ledger_events(ts DESC);
+
+-- 持仓方案跟踪：分析后生成的固定项（每标的一份）
+CREATE TABLE IF NOT EXISTS portfolio_plans (
+  stock_code   TEXT NOT NULL,
+  stock_name   TEXT NOT NULL DEFAULT '',
+  p0           REAL NOT NULL,
+  atr          REAL NOT NULL,
+  atr_pct      REAL,
+  total_invest REAL,
+  plan_json    TEXT NOT NULL DEFAULT '{}',  -- rows + tp_rows + 派生步骤
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  PRIMARY KEY (stock_code)
+);
 `;
 
 let initialized = false;
@@ -326,6 +363,215 @@ export async function listHoldings() {
     added_at: Number(row.added_at),
     updated_at: Number(row.updated_at),
   }));
+}
+
+// =====================================================
+// Portfolio Recommendations (4 role：机构/游资/北向/散户)
+// 数据由用户手动录入（原项目 FactorEngine + 资金流向算法未搬）
+// =====================================================
+
+export const ROLE_LABELS = {
+  institution: '机构',
+  hot_money: '游资',
+  northbound: '北向资金',
+  retail: '散户',
+};
+
+export async function listRecommendations(role = null) {
+  let sql = `SELECT role,stock_code,stock_name,weight,note,created_at,updated_at
+             FROM portfolio_recommendations`;
+  const args = [];
+  if (role) {
+    sql += ` WHERE role = ?`;
+    args.push(role);
+  }
+  sql += ` ORDER BY role, weight DESC, stock_code`;
+  const r = await client.execute({ sql, args });
+  return r.rows.map((row) => ({
+    role: row.role,
+    stock_code: row.stock_code,
+    stock_name: row.stock_name,
+    weight: Number(row.weight),
+    note: row.note || '',
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  }));
+}
+
+export async function upsertRecommendation({ role, stock_code, stock_name, weight, note }) {
+  await client.execute({
+    sql: `INSERT INTO portfolio_recommendations(role,stock_code,stock_name,weight,note,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?)
+          ON CONFLICT(role,stock_code) DO UPDATE SET
+            stock_name=excluded.stock_name,
+            weight=excluded.weight,
+            note=excluded.note,
+            updated_at=excluded.updated_at`,
+    args: [
+      String(role).slice(0, 32),
+      String(stock_code).padStart(6, '0'),
+      String(stock_name || '').slice(0, 40),
+      Number(weight) || 0,
+      String(note || '').slice(0, 200),
+      Date.now(),
+      Date.now(),
+    ],
+  });
+}
+
+export async function removeRecommendation({ role, stock_code }) {
+  await client.execute({
+    sql: `DELETE FROM portfolio_recommendations WHERE role=? AND stock_code=?`,
+    args: [String(role), String(stock_code).padStart(6, '0')],
+  });
+}
+
+export async function bulkSetRecommendations(role, items) {
+  // 一次性替换某 role 的全部推荐
+  const now = Date.now();
+  await client.execute({ sql: `DELETE FROM portfolio_recommendations WHERE role=?`, args: [String(role)] });
+  for (const it of items || []) {
+    await client.execute({
+      sql: `INSERT INTO portfolio_recommendations(role,stock_code,stock_name,weight,note,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?)`,
+      args: [
+        String(role).slice(0, 32),
+        String(it.stock_code || '').padStart(6, '0'),
+        String(it.stock_name || '').slice(0, 40),
+        Number(it.weight) || 0,
+        String(it.note || '').slice(0, 200),
+        now,
+        now,
+      ],
+    });
+  }
+}
+
+// 现持仓 vs 某 role 推荐：add/reduce 建议
+export async function compareWithRole(role) {
+  const holdings = await listHoldings();
+  const recs = await listRecommendations(role);
+  const userCodes = new Set(holdings.map((h) => h.stock_code));
+  const recCodes = new Set(recs.map((r) => r.stock_code));
+  const overlap = [...userCodes].filter((c) => recCodes.has(c));
+  const onlyInUser = holdings.filter((h) => !recCodes.has(h.stock_code));
+  const onlyInRec = recs.filter((r) => !userCodes.has(r.stock_code));
+  const suggestions = [];
+  // add：role 有 user 没
+  for (const r of onlyInRec) {
+    suggestions.push({
+      action: 'add',
+      stock_code: r.stock_code,
+      stock_name: r.stock_name,
+      role,
+      role_label: ROLE_LABELS[role] || role,
+      reason: `${ROLE_LABELS[role] || role}推荐，权重 ${(r.weight * 100).toFixed(1)}%`,
+      weight: r.weight,
+    });
+  }
+  // reduce：user 有 role 没 — 用 cost_basis vs 100 简单判断
+  for (const h of onlyInUser) {
+    suggestions.push({
+      action: 'reduce',
+      stock_code: h.stock_code,
+      stock_name: h.short_name,
+      role,
+      role_label: ROLE_LABELS[role] || role,
+      reason: `${ROLE_LABELS[role] || role}未持有（成本 ${h.cost_basis.toFixed(2)}）`,
+    });
+  }
+  return {
+    ok: true,
+    role,
+    role_label: ROLE_LABELS[role] || role,
+    user_holdings: holdings,
+    recommendations: recs,
+    overlap,
+    only_in_user: onlyInUser,
+    only_in_rec: onlyInRec,
+    suggestions,
+  };
+}
+
+// =====================================================
+// 账户与保证金账本（事件流持久化）
+// 只存事件，状态全部由 account-ledger.buildAccount 回放推导。
+// =====================================================
+
+export async function appendLedgerEvent(type, payload = {}) {
+  const now = Date.now();
+  const r = await client.execute({
+    sql: `INSERT INTO portfolio_ledger_events(type, payload, ts) VALUES(?,?,?)`,
+    args: [String(type).slice(0, 32), JSON.stringify(payload || {}).slice(0, 4000), now],
+  });
+  return Number(r.lastInsertRowid) || 0;
+}
+
+export async function listLedgerEvents() {
+  const r = await client.execute(`SELECT id,type,payload,ts FROM portfolio_ledger_events ORDER BY ts ASC, id ASC`);
+  return r.rows.map((row) => ({
+    id: Number(row.id),
+    type: row.type,
+    payload: safeJson(row.payload),
+    ts: Number(row.ts),
+  }));
+}
+
+export async function clearLedger() {
+  await client.execute(`DELETE FROM portfolio_ledger_events`);
+}
+
+// =====================================================
+// 持仓方案跟踪（固定项持久化，供前端恢复跟踪列表）
+// =====================================================
+
+export async function upsertPlan({ stock_code, stock_name, p0, atr, atr_pct, total_invest, plan_json }) {
+  const now = Date.now();
+  await client.execute({
+    sql: `INSERT INTO portfolio_plans(stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(stock_code) DO UPDATE SET
+            stock_name=excluded.stock_name,
+            p0=excluded.p0,
+            atr=excluded.atr,
+            atr_pct=excluded.atr_pct,
+            total_invest=excluded.total_invest,
+            plan_json=excluded.plan_json,
+            updated_at=excluded.updated_at`,
+    args: [
+      String(stock_code).padStart(6, '0'),
+      String(stock_name || '').slice(0, 40),
+      Number(p0) || 0,
+      Number(atr) || 0,
+      Number(atr_pct) || 0,
+      Number(total_invest) || 0,
+      JSON.stringify(plan_json || {}).slice(0, 12000),
+      now,
+      now,
+    ],
+  });
+}
+
+export async function listPlans() {
+  const r = await client.execute(`SELECT stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,created_at,updated_at FROM portfolio_plans ORDER BY updated_at DESC`);
+  return r.rows.map((row) => ({
+    stock_code: row.stock_code,
+    stock_name: row.stock_name,
+    p0: Number(row.p0),
+    atr: Number(row.atr),
+    atr_pct: Number(row.atr_pct),
+    total_invest: Number(row.total_invest),
+    plan_json: safeJson(row.plan_json),
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  }));
+}
+
+export async function removePlan(stock_code) {
+  await client.execute({
+    sql: `DELETE FROM portfolio_plans WHERE stock_code=?`,
+    args: [String(stock_code).padStart(6, '0')],
+  });
 }
 
 export { client as db };

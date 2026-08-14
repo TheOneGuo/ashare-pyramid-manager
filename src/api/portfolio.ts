@@ -57,15 +57,32 @@ export interface PlanRow {
   price: number
   stop: number
   shares: number
+  amount?: number
+  pct?: number
   cost?: number
+}
+
+export interface TpRow {
+  tier: number | string
+  price: number
+  cut_shares: number
+  remain_shares: number
+  dynamic_stop: number | null
 }
 
 export interface PlanResult {
   ok: boolean
+  atr_pct?: number
   rows?: PlanRow[]
+  tp_rows?: TpRow[]
+  total_invest?: number
+  remain?: number
+  remain_pct?: number
+  ratio_note?: string
+  stop_loss_pct?: number
+  degraded?: boolean
   too_expensive?: boolean
   notices?: string[]
-  degraded?: boolean
 }
 
 export interface AnalyzedStock {
@@ -73,11 +90,95 @@ export interface AnalyzedStock {
   name?: string
   p0?: number
   atr?: number
+  atr_pct?: number
   capital?: number
   plan?: PlanResult
   error?: string
   need_reprice?: boolean
   need_switch?: boolean
+}
+
+// ---- 账户与保证金账本（事件流） ----
+export interface LedgerEvent {
+  id?: number
+  type: 'init' | 'deposit' | 'withdraw' | 'close_position' | 'fee_rate_change'
+  payload: any
+  ts?: number
+}
+
+export interface LedgerSnapshot {
+  ok: boolean
+  configured: boolean
+  initial_margin: number
+  deposit_total: number
+  withdraw_total: number
+  realized_pnl: number
+  total_margin: number
+  allocated: number
+  available: number
+  held_count: number
+  max_hold: number
+  can_open_more: number
+  fee_rate_wan: number
+  fee_level: string
+  fee_msg: string
+  small_account: boolean
+  errors?: string[]
+  notices?: string[]
+}
+
+export interface LedgerTerms {
+  initial_margin: string
+  total_margin: string
+  deposit: string
+  withdraw: string
+  realized_pnl: string
+  allocated: string
+  available: string
+  max_hold: string
+  fee_rate_wan: string
+  suggested_capital: string
+}
+
+export interface LedgerState {
+  ok: boolean
+  events: LedgerEvent[]
+  snapshot: LedgerSnapshot
+  terms?: LedgerTerms
+}
+
+export interface LedgerPreview {
+  ok: boolean
+  msg?: string
+  amount?: number
+  total_margin_before?: number
+  total_margin_after?: number
+  max_hold_before?: number
+  max_hold_after?: number
+  available_after?: number
+  requires_confirm?: boolean
+  warnings?: string[]
+}
+
+// ---- 持仓方案跟踪 ----
+export interface PlanItem {
+  stock_code: string
+  stock_name: string
+  p0: number
+  atr: number
+  atr_pct?: number
+  total_invest?: number
+  plan_json: {
+    rows?: PlanRow[]
+    tp_rows?: TpRow[]
+    total_invest?: number
+    atr_pct?: number
+    ratio_note?: string
+    notices?: string[]
+    stop_loss_pct?: number
+  }
+  created_at?: number
+  updated_at?: number
 }
 
 export interface ExistingAdvice {
@@ -228,4 +329,30 @@ export async function researchReport(body: {
   query?: string
 }): Promise<ResearchReport> {
   return jget('/api/portfolio/research', { method: 'POST', body, timeoutMs: 20000 })
+}
+
+// ---- 账户与保证金账本 ----
+export async function getLedger(): Promise<LedgerState> {
+  return jget('/api/portfolio/ledger')
+}
+
+export async function appendLedgerEvent(type: string, payload: any): Promise<LedgerState> {
+  return jget('/api/portfolio/ledger', { method: 'POST', body: { type, payload }, timeoutMs: 15000 })
+}
+
+export async function previewLedgerEvent(type: string, amount?: number, fee_rate_wan?: number): Promise<{ ok: boolean; preview: LedgerPreview; snapshot: LedgerSnapshot }> {
+  return jget('/api/portfolio/ledger/preview', { method: 'POST', body: { type, amount, fee_rate_wan }, timeoutMs: 15000 })
+}
+
+export async function clearLedger(): Promise<{ ok: boolean }> {
+  return jget('/api/portfolio/ledger', { method: 'DELETE' })
+}
+
+// ---- 持仓方案跟踪 ----
+export async function listPlans(): Promise<{ ok: boolean; items: PlanItem[] }> {
+  return jget('/api/portfolio/plans')
+}
+
+export async function deletePlan(code: string): Promise<{ ok: boolean }> {
+  return jget(`/api/portfolio/plans/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }

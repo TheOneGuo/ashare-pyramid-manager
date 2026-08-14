@@ -41,6 +41,7 @@
     ]
   },
   "globalStyle": {
+    "navigationStyle": "custom",
     "navigationBarTextStyle": "white",
     "navigationBarTitleText": "节节高",
     "navigationBarBackgroundColor": "#0D1B2A",

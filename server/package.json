@@ -5,8 +5,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/index.js",
-    "start": "node src/index.js",
+    "dev": "tsx --watch src/index.js",
+    "start": "tsx src/index.js",
     "test": "node --test src/**/*.test.js"
   },
   "dependencies": {
@@ -17,6 +17,7 @@
     "fast-xml-parser": "^5.10.1",
     "node-cron": "^3.0.3",
     "node-fetch": "^3.3.2",
+    "tsx": "^4.19.2",
     "undici": "^8.10.0"
   }
 }

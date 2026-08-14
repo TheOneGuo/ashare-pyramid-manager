@@ -26,6 +26,8 @@ import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from '
 import { handleAnalyze } from './portfolio-analyzer.js';
 import { handleExtract } from './portfolio-extract.js';
 import { handleResearch } from './research-report.js';
+import { buildAccount, previewChange, checkWithdraw, TERMS, EVENT_DEPOSIT, EVENT_WITHDRAW, EVENT_FEE_RATE } from './account-ledger.js';
+import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans, removePlan } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 9999);
@@ -250,6 +252,34 @@ app.post('/api/portfolio/extract', async (req, res) => {
 app.post('/api/portfolio/analyze', async (req, res) => {
   try {
     const result = await handleAnalyze(req.body || {});
+    // 分析成功后，把每个有方案的标的写入「持仓方案跟踪」表（供模块5恢复）
+    if (result && result.ok && Array.isArray(result.stocks)) {
+      for (const s of result.stocks) {
+        if (s && s.plan && s.plan.ok) {
+          try {
+            await upsertPlan({
+              stock_code: s.code,
+              stock_name: s.name || '',
+              p0: s.p0,
+              atr: s.atr,
+              atr_pct: s.plan.atr_pct,
+              total_invest: s.plan.total_invest,
+              plan_json: {
+                rows: s.plan.rows,
+                tp_rows: s.plan.tp_rows,
+                total_invest: s.plan.total_invest,
+                atr_pct: s.plan.atr_pct,
+                ratio_note: s.plan.ratio_note,
+                notices: s.plan.notices,
+                stop_loss_pct: s.plan.stop_loss_pct,
+              },
+            });
+          } catch (pe) {
+            console.warn('[plans] persist failed', s.code, pe.message);
+          }
+        }
+      }
+    }
     res.json(result);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -261,6 +291,117 @@ app.post('/api/portfolio/research', async (req, res) => {
   try {
     const result = await handleResearch(req.body || {});
     res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// =====================================================
+// 账户与保证金账本（事件流，忠实移植 position_account.py）
+// 状态全部由 buildAccount 从事件回放推导，不允许前端直接写金额。
+// =====================================================
+
+// GET 账本当前状态（事件列表 + 回放结果 + 当前持仓占用）
+app.get('/api/portfolio/ledger', async (_req, res) => {
+  try {
+    const events = await listLedgerEvents();
+    const positions = await listHoldings();
+    // fee_rate_wan 取最近一条 fee 事件或默认 1.2
+    let feeWan = 1.2;
+    for (const e of events) {
+      if (e.type === 'fee_rate_change' || e.type === 'init') {
+        if (e.payload && e.payload.fee_rate_wan != null) feeWan = Number(e.payload.fee_rate_wan);
+      }
+    }
+    const snapshot = buildAccount(events.map((e) => ({ type: e.type, ...e.payload })), feeWan, positions);
+    res.json({ ok: true, events, snapshot, terms: TERMS });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST 追加一条账本事件（init/deposit/withdraw/close_position/fee_rate_change）
+app.post('/api/portfolio/ledger', async (req, res) => {
+  try {
+    const { type, payload } = req.body || {};
+    if (!['init', 'deposit', 'withdraw', 'close_position', 'fee_rate_change'].includes(type)) {
+      return res.status(400).json({ ok: false, error: 'type 非法' });
+    }
+    const id = await appendLedgerEvent(type, payload || {});
+    // 回放并返回最新快照
+    const events = await listLedgerEvents();
+    const positions = await listHoldings();
+    let feeWan = 1.2;
+    for (const e of events) {
+      if (e.type === 'fee_rate_change' || e.type === 'init') {
+        if (e.payload && e.payload.fee_rate_wan != null) feeWan = Number(e.payload.fee_rate_wan);
+      }
+    }
+    const snapshot = buildAccount(events.map((e) => ({ type: e.type, ...e.payload })), feeWan, positions);
+    res.json({ ok: true, id, snapshot, events, terms: TERMS });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST 预览一次账本变更（先给结果再确认，提取可能降低可开标的上限）
+app.post('/api/portfolio/ledger/preview', async (req, res) => {
+  try {
+    const { type, amount, fee_rate_wan } = req.body || {};
+    const events = await listLedgerEvents();
+    const positions = await listHoldings();
+    let feeWan = 1.2;
+    for (const e of events) {
+      if (e.type === 'fee_rate_change' || e.type === 'init') {
+        if (e.payload && e.payload.fee_rate_wan != null) feeWan = Number(e.payload.fee_rate_wan);
+      }
+    }
+    const snapshot = buildAccount(events.map((e) => ({ type: e.type, ...e.payload })), feeWan, positions);
+    const out = previewChange(snapshot, type, amount, fee_rate_wan);
+    res.json({ ok: true, preview: out, snapshot });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// DELETE 清空账本（重新开始）
+app.delete('/api/portfolio/ledger', async (_req, res) => {
+  try {
+    await clearLedger();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// =====================================================
+// 持仓方案跟踪（固定项持久化，分析后写入，可恢复列表）
+// =====================================================
+app.get('/api/portfolio/plans', async (_req, res) => {
+  try {
+    const items = await listPlans();
+    res.json({ ok: true, items });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/portfolio/plans', async (req, res) => {
+  try {
+    const items = Array.isArray(req.body) ? req.body : [req.body];
+    for (const it of items) {
+      await upsertPlan(it);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/portfolio/plans/:code', async (req, res) => {
+  try {
+    await removePlan(req.params.code);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

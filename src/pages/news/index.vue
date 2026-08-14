@@ -1,23 +1,25 @@
 <template>
   <view class="news-page">
     <view class="news-header">
-      <view class="news-header-row">
-        <text class="news-title">财经快讯</text>
-        <text class="news-refresh-btn" @tap="onManualRefresh">刷新</text>
-      </view>
-      <text class="news-meta">{{ lastUpdated }} · {{ refreshLabel }}自动刷新</text>
+      <text class="news-title">财经快讯</text>
+      <text class="news-hint">下拉刷新最新资讯</text>
     </view>
 
-    <!-- 源筛选条（原项目 news-source-strip 风格） -->
+    <!-- 两段式：全部 / 持仓标的相关 -->
     <scroll-view class="news-source-strip" scroll-x enable-flex>
       <view
-        v-for="src in sources"
-        :key="src.channel"
         class="news-source-chip"
-        :class="{ active: src.channel === activeSource }"
-        @tap="activeSource = src.channel"
+        :class="{ active: activeScope === 'all' }"
+        @tap="activeScope = 'all'"
       >
-        <text>{{ src.name }} · {{ src.count }}</text>
+        <text>全部 · {{ allCount }}</text>
+      </view>
+      <view
+        class="news-source-chip"
+        :class="{ active: activeScope === 'holding' }"
+        @tap="activeScope = 'holding'"
+      >
+        <text>持仓标的相关 · {{ holdingCount }}</text>
       </view>
     </scroll-view>
 
@@ -26,7 +28,10 @@
     </view>
 
     <view v-else-if="visibleItems.length === 0" class="news-empty">
-      <text>{{ activeSource === 'all' ? '最近 24 小时暂时没有可展示的重要快讯。' : '该来源暂无快讯' }}</text>
+      <text v-if="activeScope === 'holding'">
+        {{ holdingCount === 0 ? '尚未添加持仓（持仓分析页可管理），目前没有"持仓标的相关"快讯。' : '当前持仓标的相关暂无 24 小时内的快讯，可下拉刷新试试。' }}
+      </text>
+      <text v-else>最近 24 小时暂时没有可展示的重要快讯，下拉试试。</text>
     </view>
 
     <view v-else class="news-list">
@@ -34,11 +39,15 @@
         v-for="item in visibleItems"
         :key="item.id"
         class="news-item"
+        :class="{ 'is-matched': item.matchedHoldings.length > 0 }"
         @tap="onTapItem(item)"
       >
         <view class="news-item-head">
           <text class="news-item-source">{{ item.sourceName || item.sourceChannel }}</text>
           <text class="news-item-time">{{ formatTime(item.publishedAt) }}</text>
+        </view>
+        <view v-if="item.matchedHoldings.length > 0" class="news-item-tags">
+          <text class="news-item-tag">持仓 {{ item.matchedHoldings.join(' · ') }}</text>
         </view>
         <text class="news-item-title">{{ item.title }}</text>
         <text v-if="item.summary" class="news-item-summary">{{ item.summary }}</text>
@@ -53,7 +62,8 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { onShow, onPullDownRefresh } from '@dcloudio/uni-app'
 import { env } from '@/utils/env'
 
-const API_BASE = env.API_BASE_URL || 'http://localhost:9999'
+// dev 阶段 vite proxy 把 /api 转到 9999；生产环境用 API_BASE_URL（uniCloud / Express）
+const API_BASE = (env.API_BASE_URL && env.API_BASE_URL.length > 0) ? env.API_BASE_URL : ''
 
 interface RawNews {
   id: string
@@ -74,67 +84,69 @@ interface NewsItem {
   sourceName: string
   publishedAt: number
   url: string
+  matchedHoldings: string[]   // 命中的持仓股票代码（仅 holding=1 时计算）
 }
 
 const items = ref<NewsItem[]>([])
 const loading = ref(false)
-const lastUpdated = ref('未刷新')
-const refreshLabel = ref('30秒')
-const activeSource = ref<string>('all')
+const activeScope = ref<'all' | 'holding'>('all')
+const holdings = ref<Array<{ stock_code: string; short_name?: string }>>([])
 
-let pollTimer: ReturnType<typeof setInterval> | null = null
+function normalizeCode(c: string) {
+  return String(c || '').padStart(6, '0').slice(-6)
+}
 
-const POLL_INTERVAL_MS = 30 * 1000
-
-const sources = computed(() => {
-  const map = new Map<string, { channel: string; name: string; count: number }>()
-  for (const it of items.value) {
-    const key = it.sourceChannel || 'unknown'
-    if (!map.has(key)) {
-      map.set(key, { channel: key, name: it.sourceName || key, count: 0 })
+async function loadHoldings() {
+  try {
+    // #ifdef H5
+    console.log('[news] GET', `${API_BASE}/api/holdings`)
+    // #endif
+    const res = await uni.request({ url: `${API_BASE}/api/holdings`, method: 'GET', timeout: 5000 })
+    const data: any = (res as any).data
+    if (data && data.ok && Array.isArray(data.items)) {
+      holdings.value = data.items.map((h: any) => ({
+        stock_code: normalizeCode(h.stock_code),
+        short_name: h.short_name || '',
+      }))
+      // #ifdef H5
+      console.log('[news] holdings loaded:', JSON.stringify(holdings.value))
+      // #endif
+    } else {
+      console.warn('[news] holdings payload bad', data)
     }
-    map.get(key)!.count++
+  } catch (e: any) {
+    console.warn('[news] loadHoldings failed', e?.errMsg || e?.message)
+    holdings.value = []
   }
-  const list = [{ channel: 'all', name: '全部', count: items.value.length }]
-  for (const v of map.values()) list.push(v)
-  return list
-})
+}
 
-const visibleItems = computed(() => {
-  if (activeSource.value === 'all') return items.value
-  return items.value.filter(it => (it.sourceChannel || 'unknown') === activeSource.value)
-})
-
-function mapItem(raw: RawNews): NewsItem {
-  return {
-    id: raw.id,
-    title: raw.title || '(无标题)',
-    summary: raw.summary || '',
-    sourceChannel: raw.source_channel || 'unknown',
-    sourceName: raw.source_name || raw.source_channel || '来源',
-    publishedAt: raw.published_at || Date.now(),
-    url: raw.link || raw.url || '',
+// 用持仓代码/简称在标题/摘要里做一次轻量关键词匹配；命中后给卡片打 tag。
+function detectMatchedHoldings(item: NewsItem): string[] {
+  if (holdings.value.length === 0) return []
+  const text = `${item.title} ${item.summary}`
+  const hits: string[] = []
+  for (const h of holdings.value) {
+    const code = h.stock_code
+    const name = h.short_name || ''
+    const codeOk = code && /\d{6}/.test(code) && text.includes(code)
+    const nameOk = name && name.length >= 2 && text.includes(name)
+    if (codeOk || nameOk) hits.push(code)
   }
+  return Array.from(new Set(hits))
 }
 
 async function fetchNews(showLoading = true) {
   if (showLoading) loading.value = true
   try {
-    const url = `${API_BASE}/api/news?limit=80`
+    const url = `${API_BASE}/api/news?limit=100`
     // #ifdef H5
     console.log('[news] GET', url)
     // #endif
-    const res = await uni.request({
-      url,
-      method: 'GET',
-      timeout: 8000,
-    })
+    const res = await uni.request({ url, method: 'GET', timeout: 8000 })
     const data: any = (res as any).data
     if (data && data.ok && Array.isArray(data.items)) {
       items.value = data.items.map((it: RawNews) => mapItem(it))
-      lastUpdated.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     } else {
-      // 兜底：保留旧值，不覆盖
       console.warn('[news] bad payload', data)
     }
   } catch (e: any) {
@@ -149,6 +161,7 @@ async function fetchNews(showLoading = true) {
           sourceName: '系统',
           publishedAt: Date.now(),
           url: '',
+          matchedHoldings: [],
         },
       ]
     }
@@ -157,20 +170,29 @@ async function fetchNews(showLoading = true) {
   }
 }
 
-function onManualRefresh() {
-  fetchNews(true)
-}
-
-function startPolling() {
-  if (pollTimer) return
-  pollTimer = setInterval(() => fetchNews(false), POLL_INTERVAL_MS)
-}
-
-function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
+function mapItem(raw: RawNews): NewsItem {
+  const base: NewsItem = {
+    id: raw.id,
+    title: raw.title || '(无标题)',
+    summary: raw.summary || '',
+    sourceChannel: raw.source_channel || 'unknown',
+    sourceName: raw.source_name || raw.source_channel || '来源',
+    publishedAt: raw.published_at || Date.now(),
+    url: raw.link || raw.url || '',
+    matchedHoldings: [],
   }
+  base.matchedHoldings = detectMatchedHoldings(base)
+  return base
+}
+
+function onTapItem(item: NewsItem) {
+  if (!item.url) return
+  // #ifdef H5
+  window.open(item.url, '_blank', 'noopener')
+  // #endif
+  // #ifndef H5
+  uni.setClipboardData({ data: item.url })
+  // #endif
 }
 
 function formatTime(ts: number) {
@@ -189,33 +211,35 @@ function formatTime(ts: number) {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function onTapItem(item: NewsItem) {
-  if (!item.url) return
-  // #ifdef H5
-  window.open(item.url, '_blank', 'noopener')
-  // #endif
-  // #ifndef H5
-  uni.setClipboardData({ data: item.url })
-  // #endif
-}
+// 计数（依赖 items 重算）
+const allCount = computed(() => items.value.length)
+const holdingCount = computed(() => items.value.filter((i) => i.matchedHoldings.length > 0).length)
 
-onMounted(() => {
-  fetchNews(true)
-  startPolling()
+const visibleItems = computed(() => {
+  if (activeScope.value === 'all') return items.value
+  return items.value.filter((i) => i.matchedHoldings.length > 0)
 })
 
-onShow(() => {
-  // 30 秒 tabbar 切回 / 回到前台时立即拉一次
-  fetchNews(false)
+onMounted(async () => {
+  await loadHoldings()
+  await fetchNews(true)
 })
 
-onPullDownRefresh(() => {
-  fetchNews(true).finally(() => uni.stopPullDownRefresh())
+onShow(async () => {
+  // 切回前台：如果 holdings 变了，重新匹配一次
+  await loadHoldings()
+  if (items.value.length > 0) {
+    items.value = items.value.map((it) => ({ ...it, matchedHoldings: detectMatchedHoldings(it) }))
+  }
 })
 
-onBeforeUnmount(() => {
-  stopPolling()
+onPullDownRefresh(async () => {
+  await loadHoldings()
+  await fetchNews(true)
+  uni.stopPullDownRefresh()
 })
+
+onBeforeUnmount(() => {})
 </script>
 
 <style lang="scss" scoped>
@@ -230,6 +254,8 @@ $color-border: rgba(255, 184, 107, 0.24);
 $color-text-primary: #f5ecd9;
 $color-text-secondary: #a89a82;
 $color-text-warm: #d3c3ad;
+$color-match-bg: rgba(114, 247, 255, 0.12);
+$color-match-border: rgba(114, 247, 255, 0.5);
 $radius-md: 14px;
 $radius-lg: 18px;
 $radius-full: 999px;
@@ -243,13 +269,7 @@ $radius-full: 999px;
 .news-header {
   display: flex;
   flex-direction: column;
-  padding: 16rpx 0 20rpx;
-}
-
-.news-header-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  padding: 16rpx 0 8rpx;
 }
 
 .news-title {
@@ -259,18 +279,11 @@ $radius-full: 999px;
   letter-spacing: 1rpx;
 }
 
-.news-refresh-btn {
-  font-size: 24rpx;
-  color: $rf-cyan;
-  padding: 8rpx 18rpx;
-  border: 1rpx solid rgba(114, 247, 255, 0.48);
-  border-radius: $radius-full;
-}
-
-.news-meta {
+.news-hint {
   font-size: 22rpx;
   color: $color-text-secondary;
   margin-top: 8rpx;
+  letter-spacing: 1rpx;
 }
 
 /* 源筛选条 */
@@ -278,13 +291,13 @@ $radius-full: 999px;
   white-space: nowrap;
   display: flex;
   gap: 12rpx;
-  padding: 8rpx 0 20rpx;
+  padding: 16rpx 0 20rpx;
 }
 
 .news-source-chip {
   display: inline-block;
-  padding: 8rpx 18rpx;
-  font-size: 22rpx;
+  padding: 10rpx 22rpx;
+  font-size: 24rpx;
   color: $color-text-secondary;
   background: rgba(255, 184, 107, 0.05);
   border: 1rpx solid rgba(255, 184, 107, 0.18);
@@ -300,10 +313,11 @@ $radius-full: 999px;
 }
 
 .news-empty {
-  padding: 200rpx 0;
+  padding: 200rpx 40rpx;
   text-align: center;
   color: $color-text-secondary;
   font-size: 28rpx;
+  line-height: 1.6;
 }
 
 /* 列表 */
@@ -319,6 +333,11 @@ $radius-full: 999px;
   background: $color-card-bg;
   border: 1rpx solid $color-border;
   transition: transform 0.15s ease;
+
+  &.is-matched {
+    border-color: $color-match-border;
+    background: linear-gradient(180deg, rgba(114, 247, 255, 0.07), rgba(255, 184, 107, 0.03));
+  }
 }
 
 .news-item:active {
@@ -339,6 +358,23 @@ $radius-full: 999px;
   font-weight: 600;
 }
 
+.news-item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-bottom: 12rpx;
+}
+
+.news-item-tag {
+  display: inline-block;
+  padding: 4rpx 12rpx;
+  font-size: 20rpx;
+  color: $rf-cyan;
+  background: $color-match-bg;
+  border: 1rpx solid $color-match-border;
+  border-radius: $radius-full;
+}
+
 .news-item-time {
   font-size: 22rpx;
   color: $color-text-secondary;
@@ -357,6 +393,7 @@ $radius-full: 999px;
   display: block;
   margin-top: 12rpx;
   font-size: 26rpx;
+  font-weight: 400;
   line-height: 1.65;
   color: $color-text-warm;
   white-space: pre-wrap;

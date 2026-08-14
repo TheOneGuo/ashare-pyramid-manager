@@ -107,80 +107,90 @@ async function fetchAnnouncementDetail(artCode) {
 // =====================================================
 // 个股新闻 / 滚动资讯 API
 // =====================================================
+// 2026-08 调研：东财 np-listapi.eastmoney.com/comm/web/getListInfo 已废弃，
+// 任何 mTypeAndCode 返回 data={}；search-api-web 现在 400。
+// 改用 Yahoo Finance RSS by symbol（feeds.finance.yahoo.com）
+// — 4 只持仓实测 2-20 条/股，稳定 200，UTF-8。
+// 英文新闻暂时直存（source 标 "Yahoo Finance · {code}" 让用户知道是英文）。
 
-// 拉个股新闻流（实测试过，部分字段会因版本变动）
-async function fetchStockNews(stockCode, { pageSize = 20 } = {}) {
-  const secid = toEastmoneySecid(stockCode);
-  if (!secid) return [];
-  // 走"问财/快讯"接口：np-listapi 实际就是行情下面的新闻流
-  // 实测：返回 {code,message,data:{list:[{art_code, title, digest, ptime, ...}]}}
-  const params = new URLSearchParams({
-    cb: '',
-    client: 'pc',
-    type: '1',
-    mTypeAndCode: '',
-    mNameAndCode: '',
-    pageSize: String(Math.min(50, Math.max(1, pageSize))),
-    pageIndex: '1',
-    fields: '',
-    secid,
-  });
-  const url = `https://np-listapi.eastmoney.com/comm/web/getListInfo?${params}`;
-  try {
-    const j = await fetchJson(url, { timeoutMs: 10_000 });
-    const items = ((j && j.data && j.data.list) || []);
-    return items.map((it) => normalizeStockNews(it, stockCode)).filter(Boolean);
-  } catch (e) {
-    // 兜底：搜公告/快讯接口
-    return await fetchStockNewsFallback(stockCode, { pageSize });
+// 股票代码 → Yahoo symbol
+// 沪 6/9/5/7xxxxx → .SS；深 0/2/3xxxxx → .SZ；北交 4/8xxxxx → .SS(实测)
+function toYahooSymbol(code) {
+  if (!code) return null;
+  const c = String(code).padStart(6, '0');
+  if (/^(6|9|5|7)/.test(c)) return `${c}.SS`;
+  return `${c}.SZ`;
+}
+
+function yahooExtractTag(block, tag) {
+  const r = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, 'i');
+  const m = block.match(r);
+  return m ? m[1].trim() : '';
+}
+
+function yahooCleanText(s) {
+  if (!s) return '';
+  return s
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'").replace(/&hellip;/g, '…').replace(/&mdash;/g, '—')
+    .trim();
+}
+
+function parseYahooRss(xml, stockCode, limit = 20) {
+  const items = [];
+  const re = /<item[^>]*>([\s\S]*?)<\/item>/gi;
+  let m;
+  while ((m = re.exec(xml)) !== null && items.length < limit) {
+    const block = m[1];
+    const title = yahooCleanText(yahooExtractTag(block, 'title'));
+    const link = yahooExtractTag(block, 'link');
+    const pubDate = yahooExtractTag(block, 'pubDate') || yahooExtractTag(block, 'dc:date');
+    const desc = yahooCleanText(yahooExtractTag(block, 'description'));
+    if (!title) continue;
+    items.push({
+      source_channel: `eastmoney_stock_news_${stockCode}`,
+      source_name: `Yahoo Finance · ${stockCode}`,
+      guid: link ? `yahoo:${stockCode}:${hashStr(link)}` : `yahoo:${stockCode}:${hashStr(title)}`,
+      title: title.slice(0, 200),
+      summary: desc.slice(0, 400),
+      link: link || '',
+      published_at: parseYahooDate(pubDate),
+      raw: { source: 'yahoo-finance', symbol: toYahooSymbol(stockCode), stock_code: stockCode },
+    });
   }
+  return items;
 }
 
-function normalizeStockNews(raw, stockCode) {
-  if (!raw) return null;
-  const title = raw.title || raw.subject || '(无标题)';
-  const published_at = parseEasternTime(raw.ptime || raw.ShowTime || raw.display_time || raw.eitime);
-  const art = raw.art_code || raw.info_code || raw.url || '';
-  return {
-    source_channel: 'eastmoney_stock_news',
-    source_name: `东方财富·新闻·${stockCode}`,
-    guid: art ? `news:${art}` : `news:${stockCode}:${title}:${published_at}`,
-    title: String(title).slice(0, 200),
-    summary: String(raw.digest || raw.summary || raw.content || '').slice(0, 400),
-    link: art ? `https://so.eastmoney.com/news/s?keyword=${encodeURIComponent(stockCode + ' ' + title)}` : '',
-    published_at,
-    raw: {
-      art_code: art,
-      stock_code: stockCode,
-      columns: raw.columns || [],
-      media_name: raw.media_name || raw.source || '',
-    },
-  };
+function parseYahooDate(s) {
+  if (!s) return Date.now();
+  const t = Date.parse(s);
+  return isNaN(t) ? Date.now() : t;
 }
 
-// 兜底：搜索接口（按 stockCode 关键词搜最近 N 条）
-async function fetchStockNewsFallback(stockCode, { pageSize = 20 } = {}) {
-  const url = `https://search-api-web.eastmoney.com/search/jsonp?param=${encodeURIComponent(JSON.stringify({
-    uid: '',
-    keyword: stockCode,
-    type: ['news'],
-    pageIndex: 1,
-    pageSize: Math.min(50, pageSize),
-  }))}`;
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h).toString(36);
+}
+
+// 拉个股新闻（Yahoo Finance RSS by symbol，替代东财 np-listapi）
+async function fetchStockNews(stockCode, { pageSize = 20 } = {}) {
+  const sym = toYahooSymbol(stockCode);
+  if (!sym) return [];
+  const url = `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${sym}&region=US&lang=en-US`;
   try {
-    const j = await fetchJson(url, { timeoutMs: 10_000 });
-    const news = (j && j.result && j.result.news) || [];
-    return news.map((it) => ({
-      source_channel: 'eastmoney_stock_news',
-      source_name: `东方财富·新闻·${stockCode}`,
-      guid: it.code ? `news:${it.code}` : `news:${stockCode}:${it.title}`,
-      title: String(it.title || '').slice(0, 200),
-      summary: String(it.content || '').slice(0, 400),
-      link: it.url || '',
-      published_at: parseEasternTime(it.date),
-      raw: { art_code: it.code, stock_code: stockCode, media_name: it.media_name || '' },
-    })).filter((it) => it.title);
-  } catch {
+    const r = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!r.ok) return [];
+    const xml = await r.text();
+    return parseYahooRss(xml, stockCode, Math.min(50, Math.max(1, pageSize)));
+  } catch (e) {
+    console.warn(`[eastmoney.stockNews ${stockCode}] failed:`, e.message);
     return [];
   }
 }

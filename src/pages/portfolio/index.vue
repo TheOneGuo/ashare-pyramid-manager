@@ -11,27 +11,67 @@
       <text class="pf-pull-text">{{ pullText }}</text>
     </view>
 
-    <!-- ① 资金 + 费率 小卡 -->
-    <view class="pf-card pf-capital">
-      <view class="pf-row">
-        <view class="pf-col">
-          <text class="pf-label">总资金 (元)</text>
-          <input class="pf-input" type="number" v-model.number="totalCapital" placeholder="200000" />
-        </view>
-        <view class="pf-col">
-          <text class="pf-label">佣金 (万分之)</text>
-          <input class="pf-input" type="number" v-model.number="feeWan" placeholder="2.5" />
-        </view>
+    <!-- ① 账户与保证金账本 -->
+    <view class="pf-card pf-ledger">
+      <view class="pf-import-head" @tap="ledgerOpen = !ledgerOpen">
+        <text class="pf-section-title">🏦 账户与保证金账本</text>
+        <text class="pf-toggle">{{ ledgerOpen ? '收起' : '展开' }}</text>
       </view>
-      <view v-if="feeWarning" class="pf-fee-warn" :class="feeWarningClass">
-        <text>⚠️ {{ feeWarning }}</text>
+
+      <view v-if="ledgerOpen" class="pf-ledger-body">
+        <!-- 未配置：初始录入 -->
+        <view v-if="!ledgerSnapshot.configured" class="pf-ledger-init">
+          <view class="pf-row">
+            <view class="pf-col">
+              <text class="pf-label">账户初始保证金 (元)</text>
+              <input class="pf-input" type="number" v-model.number="ledgerInitAmount" placeholder="200000" />
+            </view>
+            <view class="pf-col">
+              <text class="pf-label">手续费率 (万分之)</text>
+              <input class="pf-input" type="number" v-model.number="ledgerInitFee" placeholder="2.5" />
+            </view>
+          </view>
+          <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onLedgerConfirmInit">
+            <text>确认账户</text>
+          </view>
+          <view v-if="ledgerInitMsg" class="pf-note" :class="ledgerInitOk ? 'pf-note--ok' : 'pf-note--warn'">{{ ledgerInitMsg }}</view>
+        </view>
+
+        <!-- 已配置：状态 + 操作 -->
+        <view v-else class="pf-ledger-state">
+          <view class="pf-ledger-grid">
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">总保证金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.total_margin) }}</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">可开标的上限</text><text class="pf-ledger-v">{{ ledgerSnapshot.max_hold }}</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">已分配资金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.allocated) }}</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">可分配余额</text><text class="pf-ledger-v pf-ledger-v--cyan">{{ fmtMoney(ledgerSnapshot.available) }}</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">手续费率</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.fee_rate_wan, 2) }}‰</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">累计实现盈亏</text><text class="pf-ledger-v" :class="ledgerSnapshot.realized_pnl >= 0 ? 'pf-up' : 'pf-down'">{{ fmtMoney(ledgerSnapshot.realized_pnl) }}</text></view>
+          </view>
+
+          <view class="pf-ledger-meta">
+            可开标的 {{ ledgerSnapshot.max_hold }} 个 · 已分配 {{ fmtMoney(ledgerSnapshot.allocated) }} 元 · 可分配余额 {{ fmtMoney(ledgerSnapshot.available) }} 元
+          </view>
+
+          <view class="pf-ledger-actions">
+            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerDeposit"><text>添加保证金</text></view>
+            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerWithdraw"><text>提取保证金</text></view>
+            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerFee"><text>手续费率</text></view>
+            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerReset"><text>重置账本</text></view>
+          </view>
+          <view v-if="ledgerMsg" class="pf-note" :class="ledgerMsgOk ? 'pf-note--ok' : 'pf-note--warn'">{{ ledgerMsg }}</view>
+
+          <!-- 费率警告 -->
+          <view v-if="ledgerSnapshot.fee_level === 'warn_low' || ledgerSnapshot.fee_level === 'warn_high'" class="pf-fee-warn">
+            <text>⚠️ 费率{{ ledgerSnapshot.fee_level === 'warn_low' ? '偏低' : '偏高' }}：{{ ledgerSnapshot.fee_msg }}</text>
+          </view>
+        </view>
       </view>
     </view>
 
     <!-- ② 截图 / 手动输入 Import 折叠区 -->
     <view class="pf-card pf-import">
       <view class="pf-import-head" @tap="importOpen = !importOpen">
-        <text class="pf-section-title">📥 导入持仓</text>
+        <text class="pf-section-title">📥 已有持仓（截图或手动）</text>
         <text class="pf-toggle">{{ importOpen ? '收起' : '展开' }}</text>
       </view>
       <view v-if="importOpen" class="pf-import-body">
@@ -53,180 +93,65 @@
           <text>导入到持仓列表</text>
         </view>
         <view v-if="ocrNote" class="pf-note">{{ ocrNote }}</view>
-      </view>
-    </view>
 
-    <!-- ③ 4 Role Tabs -->
-    <view class="pf-role-tabs">
-      <view
-        v-for="r in ALL_ROLES"
-        :key="r"
-        class="pf-role-tab"
-        :class="{ active: activeRole === r }"
-        @tap="activeRole = r"
-      >
-        <text>{{ ROLE_LABELS[r] }}</text>
-      </view>
-    </view>
-
-    <!-- ④ 当前 Role 内容 -->
-    <view class="pf-role-content">
-      <!-- 4a. 推荐编辑 -->
-      <view class="pf-card">
-        <text class="pf-section-title">📝 {{ ROLE_LABELS[activeRole] }} · 推荐持仓（手动录入）</text>
-
-        <view v-if="recLoading" class="pf-empty"><text>加载中…</text></view>
-        <view v-else-if="currentRecs.length === 0" class="pf-empty">
-          <text>暂无推荐。下方添加（代码 名称 权重 %）</text>
-        </view>
-        <view v-else class="pf-rec-list">
-          <view v-for="(r, i) in currentRecs" :key="r.stock_code" class="pf-rec-row">
-            <text class="pf-rec-name">{{ r.stock_name || r.stock_code }} · {{ r.stock_code }}</text>
-            <text class="pf-rec-weight">{{ fmtPct(r.weight, 1) }}</text>
-            <text class="pf-rec-del" @tap="onDelRec(r)">✕</text>
-          </view>
-        </view>
-
-        <!-- 添加行 -->
-        <view class="pf-rec-add">
-          <input class="pf-input pf-input--sm" v-model="addCode" placeholder="代码" />
-          <input class="pf-input pf-input--md" v-model="addName" placeholder="名称" />
-          <input class="pf-input pf-input--xs" type="number" v-model.number="addWeight" placeholder="权重" />
-          <view class="pf-btn pf-btn--primary pf-btn--xs" @tap="onAddRec"><text>+</text></view>
-        </view>
-
-        <view v-if="addRecErr" class="pf-note pf-note--warn">{{ addRecErr }}</view>
-
-        <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onSaveRecs">
-          <text>保存 {{ ROLE_LABELS[activeRole] }} 推荐（覆盖）</text>
-        </view>
-      </view>
-
-      <!-- 4b. 对比 + 建议 -->
-      <view class="pf-card pf-compare">
-        <text class="pf-section-title">⚖️ 对比 · {{ ROLE_LABELS[activeRole] }} vs 现持仓</text>
-
-        <view class="pf-compare-cols">
-          <view class="pf-compare-col">
-            <text class="pf-col-title">现持仓 ({{ holdings.length }})</text>
-            <view v-if="holdings.length === 0" class="pf-empty"><text>未导入持仓</text></view>
-            <view v-for="h in holdingsWithWeight" :key="h.code" class="pf-holding-row" :class="{ 'pf-overlap': overlapSet.has(h.code) }">
-              <text class="pf-holding-name">{{ h.name || h.code }} · {{ h.code }}</text>
-              <text class="pf-holding-weight">{{ fmtPct(h.weight, 1) }}</text>
-            </view>
-          </view>
-          <view class="pf-compare-col">
-            <text class="pf-col-title">{{ ROLE_LABELS[activeRole] }} ({{ currentRecs.length }})</text>
-            <view v-if="currentRecs.length === 0" class="pf-empty"><text>未录入推荐</text></view>
-            <view v-for="r in currentRecs" :key="r.stock_code" class="pf-holding-row" :class="{ 'pf-overlap': overlapSet.has(r.stock_code) }">
-              <text class="pf-holding-name">{{ r.stock_name || r.stock_code }} · {{ r.stock_code }}</text>
-              <text class="pf-holding-weight">{{ fmtPct(r.weight, 1) }}</text>
-            </view>
-          </view>
-        </view>
-
-        <!-- 建议 -->
-        <text class="pf-sub-section-title">📊 调整建议</text>
-        <view v-if="currentCompare && currentCompare.suggestions && currentCompare.suggestions.length > 0">
-          <view v-for="s in currentCompare.suggestions" :key="s.stock_code + s.action" class="pf-suggestion" :class="`suggestion-${s.action}`">
-            <text class="pf-suggestion-icon">{{ s.action === 'add' ? '↑' : '↓' }}</text>
-            <text class="pf-suggestion-text">
-              <text class="pf-suggestion-title">{{ s.action === 'add' ? '加仓' : '减仓' }} {{ s.stock_code }} {{ s.stock_name }}</text>
-              <text class="pf-suggestion-reason">{{ s.reason }}</text>
-            </text>
-          </view>
-        </view>
-        <view v-else class="pf-empty">
-          <text>暂无建议（点击下方"运行分析"生成）</text>
-        </view>
-
-        <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onRunAnalyze" :class="{ 'pf-btn--loading': analyzeLoading }">
-          <text>{{ analyzeLoading ? '分析中…' : '运行分析（OCR + 5 步校验 + 金字塔）' }}</text>
-        </view>
-      </view>
-
-      <!-- 4c. 标的 plan 展开 -->
-      <view v-if="analyzeReport" class="pf-card pf-report">
-        <text class="pf-section-title">📐 标的方案</text>
-
-        <!-- Notices / Fee / Confirms -->
-        <view v-if="analyzeReport.notices && analyzeReport.notices.length" class="pf-notice-list">
-          <view v-for="(n, i) in analyzeReport.notices" :key="i" class="pf-notice">
-            <text>· {{ n }}</text>
-          </view>
-        </view>
-        <view v-if="analyzeReport.fee_level === 'warn_low' || analyzeReport.fee_level === 'warn_high'" class="pf-fee-warn">
-          <text>⚠️ 费率{{ analyzeReport.fee_level === 'warn_low' ? '偏低' : '偏高' }}：{{ analyzeReport.fee_msg }}</text>
-        </view>
-
-        <!-- 现有持仓处置 -->
-        <view v-if="analyzeReport.existing_advice && analyzeReport.existing_advice.length" class="pf-existing">
-          <text class="pf-sub-section-title">📋 现有持仓处置</text>
-          <view v-for="ea in analyzeReport.existing_advice" :key="ea.code || ea.text" class="pf-existing-row">
-            <view v-if="ea.type === 'global'" class="pf-existing-global">
-              <text>{{ ea.text }}</text>
-            </view>
-            <view v-else-if="ea.type === 'invalid'" class="pf-existing-invalid">
-              <text>{{ ea.text }}</text>
-            </view>
-            <view v-else class="pf-existing-item">
-              <text class="pf-existing-code">{{ ea.code }} {{ ea.name }}</text>
-              <text class="pf-existing-action" :class="actionClass(ea.action)">{{ ea.action }}</text>
-              <view v-if="ea.plan && ea.plan.rows && ea.plan.rows.length" class="pf-plan-table">
-                <view class="pf-plan-row pf-plan-row--head">
-                  <text class="pf-plan-th">档</text>
-                  <text class="pf-plan-th">价</text>
-                  <text class="pf-plan-th">止损</text>
-                  <text class="pf-plan-th">股</text>
-                </view>
-                <view v-for="(r, i) in ea.plan.rows" :key="i" class="pf-plan-row">
-                  <text class="pf-plan-td">{{ tierLabel(r.tier) }}</text>
-                  <text class="pf-plan-td">{{ fmtMoney(r.price, 2) }}</text>
-                  <text class="pf-plan-td">{{ fmtMoney(r.stop, 2) }}</text>
-                  <text class="pf-plan-td">{{ r.shares }}</text>
-                </view>
-              </view>
-            </view>
-          </view>
-        </view>
-
-        <!-- 新标的方案 -->
-        <view v-if="analyzeReport.stocks && analyzeReport.stocks.length">
-          <text class="pf-sub-section-title">🎯 新标的方案</text>
-          <view v-for="s in analyzeReport.stocks" :key="(s.code || '') + (s.name || '')" class="pf-stock">
-            <view class="pf-stock-head">
-              <text class="pf-stock-code">{{ s.code }} {{ s.name }}</text>
-              <text class="pf-stock-budget">{{ fmtMoney(s.capital) }}元</text>
-            </view>
-            <view v-if="s.error" class="pf-stock-err">⚠️ {{ s.error }}</view>
-            <view v-else-if="s.plan && s.plan.too_expensive" class="pf-stock-err">
-              价格过高 · 当前 capital 无法开出 4 笔完整仓位，建议更换标的
-            </view>
-            <view v-else-if="s.plan && s.plan.rows && s.plan.rows.length" class="pf-plan-table">
-              <view class="pf-plan-row pf-plan-row--head">
-                <text class="pf-plan-th">档</text>
-                <text class="pf-plan-th">价</text>
-                <text class="pf-plan-th">止损</text>
-                <text class="pf-plan-th">股</text>
-              </view>
-              <view v-for="(r, i) in s.plan.rows" :key="i" class="pf-plan-row">
-                <text class="pf-plan-td">{{ tierLabel(r.tier) }}</text>
-                <text class="pf-plan-td">{{ fmtMoney(r.price, 2) }}</text>
-                <text class="pf-plan-td">{{ fmtMoney(r.stop, 2) }}</text>
-                <text class="pf-plan-td">{{ r.shares }}</text>
-              </view>
-            </view>
-            <view v-else class="pf-stock-err">无方案</view>
+        <!-- 持仓列表（逐行编辑/删除） -->
+        <view v-if="holdings.length" class="pf-hold-list">
+          <view v-for="h in holdings" :key="h.stock_code" class="pf-hold-row">
+            <text class="pf-hold-name">{{ h.short_name || h.stock_code }} · {{ h.stock_code }}</text>
+            <input class="pf-hold-input pf-hold-input--cost" type="number" v-model.number="h.cost_basis" @blur="onHoldChange(h)" />
+            <input class="pf-hold-input pf-hold-input--qty" type="number" v-model.number="h.shares" @blur="onHoldChange(h)" />
+            <text class="pf-hold-del" @tap="onHoldDel(h)">✕</text>
           </view>
         </view>
       </view>
     </view>
 
-    <!-- ⑤ AI 研报解读（照搬原项目 ai-research-panel：结构化 mock 版） -->
+    <!-- ③ 拟新买标的 -->
+    <view class="pf-card pf-proposed">
+      <view class="pf-import-head" @tap="proposedOpen = !proposedOpen">
+        <text class="pf-section-title">🎯 拟新买标的</text>
+        <text class="pf-toggle">{{ proposedOpen ? '收起' : '展开' }}</text>
+      </view>
+      <view v-if="proposedOpen" class="pf-import-body">
+        <view class="pf-proposed-added">
+          <view v-for="(p, i) in proposedTargets" :key="i" class="pf-proposed-row">
+            <input class="pf-input pf-input--sm" v-model="p.code" placeholder="代码" />
+            <input class="pf-input pf-input--md" v-model="p.name" placeholder="名称" />
+            <input class="pf-input pf-input--xs" type="number" v-model.number="p.price" placeholder="现价" />
+            <text class="pf-rec-del" @tap="proposedTargets.splice(i, 1)">✕</text>
+          </view>
+        </view>
+        <view class="pf-btn pf-btn--secondary pf-btn--block" hover-class="pf-btn--hover" @tap="proposedTargets.push({ code: '', name: '', price: null })">
+          <text>＋ 添加标的</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- ④ 运行分析 -->
+    <view class="pf-card pf-run">
+      <view class="pf-row">
+        <view class="pf-col">
+          <text class="pf-label">总资金 (元)</text>
+          <input class="pf-input" type="number" v-model.number="totalCapital" placeholder="200000" />
+        </view>
+        <view class="pf-col">
+          <text class="pf-label">佣金 (万分之)</text>
+          <input class="pf-input" type="number" v-model.number="feeWan" placeholder="2.5" />
+        </view>
+      </view>
+      <view v-if="feeWarning" class="pf-fee-warn" :class="feeWarningClass">
+        <text>⚠️ {{ feeWarning }}</text>
+      </view>
+      <view class="pf-btn pf-btn--primary pf-btn--block pf-run-btn" hover-class="pf-btn--hover" @tap="onRunAnalyze" :class="{ 'pf-btn--loading': analyzeLoading }">
+        <text>{{ analyzeLoading ? '分析中…' : '开始分析' }}</text>
+      </view>
+      <view class="pf-run-status">{{ analyzeStatus }}</view>
+    </view>
+
+    <!-- ⑤ AI 研报解读 -->
     <view class="pf-card pf-research">
       <text class="pf-section-title">📑 AI 研报解读</text>
       <text class="pf-note pf-note--muted">AI 会按十二个研究模块整理公开资料生成研报（当前为演示模式，后续接入真实 LLM）。</text>
-
       <view class="pf-row pf-research-inputs">
         <input class="pf-input pf-input--sm" v-model="researchCode" placeholder="代码" />
         <input class="pf-input pf-input--md" v-model="researchName" placeholder="名称（可选）" />
@@ -240,14 +165,12 @@
       <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onResearch" :class="{ 'pf-btn--loading': researchLoading }">
         <text>{{ researchLoading ? '生成中…' : '生成 AI 研报' }}</text>
       </view>
-
       <view v-if="researchData" class="pf-report-box">
         <view class="pf-report-head">
           <text class="pf-report-title">{{ researchData.stock_name }} · {{ researchData.stock_code || '—' }}</text>
           <text class="pf-report-rating">综合评级：{{ researchData.rating }}</text>
         </view>
         <text class="pf-report-overall">{{ researchData.overall }}</text>
-
         <view v-for="(m, i) in researchData.modules" :key="i" class="pf-module">
           <view class="pf-module-head">
             <text class="pf-module-no">{{ i + 1 }}</text>
@@ -261,8 +184,103 @@
             </view>
           </view>
         </view>
-
         <text class="pf-report-disclaimer">{{ researchData.disclaimer }}</text>
+      </view>
+    </view>
+
+    <!-- ⑥ 策略方案（现有持仓处置 + 新标的方案） -->
+    <view v-if="analyzeReport" class="pf-card pf-report">
+      <text class="pf-section-title">📐 策略方案</text>
+      <view v-if="analyzeReport.notices && analyzeReport.notices.length" class="pf-notice-list">
+        <view v-for="(n, i) in analyzeReport.notices" :key="i" class="pf-notice"><text>· {{ n }}</text></view>
+      </view>
+      <view v-if="analyzeReport.fee_level === 'warn_low' || analyzeReport.fee_level === 'warn_high'" class="pf-fee-warn">
+        <text>⚠️ 费率{{ analyzeReport.fee_level === 'warn_low' ? '偏低' : '偏高' }}：{{ analyzeReport.fee_msg }}</text>
+      </view>
+
+      <!-- 价格偏离核对 -->
+      <view v-if="analyzeReport.confirms && analyzeReport.confirms.length" class="pf-confirms">
+        <view v-for="c in analyzeReport.confirms" :key="c.code" class="pf-confirm">
+          <text>{{ c.code }} {{ c.name }}：现价偏离基准价超过 2%，基准价区间 {{ fmtMoney(c.limit_lo, 2) }}~{{ fmtMoney(c.limit_hi, 2) }}。请核对。</text>
+          <view class="pf-btn pf-btn--primary pf-btn--xs" @tap="onConfirmPrice(c.code)"><text>核对无误，继续计算</text></view>
+        </view>
+      </view>
+
+      <!-- 现有持仓处置 -->
+      <view v-if="analyzeReport.existing_advice && analyzeReport.existing_advice.length" class="pf-existing">
+        <text class="pf-sub-section-title">📋 现有持仓处置</text>
+        <view v-for="ea in analyzeReport.existing_advice" :key="ea.code || ea.text" class="pf-existing-row">
+          <view v-if="ea.type === 'global'" class="pf-existing-global"><text>{{ ea.text }}</text></view>
+          <view v-else-if="ea.type === 'invalid'" class="pf-existing-invalid"><text>{{ ea.text }}</text></view>
+          <view v-else class="pf-existing-item">
+            <text class="pf-existing-code">{{ ea.code }} {{ ea.name }}</text>
+            <text class="pf-existing-action" :class="actionClass(ea.action)">{{ ea.action }}</text>
+            <PlanTable v-if="ea.plan && ea.plan.rows && ea.plan.rows.length" :plan="ea.plan" />
+          </view>
+        </view>
+      </view>
+
+      <!-- 新标的方案 -->
+      <view v-if="analyzeReport.stocks && analyzeReport.stocks.length">
+        <text class="pf-sub-section-title">🎯 新标的方案</text>
+        <view v-for="s in analyzeReport.stocks" :key="(s.code || '') + (s.name || '')" class="pf-stock">
+          <view class="pf-stock-head">
+            <text class="pf-stock-code">{{ s.code }} {{ s.name }}</text>
+            <text class="pf-stock-budget">单标 {{ fmtMoney(s.capital) }} 元 · ATR {{ fmtPct(s.atr_pct) }}</text>
+          </view>
+          <view v-if="s.error" class="pf-stock-err">⚠️ {{ s.error }}</view>
+          <view v-else-if="s.plan && s.plan.too_expensive" class="pf-stock-err">价格过高 · 当前资金无法开出 4 笔完整仓位，建议更换标的</view>
+          <view v-else-if="s.plan && s.plan.rows && s.plan.rows.length">
+            <PlanTable :plan="s.plan" />
+          </view>
+          <view v-else class="pf-stock-err">无方案</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- ⑦ 持仓方案跟踪 -->
+    <view class="pf-card pf-track">
+      <view class="pf-import-head" @tap="trackOpen = !trackOpen">
+        <text class="pf-section-title">🗂️ 持仓方案跟踪</text>
+        <text class="pf-toggle">{{ trackOpen ? '收起' : '展开' }}</text>
+      </view>
+      <view v-if="trackOpen" class="pf-import-body">
+        <view v-if="planItems.length === 0" class="pf-empty"><text>分析后生成的固定项会列在这里。每个标的成一项，输入现价即可查看触发进度。</text></view>
+        <view v-else>
+          <view
+            v-for="(it, idx) in planItems"
+            :key="it.stock_code"
+            class="pf-track-item"
+            :class="{ active: trackSelected === it.stock_code }"
+            @tap="onTrackSelect(it.stock_code)"
+          >
+            <view class="pf-track-item-head">
+              <text class="pf-track-code">{{ it.stock_code }} {{ it.stock_name }}</text>
+              <text class="pf-track-invest">投入 {{ fmtMoney(it.total_invest) }}</text>
+            </view>
+          </view>
+
+          <!-- 选中项详情 -->
+          <view v-if="selectedPlan" class="pf-track-detail">
+            <view class="pf-track-detail-head">
+              <text>{{ selectedPlan.stock_code }} {{ selectedPlan.stock_name }}</text>
+              <text>基准 {{ fmtMoney(selectedPlan.p0) }} · ATR {{ fmtPct(selectedPlan.atr_pct) }}</text>
+            </view>
+            <view class="pf-row pf-track-cur-row">
+              <text class="pf-label">当前价</text>
+              <input class="pf-input pf-input--sm" type="number" v-model.number="trackCurPrice" @input="onTrackEval" />
+              <view class="pf-btn pf-btn--secondary pf-btn--xs" @tap="onTrackReset"><text>重置执行</text></view>
+            </view>
+            <view class="pf-track-steps">
+              <view v-for="(step, i) in trackSteps" :key="i" class="pf-track-step" :class="stepClass(step)">
+                <text class="pf-track-step-name">{{ step.kindLabel }}</text>
+                <text class="pf-track-step-info">{{ step.info }}</text>
+                <text class="pf-track-step-state">{{ step.done ? '✓ 已执行' : (step.armed ? '价位已到 / 执行' : '待触发') }}</text>
+              </view>
+            </view>
+            <view class="pf-track-hint">到达价位默认自动执行，下一步开/平仓数量已算好。</view>
+          </view>
+        </view>
       </view>
     </view>
 
@@ -277,15 +295,205 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import {
   listHoldings, upsertHolding, deleteHolding,
-  listRecommendations, bulkSetRecommendations, compareWithRole,
   extractFromImages, analyzePortfolio,
   researchReport,
-  ALL_ROLES, ROLE_LABELS,
-  type Role, type Holding, type Recommendation, type CompareResult, type AnalyzeReport, type ResearchReport,
+  getLedger, appendLedgerEvent, previewLedgerEvent, clearLedger,
+  listPlans, deletePlan,
+  type Holding, type AnalyzeReport, type ResearchReport,
+  type LedgerSnapshot, type LedgerEvent, type PlanItem,
 } from '@/api/portfolio'
 import { parseHoldingsText, fmtMoney, fmtPct, tierLabel, padCode } from '@/utils/portfolioFormat'
 
-// ── 状态 ──
+// ── ① 账本 ──
+const ledgerOpen = ref(true)
+const ledgerSnapshot = ref<LedgerSnapshot>(emptySnapshot())
+const ledgerEvents = ref<LedgerEvent[]>([])
+const ledgerInitAmount = ref<number>(200000)
+const ledgerInitFee = ref<number>(2.5)
+const ledgerInitMsg = ref('')
+const ledgerInitOk = ref(true)
+const ledgerMsg = ref('')
+const ledgerMsgOk = ref(true)
+
+function emptySnapshot(): LedgerSnapshot {
+  return {
+    ok: false, configured: false, initial_margin: 0, deposit_total: 0, withdraw_total: 0,
+    realized_pnl: 0, total_margin: 0, allocated: 0, available: 0, held_count: 0,
+    max_hold: 0, can_open_more: 0, fee_rate_wan: 0, fee_level: 'ok', fee_msg: '', small_account: false,
+  }
+}
+
+async function loadLedger() {
+  try {
+    const r = await getLedger()
+    ledgerSnapshot.value = r.snapshot || emptySnapshot()
+    ledgerEvents.value = r.events || []
+  } catch (e) {
+    console.warn('[ledger] load failed', e)
+  }
+}
+
+async function onLedgerConfirmInit() {
+  ledgerInitMsg.value = ''
+  if (!ledgerInitAmount.value || ledgerInitAmount.value <= 0) {
+    ledgerInitOk.value = false; ledgerInitMsg.value = '请输入有效初始保证金'; return
+  }
+  if (!ledgerInitFee.value || ledgerInitFee.value <= 0) {
+    ledgerInitOk.value = false; ledgerInitMsg.value = '请输入有效手续费率'; return
+  }
+  try {
+    const r = await appendLedgerEvent('init', { amount: ledgerInitAmount.value, fee_rate_wan: ledgerInitFee.value })
+    if (r.ok) {
+      ledgerSnapshot.value = r.snapshot
+      ledgerEvents.value = r.events
+      ledgerInitOk.value = true
+      ledgerInitMsg.value = '账户已确认'
+    } else {
+      ledgerInitOk.value = false
+      ledgerInitMsg.value = '确认失败'
+    }
+  } catch (e: any) {
+    ledgerInitOk.value = false; ledgerInitMsg.value = e?.message || '确认失败'
+  }
+}
+
+async function onLedgerDeposit() {
+  const amt = await uniPrompt('添加保证金', '请输入添加金额（元）')
+  if (amt == null) return
+  await applyLedgerEvent('deposit', amt, '添加成功')
+}
+async function onLedgerWithdraw() {
+  const amt = await uniPrompt('提取保证金', `可提取上限 ${fmtMoney(ledgerSnapshot.value.available)} 元（已有持仓占用需先平仓）`)
+  if (amt == null) return
+  // 先预览校验上限
+  try {
+    const prev = await previewLedgerEvent('withdraw', amt)
+    if (!prev.ok) {
+      ledgerMsgOk.value = false; ledgerMsg.value = prev.preview?.msg || '提取失败'; return
+    }
+  } catch (e) { /* 继续 */ }
+  await applyLedgerEvent('withdraw', amt, '提取成功')
+}
+async function onLedgerFee() {
+  const v = await uniPrompt('手续费率', '请输入费率（万分之，0.1~10）')
+  if (v == null) return
+  try {
+    const prev = await previewLedgerEvent('fee_rate_change', undefined, v)
+    if (!prev.ok) { ledgerMsgOk.value = false; ledgerMsg.value = prev.preview?.msg || '费率非法'; return }
+    if (prev.preview?.requires_confirm) {
+      uni.showModal({ title: '费率提醒', content: prev.preview.msg || '', success: async (m) => { if (m.confirm) await applyLedgerEvent('fee_rate_change', undefined, '费率已更新', v) } })
+      return
+    }
+    await applyLedgerEvent('fee_rate_change', undefined, '费率已更新', v)
+  } catch (e: any) { ledgerMsgOk.value = false; ledgerMsg.value = e?.message || '费率更新失败' }
+}
+async function onLedgerReset() {
+  uni.showModal({
+    title: '重置账本', content: '将清空全部账本事件，重新开始。确认？', success: async (m) => {
+      if (!m.confirm) return
+      try { await clearLedger(); ledgerSnapshot.value = emptySnapshot(); ledgerEvents.value = []; ledgerMsgOk.value = true; ledgerMsg.value = '账本已重置' } catch (e: any) { ledgerMsgOk.value = false; ledgerMsg.value = e?.message || '重置失败' }
+    },
+  })
+}
+async function applyLedgerEvent(type: string, amount: number | undefined, okMsg: string, feeWanArg?: number) {
+  ledgerMsg.value = ''
+  const payload: any = {}
+  if (amount != null) payload.amount = amount
+  if (feeWanArg != null) payload.fee_rate_wan = feeWanArg
+  try {
+    const r = await appendLedgerEvent(type, payload)
+    if (r.ok) {
+      ledgerSnapshot.value = r.snapshot; ledgerEvents.value = r.events
+      ledgerMsgOk.value = true; ledgerMsg.value = okMsg
+      // 账本变化影响可用资金 → 同步总资金输入
+      if (type === 'init' || type === 'deposit' || type === 'withdraw') {
+        totalCapital.value = Math.round(r.snapshot.total_margin)
+        feeWan.value = r.snapshot.fee_rate_wan
+      }
+    } else {
+      ledgerMsgOk.value = false; ledgerMsg.value = '操作失败'
+    }
+  } catch (e: any) { ledgerMsgOk.value = false; ledgerMsg.value = e?.message || '操作失败' }
+}
+
+// ── 通用 prompt（uni 无原生 prompt，用 modal+input 模拟） ──
+function uniPrompt(title: string, placeholder: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    uni.showModal({
+      title,
+      content: placeholder,
+      editable: true,
+      placeholderText: '请输入数字',
+      success: (m) => {
+        if (!m.confirm) return resolve(null)
+        const n = Number((m as any).content)
+        if (!m.content || Number.isNaN(n) || n <= 0) { uni.showToast({ title: '输入无效', icon: 'none' }); return resolve(null) }
+        resolve(n)
+      },
+      fail: () => resolve(null),
+    })
+  })
+}
+
+// ── ② 已有持仓 ──
+const importOpen = ref(true)
+const importText = ref('')
+const ocrNote = ref('')
+const holdings = ref<Holding[]>([])
+
+async function loadHoldings() {
+  try { holdings.value = await listHoldings() } catch (e) { console.warn('[holdings] load failed', e) }
+}
+async function onHoldChange(h: Holding) {
+  try { await upsertHolding({ stock_code: h.stock_code, short_name: h.short_name, shares: h.shares, cost_basis: h.cost_basis }); await loadLedger() } catch (e) { uni.showToast({ title: '保存失败', icon: 'none' }) }
+}
+async function onHoldDel(h: Holding) {
+  try { await deleteHolding(h.stock_code); await loadHoldings(); await loadLedger() } catch (e) { uni.showToast({ title: '删除失败', icon: 'none' }) }
+}
+function onUpload() {
+  uni.chooseImage({
+    count: 1,
+    success: async (res) => {
+      const fp = res.tempFilePaths?.[0]
+      if (!fp) return
+      uni.hideLoading()
+      uni.showToast({ title: '已选图，请用下方「智能识别」跑 mock，或手动输入', icon: 'none', duration: 3000 })
+      ocrNote.value = `已选图（${fp}）。注：浏览器端跨域文件读取受限；用「智能识别」跑 mock 数据演示。`
+    },
+  })
+}
+async function onMockExtract() {
+  uni.showLoading({ title: '识别中…' })
+  try {
+    const r = await extractFromImages(['data:image/png;base64,iVBORw0KGgo='])
+    uni.hideLoading()
+    if (r.ok && r.positions && r.positions.length) {
+      const lines = r.positions.map((p) => `${p.code} ${p.cost} ${p.qty}`).join('\n')
+      importText.value = lines
+      ocrNote.value = r.mock ? `（mock 数据：${r.note || 'LLM 未配置'}）— 点击下方"导入到持仓列表"入库` : `识别成功 ${r.positions.length} 条 — 点击下方"导入到持仓列表"入库`
+    } else { ocrNote.value = r.error || '识别失败' }
+  } catch (e: any) { uni.hideLoading(); ocrNote.value = e?.message || '识别失败' }
+}
+async function onImport() {
+  const list = parseHoldingsText(importText.value)
+  if (list.length === 0) { uni.showToast({ title: '没解析到有效持仓（每行：代码 成本 数量）', icon: 'none' }); return }
+  uni.showLoading({ title: '导入中…' })
+  let ok = 0
+  for (const p of list) {
+    try { await upsertHolding({ stock_code: p.code, short_name: '', shares: p.qty, cost_basis: p.cost }); ok++ } catch (e) { console.warn('[import] upsert failed', p, e) }
+  }
+  uni.hideLoading()
+  uni.showToast({ title: `导入 ${ok}/${list.length} 条`, icon: 'success' })
+  importText.value = ''
+  await loadHoldings()
+  await loadLedger()
+}
+
+// ── ③ 拟新买标的 ──
+const proposedOpen = ref(false)
+const proposedTargets = ref<{ code: string; name: string; price: number | null }[]>([])
+
+// ── ④ 运行分析 ──
 const totalCapital = ref<number>(200000)
 const feeWan = ref<number>(2.5)
 const feeWarning = computed(() => {
@@ -302,32 +510,169 @@ const feeWarningClass = computed(() => {
   if (f < 0.5 || f > 3) return 'pf-fee-warn--warn'
   return ''
 })
-
-const importOpen = ref(true)
-const importText = ref('')
-const ocrNote = ref('')
-
-const activeRole = ref<Role>('institution')
-
-const holdings = ref<Holding[]>([])
-const recByRole = ref<Record<string, Recommendation[]>>({})
-const compareByRole = ref<Record<string, CompareResult | null>>({})
-const recLoading = ref(false)
 const analyzeLoading = ref(false)
+const analyzeStatus = ref('请先确认账户再开始分析')
 const analyzeReport = ref<AnalyzeReport | null>(null)
+const priceConfirmedCodes = ref<string[]>([])
 
-// ── AI 研报解读 ──
+async function onRunAnalyze() {
+  if (!ledgerSnapshot.value.configured) {
+    uni.showToast({ title: '请先在上方确认账户初始保证金与手续费率', icon: 'none' })
+    ledgerOpen.value = true
+    return
+  }
+  if (!totalCapital.value || totalCapital.value <= 0) { uni.showToast({ title: '请输入总资金', icon: 'none' }); return }
+
+  const stocks = [
+    ...holdings.value.map((h) => ({ code: h.stock_code, name: h.short_name, price: h.cost_basis, capital: 0 })),
+    ...proposedTargets.value.filter((p) => /^\d{6}$/.test(padCode(p.code))).map((p) => ({ code: padCode(p.code), name: p.name, price: p.price || 0, capital: 0 })),
+  ]
+  const existing = holdings.value.map((h) => ({ code: h.stock_code, name: h.short_name, cost: h.cost_basis, qty: h.shares, cur: h.cost_basis }))
+
+  analyzeLoading.value = true
+  analyzeStatus.value = '正在计算…'
+  try {
+    const r = await analyzePortfolio({
+      total_capital: totalCapital.value,
+      fee_wan: feeWan.value,
+      stocks,
+      existing,
+      fee_confirmed: true,
+      price_confirmed_codes: priceConfirmedCodes.value,
+    })
+    if (r.fee_confirm) {
+      uni.showModal({
+        title: '费率确认', content: r.fee_msg || '', success: async (m) => {
+          if (m.confirm) {
+            const r2 = await analyzePortfolio({ total_capital: totalCapital.value, fee_wan: feeWan.value, stocks, existing, fee_confirmed: true, price_confirmed_codes: priceConfirmedCodes.value })
+            analyzeReport.value = r2
+            analyzeStatus.value = r2.ok ? '分析完成' : (r2.error || '分析失败')
+            await loadPlans()
+          }
+        },
+      })
+    } else {
+      analyzeReport.value = r
+      analyzeStatus.value = r.ok ? '分析完成' : (r.error || '分析失败')
+      if (r.ok) await loadPlans()
+    }
+  } catch (e: any) {
+    analyzeStatus.value = e?.message || '分析失败'
+    uni.showToast({ title: e?.message || '分析失败', icon: 'none' })
+  } finally {
+    analyzeLoading.value = false
+  }
+}
+
+function onConfirmPrice(code: string) {
+  if (!priceConfirmedCodes.value.includes(code)) priceConfirmedCodes.value.push(code)
+  onRunAnalyze()
+}
+
+// ── ⑤ AI 研报解读 ──
 const researchCode = ref('')
 const researchName = ref('')
 const researchQuery = ref('')
 const researchLoading = ref(false)
 const researchData = ref<ResearchReport | null>(null)
+async function onResearch() {
+  const code = (researchCode.value || '').trim()
+  const name = (researchName.value || '').trim()
+  if (!code && !name) { uni.showToast({ title: '请输入代码或名称', icon: 'none' }); return }
+  researchLoading.value = true
+  try {
+    const r = await researchReport({ stock_code: code, stock_name: name, query: researchQuery.value.trim() })
+    researchData.value = r
+  } catch (e: any) { uni.showToast({ title: e?.message || '生成失败', icon: 'none' }) }
+  finally { researchLoading.value = false }
+}
 
-// ── 添加行 ──
-const addCode = ref('')
-const addName = ref('')
-const addWeight = ref<number>(10)
-const addRecErr = ref('')
+// ── ⑦ 持仓方案跟踪 ──
+const trackOpen = ref(true)
+const planItems = ref<PlanItem[]>([])
+const trackSelected = ref('')
+const trackCurPrice = ref<number | null>(null)
+const trackSteps = ref<any[]>([])
+
+async function loadPlans() {
+  try {
+    const r = await listPlans()
+    planItems.value = r.items || []
+    if (planItems.value.length && !trackSelected.value) onTrackSelect(planItems.value[0].stock_code)
+  } catch (e) { console.warn('[plans] load failed', e) }
+}
+function onTrackSelect(code: string) {
+  trackSelected.value = code
+  trackCurPrice.value = null
+  trackSteps.value = []
+  const it = planItems.value.find((p) => p.stock_code === code)
+  if (it) buildSteps(it)
+}
+function buildSteps(it: PlanItem): any[] {
+  const rows = it.plan_json?.rows || []
+  const steps: any[] = []
+  let cumShares = 0
+  rows.forEach((r, i) => {
+    const isOpen = i === 0
+    cumShares += r.shares
+    steps.push({
+      kind: isOpen ? 'open' : 'add',
+      kindLabel: isOpen ? '首笔建仓' : `加仓·第${i}笔`,
+      price: r.price,
+      shares: r.shares,
+      amount: r.amount || 0,
+      info: `触发价 ${fmtMoney(r.price, 2)} · ${r.shares}股 · 投入 ${fmtMoney(r.amount || 0)}`,
+      done: false,
+      armed: false,
+    })
+  })
+  const tp = it.plan_json?.tp_rows || []
+  if (tp.length) {
+    const last = tp[tp.length - 1]
+    steps.push({
+      kind: 'stop',
+      kindLabel: '动态止损（平仓）',
+      price: last.dynamic_stop ?? null,
+      shares: cumShares,
+      amount: 0,
+      info: last.dynamic_stop != null ? `触发价 ${fmtMoney(last.dynamic_stop, 2)} · 平仓 ${cumShares}股` : '全平',
+      done: false,
+      armed: false,
+    })
+  }
+  return steps
+}
+function onTrackEval() {
+  const it = planItems.value.find((p) => p.stock_code === trackSelected.value)
+  if (!it) return
+  const cur = Number(trackCurPrice.value)
+  if (!cur) { trackSteps.value = buildSteps(it); return }
+  const steps = buildSteps(it)
+  steps.forEach((s) => {
+    if (s.kind === 'stop') {
+      if (s.price != null && cur <= s.price + 1e-9) s.done = true
+    } else {
+      if (cur >= s.price - 1e-9) s.done = true
+    }
+  })
+  trackSteps.value = steps
+}
+function onTrackReset() {
+  const it = planItems.value.find((p) => p.stock_code === trackSelected.value)
+  if (it) { trackSteps.value = buildSteps(it); trackCurPrice.value = null }
+}
+const selectedPlan = computed(() => planItems.value.find((p) => p.stock_code === trackSelected.value) || null)
+function stepClass(step: any) {
+  if (step.done) return 'pf-track-step--done'
+  return ''
+}
+
+function actionClass(action?: string) {
+  if (!action) return ''
+  if (action.includes('平仓') || action.includes('减仓')) return 'pf-action--reduce'
+  if (action.includes('加仓')) return 'pf-action--add'
+  return 'pf-action--hold'
+}
 
 // ── Touch 下拉刷新 ──
 const pullDistance = ref(0)
@@ -345,9 +690,7 @@ function refreshHint() {
   if (pullDistance.value > 10) { pullText.value = '下拉刷新中…'; return }
   pullText.value = ''
 }
-
 function onTouchStart(e: any) {
-  // 只在页面顶部时启用下拉
   const scrollTop = (e?.target?.scrollTop ?? 0)
   // #ifdef H5 || APP-PLUS
   touchStartY = (e?.touches?.[0]?.clientY) || 0
@@ -363,7 +706,6 @@ function onTouchMove(e: any) {
     pullDistance.value = dist
     pullProgress.value = Math.min(1, dist / PULL_THRESHOLD)
     refreshHint()
-    // 阻止默认行为（H5 需要 preventDefault，否则会滚动）
     if (e?.preventDefault) e.preventDefault()
   }
 }
@@ -371,324 +713,29 @@ async function onTouchEnd() {
   if (!isPulling) return
   isPulling = false
   if (pullDistance.value >= PULL_THRESHOLD) {
-    // 触发刷新
     pullDistance.value = PULL_THRESHOLD
     pullRefreshing.value = true
     refreshHint()
     await refreshAll()
     pullRefreshing.value = false
   } else {
-    // 收回
     pullDistance.value = 0
     pullProgress.value = 0
     refreshHint()
   }
-  setTimeout(() => {
-    if (pullDistance.value <= PULL_THRESHOLD) {
-      pullDistance.value = 0
-      pullProgress.value = 0
-      refreshHint()
-    }
-  }, 600)
+  setTimeout(() => { if (pullDistance.value <= PULL_THRESHOLD) { pullDistance.value = 0; pullProgress.value = 0; refreshHint() } }, 600)
 }
-
 async function refreshAll() {
-  await Promise.all([loadHoldings(), loadAllRecs()])
-  setTimeout(() => {
-    pullDistance.value = 0
-    pullProgress.value = 0
-  }, 400)
+  await Promise.all([loadHoldings(), loadLedger(), loadPlans()])
+  setTimeout(() => { pullDistance.value = 0; pullProgress.value = 0 }, 400)
 }
 
-// ── 持仓 ──
-async function loadHoldings() {
-  try {
-    holdings.value = await listHoldings()
-  } catch (e) {
-    console.warn('[portfolio] loadHoldings failed', e)
-  }
-}
-
-const totalWeight = computed(() => {
-  // 用 holdings 的市值算权重（没有现价时退化为 0）
-  const total = holdings.value.reduce((s, h) => s + (h.cost_basis * h.shares), 0)
-  return total || 1
-})
-
-const holdingsWithWeight = computed(() =>
-  holdings.value.map((h) => ({
-    code: h.stock_code,
-    name: h.short_name || '',
-    shares: h.shares,
-    cost: h.cost_basis,
-    weight: (h.cost_basis * h.shares) / totalWeight.value,
-  }))
-)
-
-const currentRecs = computed(() => recByRole.value[activeRole.value] || [])
-
-const overlapSet = computed(() => {
-  const set = new Set<string>()
-  const comp = compareByRole.value[activeRole.value]
-  if (comp && comp.overlap) for (const c of comp.overlap) set.add(c)
-  return set
-})
-
-const currentCompare = computed(() => compareByRole.value[activeRole.value] || null)
-
-// ── Role 推荐 ──
-async function loadAllRecs() {
-  recLoading.value = true
-  try {
-    const all = await listRecommendations()
-    const map: Record<string, Recommendation[]> = {}
-    for (const r of all) {
-      if (!map[r.role]) map[r.role] = []
-      map[r.role].push(r)
-    }
-    for (const role of ALL_ROLES) {
-      if (!map[role]) map[role] = []
-    }
-    recByRole.value = map
-  } catch (e) {
-    console.warn('[portfolio] loadAllRecs failed', e)
-  } finally {
-    recLoading.value = false
-  }
-}
-
-function onAddRec() {
-  addRecErr.value = ''
-  const code = padCode(addCode.value)
-  if (!/^\d{6}$/.test(code)) {
-    addRecErr.value = '请输入有效 6 位股票代码'
-    return
-  }
-  const w = Number(addWeight.value)
-  if (!w || w <= 0 || w > 100) {
-    addRecErr.value = '权重需在 0~100 之间'
-    return
-  }
-  const list = [...currentRecs.value]
-  // 同 code 覆盖
-  const idx = list.findIndex((r) => r.stock_code === code)
-  const newRec: Recommendation = {
-    role: activeRole.value,
-    stock_code: code,
-    stock_name: addName.value.trim(),
-    weight: w / 100,
-  }
-  if (idx >= 0) list[idx] = newRec
-  else list.push(newRec)
-  recByRole.value = { ...recByRole.value, [activeRole.value]: list }
-  addCode.value = ''
-  addName.value = ''
-  addWeight.value = 10
-}
-
-function onDelRec(r: Recommendation) {
-  const list = currentRecs.value.filter((x) => x.stock_code !== r.stock_code)
-  recByRole.value = { ...recByRole.value, [activeRole.value]: list }
-}
-
-async function onSaveRecs() {
-  try {
-    const items = currentRecs.value.map((r) => ({
-      stock_code: r.stock_code,
-      stock_name: r.stock_name,
-      weight: r.weight,
-    }))
-    await bulkSetRecommendations(activeRole.value, items)
-    uni.showToast({ title: '已保存', icon: 'success' })
-    await loadAllRecs()
-    await loadCompare()
-  } catch (e: any) {
-    uni.showToast({ title: e?.message || '保存失败', icon: 'none' })
-  }
-}
-
-async function loadCompare() {
-  try {
-    const c = await compareWithRole(activeRole.value)
-    compareByRole.value = { ...compareByRole.value, [activeRole.value]: c }
-  } catch (e) {
-    console.warn('[portfolio] loadCompare failed', e)
-  }
-}
-
-// ── 截图 / 手动导入 ──
-function onUpload() {
-  uni.chooseImage({
-    count: 1,
-    success: async (res) => {
-      const fp = res.tempFilePaths?.[0]
-      if (!fp) return
-      uni.showLoading({ title: '识别中…' })
-      try {
-        // H5 端 uni.getFileSystemManager / FileSystemManager 不直接支持；走 base64 path
-        // 简单方案：提示用户"截图先在 OCR 平台识别为 JSON，再粘贴到 textarea"
-        // 或者用 uni.request 上传文件
-        uni.hideLoading()
-        uni.showToast({ title: '已选图，请用下方「智能识别」跑 mock，或手动输入', icon: 'none', duration: 3000 })
-        ocrNote.value = `已选图（${fp}）。注：浏览器端跨域文件读取受限；用「智能识别」跑 mock 数据演示。`
-      } catch (e: any) {
-        uni.hideLoading()
-        uni.showToast({ title: e?.message || '上传失败', icon: 'none' })
-      }
-    },
-  })
-}
-
-async function onMockExtract() {
-  uni.showLoading({ title: '识别中…' })
-  try {
-    const r = await extractFromImages(['data:image/png;base64,iVBORw0KGgo='])
-    uni.hideLoading()
-    if (r.ok && r.positions && r.positions.length) {
-      // 自动填到 textarea
-      const lines = r.positions.map((p) => `${p.code} ${p.cost} ${p.qty}`).join('\n')
-      importText.value = lines
-      ocrNote.value = r.mock
-        ? `（mock 数据：${r.note || 'LLM 未配置'}）— 点击下方"导入到持仓列表"入库`
-        : `识别成功 ${r.positions.length} 条 — 点击下方"导入到持仓列表"入库`
-    } else {
-      ocrNote.value = r.error || '识别失败'
-    }
-  } catch (e: any) {
-    uni.hideLoading()
-    ocrNote.value = e?.message || '识别失败'
-  }
-}
-
-async function onImport() {
-  const list = parseHoldingsText(importText.value)
-  if (list.length === 0) {
-    uni.showToast({ title: '没解析到有效持仓（每行：代码 成本 数量）', icon: 'none' })
-    return
-  }
-  uni.showLoading({ title: '导入中…' })
-  let ok = 0
-  for (const p of list) {
-    try {
-      await upsertHolding({ stock_code: p.code, short_name: '', shares: p.qty, cost_basis: p.cost })
-      ok++
-    } catch (e) {
-      console.warn('[import] upsert failed', p, e)
-    }
-  }
-  uni.hideLoading()
-  uni.showToast({ title: `导入 ${ok}/${list.length} 条`, icon: 'success' })
-  importText.value = ''
-  await loadHoldings()
-  await loadCompare()
-}
-
-// ── 运行分析 ──
-async function onRunAnalyze() {
-  if (!totalCapital.value || totalCapital.value <= 0) {
-    uni.showToast({ title: '请输入总资金', icon: 'none' })
-    return
-  }
-  analyzeLoading.value = true
-  try {
-    const r = await analyzePortfolio({
-      total_capital: totalCapital.value,
-      fee_wan: feeWan.value,
-      stocks: holdings.value.map((h) => ({
-        code: h.stock_code,
-        name: h.short_name,
-        price: h.cost_basis,
-        capital: totalCapital.value / Math.max(holdings.value.length, 1),
-      })),
-      existing: holdings.value.map((h) => ({
-        code: h.stock_code,
-        name: h.short_name,
-        cost: h.cost_basis,
-        qty: h.shares,
-        cur: h.cost_basis,
-      })),
-      fee_confirmed: true,
-    })
-    if (r.fee_confirm) {
-      uni.showModal({
-        title: '费率确认',
-        content: r.fee_msg || '',
-        success: async (m) => {
-          if (m.confirm) {
-            // 重新跑
-            const r2 = await analyzePortfolio({
-              total_capital: totalCapital.value,
-              fee_wan: feeWan.value,
-              stocks: holdings.value.map((h) => ({ code: h.stock_code, name: h.short_name, price: h.cost_basis, capital: totalCapital.value / Math.max(holdings.value.length, 1) })),
-              existing: holdings.value.map((h) => ({ code: h.stock_code, name: h.short_name, cost: h.cost_basis, qty: h.shares, cur: h.cost_basis })),
-              fee_confirmed: true,
-            })
-            analyzeReport.value = r2
-          }
-        },
-      })
-    } else {
-      analyzeReport.value = r
-    }
-  } catch (e: any) {
-    uni.showToast({ title: e?.message || '分析失败', icon: 'none' })
-  } finally {
-    analyzeLoading.value = false
-  }
-}
-
-function actionClass(action?: string) {
-  if (!action) return ''
-  if (action.includes('平仓')) return 'pf-action--reduce'
-  if (action.includes('减仓')) return 'pf-action--reduce'
-  if (action.includes('加仓')) return 'pf-action--add'
-  return 'pf-action--hold'
-}
-
-// ── AI 研报解读 ──
-async function onResearch() {
-  const code = (researchCode.value || '').trim()
-  const name = (researchName.value || '').trim()
-  if (!code && !name) {
-    uni.showToast({ title: '请输入代码或名称', icon: 'none' })
-    return
-  }
-  researchLoading.value = true
-  try {
-    const r = await researchReport({
-      stock_code: code,
-      stock_name: name,
-      query: researchQuery.value.trim(),
-    })
-    researchData.value = r
-  } catch (e: any) {
-    uni.showToast({ title: e?.message || '生成失败', icon: 'none' })
-  } finally {
-    researchLoading.value = false
-  }
-}
-
-// ── Life cycle ──
-onMounted(() => {
-  // #ifdef H5 || APP-PLUS
-  // touch events bound at page level
-  // #endif
-  refreshAll()
-  loadCompare()
-})
-
-onShow(() => {
-  loadHoldings()
-  loadCompare()
-})
-
-onBeforeUnmount(() => {
-  // 清理 timer（如果有）
-})
+onMounted(() => { refreshAll() })
+onShow(() => { loadHoldings(); loadLedger(); loadPlans() })
+onBeforeUnmount(() => {})
 </script>
 
 <style lang="scss" scoped>
-/* ── A股景气捕手 色板（与全局一致） ── */
 $rf-cyan: #72f7ff;
 $rf-amber: #ffb86b;
 $rf-orange: #ff7a3d;
@@ -702,581 +749,165 @@ $color-border: rgba(255, 184, 107, 0.24);
 $color-text-primary: $rf-cream;
 $color-text-secondary: $rf-muted;
 $color-text-warm: #d3c3ad;
-$radius-md: 14rpx;
 $radius-lg: 20rpx;
-$radius-full: 999rpx;
-$spacing-sm: 8rpx;
-$spacing-base: 16rpx;
-$spacing-md: 24rpx;
-$spacing-lg: 32rpx;
 
-/* ── 容器 ── */
-.pf-page {
-  min-height: 100vh;
-  background: $color-bg;
-  padding: 24rpx 24rpx 48rpx;
-  // 移动端：防止 overscroll 行为干扰 touch
-  // #ifdef H5
-  overscroll-behavior-y: contain;
-  // #endif
-}
+.pf-page { min-height: 100vh; background: $color-bg; padding: 24rpx 24rpx 48rpx; overscroll-behavior-y: contain; }
+.pf-head { padding: 16rpx 0 8rpx; margin-bottom: 12rpx; }
+.pf-title { display: block; font-size: 44rpx; font-weight: 700; color: $color-text-primary; letter-spacing: 1rpx; }
+.pf-hint { display: block; margin-top: 8rpx; font-size: 22rpx; color: $color-text-secondary; letter-spacing: 1rpx; }
 
-.pf-head {
-  padding: 16rpx 0 8rpx;
-  margin-bottom: 12rpx;
-}
-.pf-title {
-  display: block;
-  font-size: 44rpx;
-  font-weight: 700;
-  color: $color-text-primary;
-  letter-spacing: 1rpx;
-}
-.pf-hint {
-  display: block;
-  margin-top: 8rpx;
-  font-size: 22rpx;
-  color: $color-text-secondary;
-  letter-spacing: 1rpx;
-}
+.pf-pull-indicator { position: relative; display: flex; align-items: center; justify-content: center; background: rgba(255, 184, 107, 0.08); border-bottom: 1rpx solid $color-border; transition: height 0.15s ease, opacity 0.15s ease; overflow: hidden; }
+.pf-pull-text { font-size: 24rpx; color: $rf-amber; font-weight: 600; }
 
-/* ── Touch 下拉指示器 ── */
-.pf-pull-indicator {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 184, 107, 0.08);
-  border-bottom: 1rpx solid $color-border;
-  transition: height 0.15s ease, opacity 0.15s ease;
-  overflow: hidden;
-}
-.pf-pull-text {
-  font-size: 24rpx;
-  color: $rf-amber;
-  font-weight: 600;
-}
-
-/* ── 通用 card ── */
-.pf-card {
-  background: $color-card-bg;
-  border: 1rpx solid $color-border;
-  border-radius: $radius-lg;
-  padding: 20rpx 24rpx;
-  margin-bottom: 20rpx;
-}
-.pf-section-title {
-  display: block;
-  font-size: 30rpx;
-  color: $rf-amber;
-  font-weight: 600;
-  margin-bottom: 16rpx;
-}
-.pf-sub-section-title {
-  display: block;
-  font-size: 26rpx;
-  color: $rf-amber;
-  font-weight: 600;
-  margin: 16rpx 0 12rpx;
-}
-.pf-empty {
-  text-align: center;
-  color: $color-text-secondary;
-  font-size: 24rpx;
-  padding: 20rpx 0;
-}
-.pf-label {
-  display: block;
-  font-size: 22rpx;
-  color: $color-text-secondary;
-  margin-bottom: 8rpx;
-}
-.pf-row {
-  display: flex;
-  gap: 16rpx;
-}
-.pf-col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-.pf-input {
-  width: 100%;
-  padding: 16rpx 20rpx;
-  font-size: 28rpx;
-  background: rgba(12, 10, 12, 0.6);
-  color: $color-text-primary;
-  border: 1rpx solid rgba(255, 184, 107, 0.3);
-  border-radius: 12rpx;
-  box-sizing: border-box;
-}
-.pf-input--xs { width: 80rpx; padding: 12rpx 16rpx; }
+.pf-card { background: $color-card-bg; border: 1rpx solid $color-border; border-radius: $radius-lg; padding: 20rpx 24rpx; margin-bottom: 20rpx; }
+.pf-section-title { display: block; font-size: 30rpx; color: $rf-amber; font-weight: 600; margin-bottom: 16rpx; }
+.pf-sub-section-title { display: block; font-size: 26rpx; color: $rf-amber; font-weight: 600; margin: 16rpx 0 12rpx; }
+.pf-empty { text-align: center; color: $color-text-secondary; font-size: 24rpx; padding: 20rpx 0; }
+.pf-label { display: block; font-size: 22rpx; color: $color-text-secondary; margin-bottom: 8rpx; }
+.pf-row { display: flex; gap: 16rpx; }
+.pf-col { flex: 1; display: flex; flex-direction: column; }
+.pf-input { width: 100%; padding: 16rpx 20rpx; font-size: 28rpx; background: rgba(12, 10, 12, 0.6); color: $color-text-primary; border: 1rpx solid rgba(255, 184, 107, 0.3); border-radius: 12rpx; box-sizing: border-box; }
+.pf-input--xs { width: 120rpx; padding: 12rpx 16rpx; }
 .pf-input--sm { flex: 0 0 200rpx; padding: 12rpx 16rpx; }
 .pf-input--md { flex: 1; padding: 12rpx 16rpx; }
 
-/* ── Fee 警告 ── */
-.pf-fee-warn {
-  margin-top: 12rpx;
-  padding: 12rpx 16rpx;
-  font-size: 22rpx;
-  border-radius: 10rpx;
-  border: 1rpx solid;
-  color: $rf-amber;
-  background: rgba(255, 184, 107, 0.08);
-  border-color: rgba(255, 184, 107, 0.3);
-}
-.pf-fee-warn--warn {
-  color: $rf-amber;
-  background: rgba(255, 184, 107, 0.08);
-  border-color: rgba(255, 184, 107, 0.3);
-}
-.pf-fee-warn--hard {
-  color: $rf-red;
-  background: rgba(255, 77, 77, 0.08);
-  border-color: rgba(255, 77, 77, 0.3);
-}
+.pf-fee-warn { margin-top: 12rpx; padding: 12rpx 16rpx; font-size: 22rpx; border-radius: 10rpx; border: 1rpx solid; color: $rf-amber; background: rgba(255, 184, 107, 0.08); border-color: rgba(255, 184, 107, 0.3); }
+.pf-fee-warn--warn { color: $rf-amber; }
+.pf-fee-warn--hard { color: $rf-red; background: rgba(255, 77, 77, 0.08); border-color: rgba(255, 77, 77, 0.3); }
 
-/* ── Import 区 ── */
-.pf-import-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.pf-toggle {
-  font-size: 24rpx;
-  color: $rf-cyan;
-}
-.pf-import-body {
-  margin-top: 16rpx;
-}
-.pf-import-actions {
-  display: flex;
-  gap: 12rpx;
-  margin-bottom: 12rpx;
-}
-.pf-textarea {
-  width: 100%;
-  padding: 16rpx;
-  font-size: 24rpx;
-  background: rgba(12, 10, 12, 0.7);
-  color: $color-text-primary;
-  border: 1rpx solid rgba(255, 184, 107, 0.2);
-  border-radius: 12rpx;
-  margin-bottom: 12rpx;
-  min-height: 100rpx;
-  box-sizing: border-box;
-}
-.pf-note {
-  margin-top: 12rpx;
-  font-size: 22rpx;
-  color: $color-text-secondary;
-  line-height: 1.5;
-}
-.pf-note--warn {
-  color: $rf-amber;
-}
+.pf-import-head { display: flex; justify-content: space-between; align-items: center; }
+.pf-toggle { font-size: 24rpx; color: $rf-cyan; }
+.pf-import-body { margin-top: 16rpx; }
+.pf-import-actions { display: flex; gap: 12rpx; margin-bottom: 12rpx; }
+.pf-textarea { width: 100%; padding: 16rpx; font-size: 24rpx; background: rgba(12, 10, 12, 0.7); color: $color-text-primary; border: 1rpx solid rgba(255, 184, 107, 0.2); border-radius: 12rpx; margin-bottom: 12rpx; min-height: 100rpx; box-sizing: border-box; }
+.pf-note { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; line-height: 1.5; }
+.pf-note--warn { color: $rf-amber; }
+.pf-note--ok { color: $rf-green; }
+.pf-note--muted { color: $rf-muted; font-size: 21rpx; margin-bottom: 16rpx; }
 
-/* ── 通用 button ── */
-.pf-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16rpx 28rpx;
-  font-size: 26rpx;
-  border-radius: 14rpx;
-  border: 1rpx solid transparent;
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-.pf-btn--xs { padding: 8rpx 18rpx; font-size: 28rpx; min-width: 60rpx; }
-.pf-btn--secondary {
-  background: rgba(255, 184, 107, 0.05);
-  border-color: rgba(255, 184, 107, 0.3);
-  color: $color-text-primary;
-}
-.pf-btn--primary {
-  background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%);
-  color: $color-bg;
-  font-weight: 600;
-  border-color: $rf-amber;
-}
-.pf-btn--block {
-  display: flex;
-  width: 100%;
-  margin-top: 16rpx;
-}
-.pf-btn--loading {
-  opacity: 0.7;
-}
-.pf-btn--hover {
-  opacity: 0.85;
-  transform: scale(0.98);
-}
+.pf-btn { display: inline-flex; align-items: center; justify-content: center; padding: 16rpx 28rpx; font-size: 26rpx; border-radius: 14rpx; border: 1rpx solid transparent; transition: transform 0.15s ease, opacity 0.15s ease; }
+.pf-btn--xs { padding: 10rpx 20rpx; font-size: 24rpx; }
+.pf-btn--secondary { background: rgba(255, 184, 107, 0.05); border-color: rgba(255, 184, 107, 0.3); color: $color-text-primary; }
+.pf-btn--primary { background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%); color: $color-bg; font-weight: 600; border-color: $rf-amber; }
+.pf-btn--block { display: flex; width: 100%; margin-top: 16rpx; }
+.pf-btn--loading { opacity: 0.7; }
+.pf-btn--hover { opacity: 0.85; transform: scale(0.98); }
 
-/* ── Role Tabs ── */
-.pf-role-tabs {
-  display: flex;
-  gap: 8rpx;
-  margin-bottom: 16rpx;
-  border-bottom: 1rpx solid rgba(255, 184, 107, 0.16);
-  padding-bottom: 6rpx;
-}
-.pf-role-tab {
-  flex: 1;
-  padding: 16rpx 0;
-  text-align: center;
-  font-size: 26rpx;
-  font-weight: 600;
-  color: $color-text-secondary;
-  background: transparent;
-  border: 1rpx solid transparent;
-  border-radius: 12rpx;
-  transition: color 0.2s, background 0.2s, border-color 0.2s;
-}
-.pf-role-tab.active {
-  color: $rf-amber;
-  background: rgba(255, 184, 107, 0.1);
-  border-color: rgba(255, 184, 107, 0.3);
-}
+/* ① 账本 */
+.pf-ledger-state { margin-top: 12rpx; }
+.pf-ledger-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10rpx; }
+.pf-ledger-cell { display: flex; flex-direction: column; padding: 10rpx 12rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; }
+.pf-ledger-k { font-size: 20rpx; color: $color-text-secondary; margin-bottom: 4rpx; }
+.pf-ledger-v { font-size: 26rpx; font-weight: 600; color: $color-text-primary; font-variant-numeric: tabular-nums; }
+.pf-ledger-v--cyan { color: $rf-cyan; }
+.pf-up { color: $rf-green !important; }
+.pf-down { color: $rf-red !important; }
+.pf-ledger-meta { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; line-height: 1.5; }
+.pf-ledger-actions { display: flex; gap: 10rpx; flex-wrap: wrap; margin-top: 12rpx; }
 
-/* ── Role Content ── */
-.pf-role-content {
-  // 直板机：单列
-  // 折叠屏：grid 双列
-}
+/* ② 持仓行 */
+.pf-hold-list { margin-top: 16rpx; display: flex; flex-direction: column; gap: 8rpx; }
+.pf-hold-row { display: grid; grid-template-columns: 1fr 160rpx 140rpx 60rpx; align-items: center; gap: 8rpx; padding: 8rpx 10rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; }
+.pf-hold-name { font-size: 22rpx; color: $color-text-primary; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-hold-input { width: 100%; padding: 8rpx 10rpx; font-size: 22rpx; background: rgba(12, 10, 12, 0.6); color: $color-text-primary; border: 1rpx solid rgba(255, 184, 107, 0.2); border-radius: 8rpx; }
+.pf-hold-del { text-align: center; font-size: 28rpx; color: $rf-red; }
 
-.pf-rec-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6rpx;
-  margin-bottom: 12rpx;
-}
-.pf-rec-row {
-  display: grid;
-  grid-template-columns: 1fr 80rpx 60rpx;
-  align-items: center;
-  padding: 10rpx 14rpx;
-  background: rgba(255, 184, 107, 0.03);
-  border: 1rpx solid rgba(255, 184, 107, 0.1);
-  border-radius: 10rpx;
-}
-.pf-rec-name { font-size: 26rpx; color: $color-text-primary; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pf-rec-weight { text-align: right; font-size: 26rpx; color: $rf-amber; font-weight: 600; font-variant-numeric: tabular-nums; }
-.pf-rec-del { text-align: center; font-size: 28rpx; color: $rf-red; }
+/* ③ 拟买 */
+.pf-proposed-added { display: flex; flex-direction: column; gap: 8rpx; margin-bottom: 12rpx; }
+.pf-proposed-row { display: flex; gap: 8rpx; align-items: center; }
 
-.pf-rec-add {
-  display: flex;
-  gap: 8rpx;
-  align-items: center;
-  margin-bottom: 12rpx;
-}
+/* ④ 运行 */
+.pf-run-status { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; text-align: center; }
 
-/* ── Compare grid ── */
-.pf-compare-cols {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12rpx;
-  margin-bottom: 12rpx;
-}
-.pf-compare-col {
-  padding: 12rpx;
-  background: rgba(255, 184, 107, 0.03);
-  border: 1rpx solid rgba(255, 184, 107, 0.1);
-  border-radius: 12rpx;
-  min-height: 100rpx;
-}
-.pf-col-title {
-  font-size: 24rpx;
-  font-weight: 600;
-  color: $color-text-primary;
-  margin-bottom: 8rpx;
-  padding-bottom: 6rpx;
-  border-bottom: 1rpx solid rgba(255, 184, 107, 0.14);
-  text-align: center;
-}
-.pf-holding-row {
-  display: grid;
-  grid-template-columns: 1fr 80rpx;
-  align-items: center;
-  padding: 8rpx 10rpx;
-  font-size: 24rpx;
-  color: $color-text-primary;
-  border-radius: 6rpx;
-  margin-bottom: 4rpx;
-  border: 1rpx solid transparent;
-}
-.pf-holding-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pf-holding-weight { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; color: $rf-amber; }
-.pf-overlap {
-  border-color: rgba(255, 184, 107, 0.4) !important;
-  background: rgba(255, 184, 107, 0.08) !important;
-}
+/* confirums */
+.pf-confirms { margin-bottom: 12rpx; }
+.pf-confirm { padding: 12rpx 14rpx; font-size: 22rpx; color: $rf-amber; background: rgba(255, 184, 107, 0.08); border: 1rpx solid rgba(255, 184, 107, 0.3); border-radius: 10rpx; margin-bottom: 8rpx; line-height: 1.5; }
 
-/* ── Suggestions ── */
-.pf-suggestion {
-  display: flex;
-  gap: 10rpx;
-  padding: 14rpx 16rpx;
-  margin-bottom: 8rpx;
-  font-size: 24rpx;
-  border-radius: 12rpx;
-  border: 1rpx solid;
-  line-height: 1.4;
-}
-.suggestion-add { color: $rf-green; border-color: rgba(107, 255, 173, 0.3); background: rgba(107, 255, 173, 0.05); }
-.suggestion-reduce { color: $rf-red; border-color: rgba(255, 77, 77, 0.3); background: rgba(255, 77, 77, 0.05); }
-.pf-suggestion-icon { flex: 0 0 32rpx; font-size: 32rpx; text-align: center; }
-.pf-suggestion-text { flex: 1; }
-.pf-suggestion-title { display: block; font-weight: 600; }
-.pf-suggestion-reason { display: block; font-size: 22rpx; opacity: 0.85; margin-top: 2rpx; }
-
-/* ── Notices / Fee / Confirms ── */
+/* 策略方案 */
 .pf-notice-list { margin-bottom: 12rpx; }
-.pf-notice {
-  padding: 10rpx 14rpx;
-  font-size: 24rpx;
-  color: $color-text-warm;
-  background: rgba(114, 247, 255, 0.05);
-  border-left: 4rpx solid $rf-cyan;
-  border-radius: 0 8rpx 8rpx 0;
-  margin-bottom: 6rpx;
-  line-height: 1.5;
-}
-
-/* ── Existing advice ── */
+.pf-notice { padding: 10rpx 14rpx; font-size: 24rpx; color: $color-text-warm; background: rgba(114, 247, 255, 0.05); border-left: 4rpx solid $rf-cyan; border-radius: 0 8rpx 8rpx 0; margin-bottom: 6rpx; line-height: 1.5; }
 .pf-existing-row { margin-bottom: 12rpx; }
-.pf-existing-global {
-  padding: 12rpx 14rpx;
-  font-size: 24rpx;
-  color: $rf-amber;
-  background: rgba(255, 184, 107, 0.08);
-  border: 1rpx solid rgba(255, 184, 107, 0.3);
-  border-radius: 10rpx;
-  margin-bottom: 10rpx;
-  line-height: 1.5;
-}
-.pf-existing-invalid {
-  padding: 10rpx 14rpx;
-  font-size: 24rpx;
-  color: $rf-red;
-  background: rgba(255, 77, 77, 0.05);
-  border: 1rpx solid rgba(255, 77, 77, 0.3);
-  border-radius: 8rpx;
-  margin-bottom: 6rpx;
-}
-.pf-existing-item {
-  padding: 10rpx 14rpx;
-  background: rgba(255, 184, 107, 0.03);
-  border: 1rpx solid rgba(255, 184, 107, 0.1);
-  border-radius: 10rpx;
-  margin-bottom: 8rpx;
-}
-.pf-existing-code {
-  display: block;
-  font-size: 26rpx;
-  font-weight: 600;
-  color: $color-text-primary;
-  margin-bottom: 4rpx;
-}
-.pf-existing-action {
-  display: block;
-  font-size: 24rpx;
-  color: $color-text-warm;
-  margin-bottom: 8rpx;
-  line-height: 1.5;
-}
+.pf-existing-global { padding: 12rpx 14rpx; font-size: 24rpx; color: $rf-amber; background: rgba(255, 184, 107, 0.08); border: 1rpx solid rgba(255, 184, 107, 0.3); border-radius: 10rpx; margin-bottom: 10rpx; line-height: 1.5; }
+.pf-existing-invalid { padding: 10rpx 14rpx; font-size: 24rpx; color: $rf-red; background: rgba(255, 77, 77, 0.05); border: 1rpx solid rgba(255, 77, 77, 0.3); border-radius: 8rpx; margin-bottom: 6rpx; }
+.pf-existing-item { padding: 10rpx 14rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; margin-bottom: 8rpx; }
+.pf-existing-code { display: block; font-size: 26rpx; font-weight: 600; color: $color-text-primary; margin-bottom: 4rpx; }
+.pf-existing-action { display: block; font-size: 24rpx; color: $color-text-warm; margin-bottom: 8rpx; line-height: 1.5; }
 .pf-action--add { color: $rf-green; }
 .pf-action--reduce { color: $rf-red; }
 .pf-action--hold { color: $rf-amber; }
 
-/* ── Plan Table ── */
-.pf-plan-table {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr 80rpx;
-  gap: 2rpx;
-  background: rgba(12, 10, 12, 0.5);
-  border-radius: 8rpx;
-  overflow: hidden;
-  margin-top: 8rpx;
-}
-.pf-plan-row {
-  display: contents;
-}
-.pf-plan-row > text {
-  padding: 8rpx 10rpx;
-  font-size: 22rpx;
-  color: $color-text-primary;
-  text-align: center;
-  background: rgba(12, 10, 12, 0.3);
-}
-.pf-plan-row--head > text {
-  background: rgba(255, 184, 107, 0.12);
-  color: $rf-amber;
-  font-weight: 600;
-  font-size: 20rpx;
-}
-
-/* ── Stock（新标的方案） ── */
-.pf-stock {
-  padding: 12rpx 14rpx;
-  background: rgba(114, 247, 255, 0.03);
-  border: 1rpx solid rgba(114, 247, 255, 0.15);
-  border-radius: 10rpx;
-  margin-bottom: 10rpx;
-}
-.pf-stock-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6rpx;
-}
+/* 新标的方案 */
+.pf-stock { padding: 12rpx 14rpx; background: rgba(114, 247, 255, 0.03); border: 1rpx solid rgba(114, 247, 255, 0.15); border-radius: 10rpx; margin-bottom: 10rpx; }
+.pf-stock-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6rpx; }
 .pf-stock-code { font-size: 26rpx; font-weight: 600; color: $color-text-primary; }
-.pf-stock-budget { font-size: 22rpx; color: $color-text-secondary; font-variant-numeric: tabular-nums; }
+.pf-stock-budget { font-size: 20rpx; color: $color-text-secondary; font-variant-numeric: tabular-nums; }
 .pf-stock-err { font-size: 24rpx; color: $rf-amber; padding: 8rpx 0; line-height: 1.5; }
 
-/* ── Disclaimer ── */
-.pf-disclaimer {
-  margin-top: 32rpx;
-  padding: 20rpx;
-  text-align: center;
-  font-size: 22rpx;
-  color: $color-text-secondary;
-  line-height: 1.6;
-}
+/* ⑦ 跟踪 */
+.pf-track-item { padding: 12rpx 14rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; margin-bottom: 8rpx; }
+.pf-track-item.active { border-color: rgba(255, 184, 107, 0.5); background: rgba(255, 184, 107, 0.1); }
+.pf-track-item-head { display: flex; justify-content: space-between; align-items: center; }
+.pf-track-code { font-size: 26rpx; font-weight: 600; color: $color-text-primary; }
+.pf-track-invest { font-size: 22rpx; color: $rf-amber; font-variant-numeric: tabular-nums; }
+.pf-track-detail { margin-top: 12rpx; padding-top: 12rpx; border-top: 1rpx dashed rgba(255, 184, 107, 0.2); }
+.pf-track-detail-head { display: flex; justify-content: space-between; font-size: 22rpx; color: $color-text-secondary; margin-bottom: 10rpx; }
+.pf-track-cur-row { align-items: center; margin-bottom: 10rpx; }
+.pf-track-steps { display: flex; flex-direction: column; gap: 6rpx; }
+.pf-track-step { display: grid; grid-template-columns: 160rpx 1fr 160rpx; align-items: center; gap: 8rpx; padding: 10rpx 12rpx; background: rgba(12, 10, 12, 0.4); border: 1rpx solid rgba(255, 184, 107, 0.12); border-radius: 8rpx; }
+.pf-track-step--done { border-color: rgba(107, 255, 173, 0.4); background: rgba(107, 255, 173, 0.06); }
+.pf-track-step-name { font-size: 22rpx; color: $rf-cyan; font-weight: 600; }
+.pf-track-step-info { font-size: 20rpx; color: $color-text-primary; }
+.pf-track-step-state { font-size: 20rpx; color: $rf-muted; text-align: right; }
+.pf-track-step--done .pf-track-step-state { color: $rf-green; }
+.pf-track-hint { margin-top: 10rpx; font-size: 20rpx; color: $rf-muted; line-height: 1.5; }
 
-/* ═══════════════════════════════════════════
-   响应式
-   - 默认：直板机（≤390 单列紧凑；391~760 单列标准）
-   - 折叠屏内屏 / 平板（761~980）：右栏变宽，建议区放右侧
-   - 桌面 / 横屏（≥981）：双列 grid，左编辑/右对比
-   ═══════════════════════════════════════════ */
+/* PlanTable 组件样式（子组件 scope 透传） */
+:deep(.pf-plan-table) {
+  display: block; margin-top: 8rpx; background: rgba(12, 10, 12, 0.5); border-radius: 8rpx; overflow: hidden;
+}
+:deep(.pf-plan-grid) { display: grid; grid-template-columns: 1.2fr 1.4fr 1.4fr 1.2fr 1.6fr 0.8fr; gap: 1rpx; background: rgba(255, 184, 107, 0.1); }
+:deep(.pf-plan-cell) { padding: 8rpx 8rpx; font-size: 20rpx; color: $color-text-primary; text-align: center; background: rgba(12, 10, 12, 0.3); font-variant-numeric: tabular-nums; }
+:deep(.pf-plan-cell--th) { background: rgba(255, 184, 107, 0.14); color: $rf-amber; font-weight: 600; font-size: 19rpx; }
+:deep(.pf-tp-title) { display: block; font-size: 22rpx; color: $rf-amber; margin: 12rpx 0 6rpx; }
+:deep(.pf-tp-grid) { display: grid; grid-template-columns: 1fr 1.4fr 1.4fr 1.4fr 1.4fr; gap: 1rpx; background: rgba(114, 247, 255, 0.1); }
+:deep(.pf-tp-cell) { padding: 8rpx 8rpx; font-size: 20rpx; color: $color-text-primary; text-align: center; background: rgba(12, 10, 12, 0.3); font-variant-numeric: tabular-nums; }
+:deep(.pf-tp-cell--th) { background: rgba(114, 247, 255, 0.12); color: $rf-cyan; font-weight: 600; font-size: 19rpx; }
+:deep(.pf-tp-summary) { display: flex; justify-content: space-between; font-size: 20rpx; color: $color-text-warm; margin-top: 8rpx; padding: 0 4rpx; }
+
+/* 研报 */
+.pf-research-inputs { gap: 16rpx; margin-bottom: 16rpx; }
+.pf-report-box { margin-top: 20rpx; padding-top: 20rpx; border-top: 1rpx solid $color-border; }
+.pf-report-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12rpx; }
+.pf-report-title { font-size: 28rpx; font-weight: 700; color: $rf-cream; }
+.pf-report-rating { font-size: 24rpx; color: $rf-amber; font-weight: 600; }
+.pf-report-overall { display: block; font-size: 24rpx; color: $rf-green; line-height: 1.5; margin-bottom: 16rpx; }
+.pf-module { padding: 16rpx 0; border-bottom: 1rpx dashed rgba(255, 184, 107, 0.14); }
+.pf-module-head { display: flex; align-items: center; gap: 10rpx; margin-bottom: 8rpx; }
+.pf-module-no { display: inline-flex; align-items: center; justify-content: center; width: 34rpx; height: 34rpx; border-radius: 50%; background: rgba(114, 247, 255, 0.14); color: $rf-cyan; font-size: 22rpx; font-weight: 700; }
+.pf-module-title { font-size: 26rpx; font-weight: 600; color: $rf-cream; }
+.pf-module-verdict { font-size: 22rpx; color: $rf-amber; }
+.pf-module-summary { display: block; font-size: 23rpx; color: $rf-cream; line-height: 1.5; margin-bottom: 8rpx; }
+.pf-module-points { display: flex; flex-direction: column; gap: 4rpx; }
+.pf-module-point { display: flex; font-size: 22rpx; color: $rf-muted; line-height: 1.45; }
+.pf-dot { margin-right: 8rpx; color: $rf-cyan; }
+.pf-report-disclaimer { display: block; margin-top: 20rpx; font-size: 20rpx; color: $rf-muted; line-height: 1.5; }
+
+.pf-disclaimer { margin-top: 32rpx; padding: 20rpx; text-align: center; font-size: 22rpx; color: $color-text-secondary; line-height: 1.6; }
+
+/* 响应式 */
 @media (max-width: 390px) {
-  .pf-holding-row { grid-template-columns: 1fr 60rpx; font-size: 22rpx; }
-  .pf-role-tab { font-size: 24rpx; padding: 14rpx 0; }
+  .pf-ledger-grid { grid-template-columns: 1fr 1fr; }
+  .pf-hold-row { grid-template-columns: 1fr 120rpx 100rpx 50rpx; }
 }
-
 @media (min-width: 761px) {
   .pf-page { max-width: 1080rpx; margin: 0 auto; padding: 32rpx 32rpx 64rpx; }
-  .pf-capital .pf-input { font-size: 30rpx; }
-  .pf-holding-row { font-size: 26rpx; padding: 12rpx 14rpx; }
-  .pf-rec-row { font-size: 28rpx; }
+  .pf-ledger-grid { grid-template-columns: repeat(3, 1fr); }
 }
-
 @media (min-width: 981px) {
-  .pf-role-content {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-areas:
-      "edit compare"
-      "report report";
-    gap: 20rpx;
-  }
-  .pf-role-content > view:nth-child(1) { grid-area: edit; }
-  .pf-role-content > view:nth-child(2) { grid-area: compare; }
-  .pf-role-content > view:nth-child(3) { grid-area: report; }
+  .pf-page { max-width: 1200rpx; }
 }
-
 @media (orientation: landscape) and (max-height: 500px) {
-  // 横屏小高度：紧凑
   .pf-page { padding: 16rpx 24rpx 32rpx; }
   .pf-title { font-size: 36rpx; }
-}
-
-/* ── AI 研报解读 ── */
-.pf-research-inputs {
-  gap: 16rpx;
-  margin-bottom: 16rpx;
-}
-.pf-report-box {
-  margin-top: 20rpx;
-  padding-top: 20rpx;
-  border-top: 1rpx solid $color-border;
-}
-.pf-report-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12rpx;
-}
-.pf-report-title {
-  font-size: 28rpx;
-  font-weight: 700;
-  color: $rf-cream;
-}
-.pf-report-rating {
-  font-size: 24rpx;
-  color: $rf-amber;
-  font-weight: 600;
-}
-.pf-report-overall {
-  display: block;
-  font-size: 24rpx;
-  color: $rf-green;
-  line-height: 1.5;
-  margin-bottom: 16rpx;
-}
-.pf-module {
-  padding: 16rpx 0;
-  border-bottom: 1rpx dashed rgba(255, 184, 107, 0.14);
-}
-.pf-module-head {
-  display: flex;
-  align-items: center;
-  gap: 10rpx;
-  margin-bottom: 8rpx;
-}
-.pf-module-no {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34rpx;
-  height: 34rpx;
-  border-radius: 50%;
-  background: rgba(114, 247, 255, 0.14);
-  color: $rf-cyan;
-  font-size: 22rpx;
-  font-weight: 700;
-}
-.pf-module-title {
-  font-size: 26rpx;
-  font-weight: 600;
-  color: $rf-cream;
-}
-.pf-module-verdict {
-  font-size: 22rpx;
-  color: $rf-amber;
-}
-.pf-module-summary {
-  display: block;
-  font-size: 23rpx;
-  color: $rf-cream;
-  line-height: 1.5;
-  margin-bottom: 8rpx;
-}
-.pf-module-points {
-  display: flex;
-  flex-direction: column;
-  gap: 4rpx;
-}
-.pf-module-point {
-  display: flex;
-  font-size: 22rpx;
-  color: $rf-muted;
-  line-height: 1.45;
-}
-.pf-dot {
-  margin-right: 8rpx;
-  color: $rf-cyan;
-}
-.pf-report-disclaimer {
-  display: block;
-  margin-top: 20rpx;
-  font-size: 20rpx;
-  color: $rf-muted;
-  line-height: 1.5;
-}
-.pf-note--muted {
-  color: $rf-muted;
-  font-size: 21rpx;
-  margin-bottom: 16rpx;
 }
 </style>
