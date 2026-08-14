@@ -24,11 +24,11 @@
           <view class="pf-row">
             <view class="pf-col">
               <text class="pf-label">总资金（元）</text>
-              <input class="pf-input" type="number" v-model.number="totalCapital" placeholder="200000" />
+              <input class="pf-input" type="number" :value="totalCapital == null ? '' : totalCapital" @input="onCapitalInput" placeholder="请输入总资金，如 500000" />
             </view>
             <view class="pf-col">
               <text class="pf-label">佣金（万分之）</text>
-              <input class="pf-input" type="number" v-model.number="feeWan" placeholder="2.5" />
+              <input class="pf-input" type="number" :value="feeWan == null ? '' : feeWan" @input="onFeeInput" placeholder="请输入佣金，如 1.2" />
             </view>
           </view>
           <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onLedgerConfirmInit">
@@ -93,7 +93,7 @@
           <view class="pf-btn pf-btn--primary" hover-class="pf-btn--hover" @tap="onImport">
             <text>导入到持仓列表</text>
           </view>
-          <view class="pf-btn pf-btn--secondary" hover-class="pf-btn--hover" @tap="manualOpen = !manualOpen">
+          <view class="pf-btn pf-btn--primary" hover-class="pf-btn--hover" @tap="manualOpen = !manualOpen">
             <text>➕ 手动输入</text>
           </view>
         </view>
@@ -140,61 +140,96 @@
             <text class="pf-rec-del" @tap="proposedTargets.splice(i, 1)">✕</text>
           </view>
         </view>
-        <view class="pf-btn pf-btn--secondary pf-btn--block" hover-class="pf-btn--hover" @tap="proposedTargets.push({ code: '', name: '', price: null })">
-          <text>＋ 添加标的</text>
-        </view>
-      </view>
-    </view>
-
-    <!-- ④ 运行分析 -->
-    <view class="pf-card pf-run">
-      <text class="pf-section-title">🚀 运行分析</text>
-      <view v-if="feeWarning" class="pf-fee-warn" :class="feeWarningClass">
-        <text>⚠️ {{ feeWarning }}</text>
-      </view>
-      <view class="pf-btn pf-btn--primary pf-btn--block pf-run-btn" hover-class="pf-btn--hover" @tap="onRunAnalyze" :class="{ 'pf-btn--loading': analyzeLoading }">
-        <text>{{ analyzeLoading ? '分析中…' : '开始分析' }}</text>
-      </view>
-      <view class="pf-run-status">{{ analyzeStatus }}</view>
-    </view>
-
-    <!-- ⑤ AI 研报解读 -->
-    <view class="pf-card pf-research">
-      <text class="pf-section-title">📑 AI 研报解读</text>
-      <text class="pf-note pf-note--muted">AI 会按十二个研究模块整理公开资料生成研报（当前为演示模式，后续接入真实 LLM）。</text>
-      <view class="pf-row pf-research-inputs">
-        <input class="pf-input pf-input--sm" v-model="researchCode" placeholder="代码" />
-        <input class="pf-input pf-input--md" v-model="researchName" placeholder="名称（可选）" />
-      </view>
-      <textarea
-        v-model="researchQuery"
-        class="pf-textarea"
-        placeholder="用一句话说明你想验证的问题，例如：重点看产能扩张、海外客户与未来三年增长空间。"
-        :auto-height="true"
-      />
-      <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onResearch" :class="{ 'pf-btn--loading': researchLoading }">
-        <text>{{ researchLoading ? '生成中…' : '生成 AI 研报' }}</text>
-      </view>
-      <view v-if="researchData" class="pf-report-box">
-        <view class="pf-report-head">
-          <text class="pf-report-title">{{ researchData.stock_name }} · {{ researchData.stock_code || '—' }}</text>
-          <text class="pf-report-rating">综合评级：{{ researchData.rating }}</text>
-        </view>
-        <text class="pf-report-overall">{{ researchData.overall }}</text>
-        <view v-for="(m, i) in researchData.modules" :key="i" class="pf-module">
-          <view class="pf-module-head">
-            <text class="pf-module-no">{{ i + 1 }}</text>
-            <text class="pf-module-title">{{ m.title }}</text>
-            <text v-if="m.verdict" class="pf-module-verdict">· {{ m.verdict }}</text>
+        <view class="pf-proposed-actions">
+          <view class="pf-btn pf-btn--primary" hover-class="pf-btn--hover" @tap="proposedTargets.push({ code: '', name: '', price: null })">
+            <text>＋ 添加标的</text>
           </view>
-          <text class="pf-module-summary">{{ m.summary }}</text>
-          <view v-if="m.points && m.points.length" class="pf-module-points">
-            <view v-for="(p, j) in m.points" :key="j" class="pf-module-point">
-              <text class="pf-dot">·</text><text>{{ p }}</text>
+          <view class="pf-btn pf-btn--primary pf-run-btn" hover-class="pf-btn--hover" @tap="onRunAnalyze" :class="{ 'pf-btn--loading': analyzeLoading }">
+            <text>{{ analyzeLoading ? '分析中…' : '开始分析' }}</text>
+          </view>
+        </view>
+        <view class="pf-run-status">{{ analyzeStatus }}</view>
+        <view v-if="feeWarning" class="pf-fee-warn" :class="feeWarningClass">
+          <text>⚠️ {{ feeWarning }}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- ⑤ AI 研报解读（两个 tab） -->
+    <view class="pf-card pf-research">
+      <view class="pf-tabbar">
+        <view class="pf-tab" :class="{ 'pf-tab--active': researchTab === 'refine' }" @tap="researchTab = 'refine'"><text>研报 AI 精读提炼</text></view>
+        <view class="pf-tab" :class="{ 'pf-tab--active': researchTab === 'held' }" @tap="researchTab = 'held'"><text>已持仓标的 AI 研报分析</text></view>
+      </view>
+
+      <!-- Tab 1：研报 AI 精读提炼 -->
+      <view v-if="researchTab === 'refine'" class="pf-research-tab">
+        <text class="pf-note pf-note--muted">AI 会按十二个研究模块整理公开资料生成研报（当前为演示模式，后续接入真实 LLM）。</text>
+        <view class="pf-row pf-research-inputs">
+          <input class="pf-input pf-input--sm" v-model="researchCode" placeholder="代码" />
+          <input class="pf-input pf-input--md" v-model="researchName" placeholder="名称（可选）" />
+        </view>
+        <textarea
+          v-model="researchQuery"
+          class="pf-textarea"
+          placeholder="用一句话说明你想验证的问题，例如：重点看产能扩张、海外客户与未来三年增长空间。"
+          :auto-height="true"
+        />
+        <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onResearch" :class="{ 'pf-btn--loading': researchLoading }">
+          <text>{{ researchLoading ? '生成中…' : '生成 AI 研报' }}</text>
+        </view>
+        <view v-if="researchData" class="pf-report-box">
+          <view class="pf-report-head">
+            <text class="pf-report-title">{{ researchData.stock_name }} · {{ researchData.stock_code || '—' }}</text>
+            <text class="pf-report-rating">综合评级：{{ researchData.rating }}</text>
+          </view>
+          <text class="pf-report-overall">{{ researchData.overall }}</text>
+          <view v-for="(m, i) in researchData.modules" :key="i" class="pf-module">
+            <view class="pf-module-head">
+              <text class="pf-module-no">{{ i + 1 }}</text>
+              <text class="pf-module-title">{{ m.title }}</text>
+              <text v-if="m.verdict" class="pf-module-verdict">· {{ m.verdict }}</text>
+            </view>
+            <text class="pf-module-summary">{{ m.summary }}</text>
+            <view v-if="m.points && m.points.length" class="pf-module-points">
+              <view v-for="(p, j) in m.points" :key="j" class="pf-module-point">
+                <text class="pf-dot">·</text><text>{{ p }}</text>
+              </view>
             </view>
           </view>
+          <text class="pf-report-disclaimer">{{ researchData.disclaimer }}</text>
         </view>
-        <text class="pf-report-disclaimer">{{ researchData.disclaimer }}</text>
+      </view>
+
+      <!-- Tab 2：已持仓标的 AI 研报分析 -->
+      <view v-else class="pf-research-tab">
+        <text class="pf-note pf-note--muted">对当前持仓列表中的标的逐个生成 AI 研报（当前为演示模式）。勾选后点「生成已持仓研报」。</text>
+        <view v-if="heldResearchList.length === 0" class="pf-empty"><text>暂无持仓。请先在「已有持仓」中导入或手动输入。</text></view>
+        <view v-else class="pf-held-list">
+          <view v-for="h in heldResearchList" :key="h.stock_code" class="pf-held-check">
+            <text class="pf-held-name">{{ h.short_name || h.stock_code }} · {{ h.stock_code }}</text>
+            <text class="pf-held-checkbox" :class="{ 'pf-held-checkbox--on': heldResearchSel.has(h.stock_code) }" @tap="toggleHeld(h.stock_code)">{{ heldResearchSel.has(h.stock_code) ? '✓' : '' }}</text>
+          </view>
+        </view>
+        <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onResearchHeld" :class="{ 'pf-btn--loading': researchHeldLoading }">
+          <text>{{ researchHeldLoading ? '生成中…' : '生成已持仓研报' }}</text>
+        </view>
+        <view v-for="rd in heldResearchData" :key="rd.stock_code" v-if="heldResearchData.length" class="pf-report-box pf-report-box--sub">
+          <view class="pf-report-head">
+            <text class="pf-report-title">{{ rd.stock_name }} · {{ rd.stock_code }}</text>
+            <text class="pf-report-rating">综合评级：{{ rd.rating }}</text>
+          </view>
+          <text class="pf-report-overall">{{ rd.overall }}</text>
+          <view v-for="(m, i) in rd.modules" :key="i" class="pf-module">
+            <view class="pf-module-head">
+              <text class="pf-module-no">{{ i + 1 }}</text>
+              <text class="pf-module-title">{{ m.title }}</text>
+              <text v-if="m.verdict" class="pf-module-verdict">· {{ m.verdict }}</text>
+            </view>
+            <text class="pf-module-summary">{{ m.summary }}</text>
+          </view>
+          <text class="pf-report-disclaimer">{{ rd.disclaimer }}</text>
+        </view>
       </view>
     </view>
 
@@ -318,8 +353,6 @@ import { parseHoldingsText, fmtMoney, fmtPct, tierLabel, padCode } from '@/utils
 const ledgerOpen = ref(true)
 const ledgerSnapshot = ref<LedgerSnapshot>(emptySnapshot())
 const ledgerEvents = ref<LedgerEvent[]>([])
-const ledgerInitAmount = ref<number>(200000)
-const ledgerInitFee = ref<number>(2.5)
 const ledgerInitMsg = ref('')
 const ledgerInitOk = ref(true)
 const ledgerMsg = ref('')
@@ -345,14 +378,14 @@ async function loadLedger() {
 
 async function onLedgerConfirmInit() {
   ledgerInitMsg.value = ''
-  if (!ledgerInitAmount.value || ledgerInitAmount.value <= 0) {
-    ledgerInitOk.value = false; ledgerInitMsg.value = '请输入有效初始保证金'; return
+  if (!totalCapital.value || totalCapital.value <= 0) {
+    ledgerInitOk.value = false; ledgerInitMsg.value = '请输入有效总资金'; return
   }
-  if (!ledgerInitFee.value || ledgerInitFee.value <= 0) {
+  if (!feeWan.value || feeWan.value <= 0) {
     ledgerInitOk.value = false; ledgerInitMsg.value = '请输入有效手续费率'; return
   }
   try {
-    const r = await appendLedgerEvent('init', { amount: ledgerInitAmount.value, fee_rate_wan: ledgerInitFee.value })
+    const r = await appendLedgerEvent('init', { amount: totalCapital.value, fee_rate_wan: feeWan.value })
     if (r.ok) {
       ledgerSnapshot.value = r.snapshot
       ledgerEvents.value = r.events
@@ -401,7 +434,7 @@ async function onLedgerReset() {
   uni.showModal({
     title: '重置账本', content: '将清空全部账本事件，重新开始。确认？', success: async (m) => {
       if (!m.confirm) return
-      try { await clearLedger(); ledgerSnapshot.value = emptySnapshot(); ledgerEvents.value = []; ledgerMsgOk.value = true; ledgerMsg.value = '账本已重置' } catch (e: any) { ledgerMsgOk.value = false; ledgerMsg.value = e?.message || '重置失败' }
+      try { await clearLedger(); ledgerSnapshot.value = emptySnapshot(); ledgerEvents.value = []; ledgerMsgOk.value = true; ledgerMsg.value = '账本已重置'; totalCapital.value = null; feeWan.value = null } catch (e: any) { ledgerMsgOk.value = false; ledgerMsg.value = e?.message || '重置失败' }
     },
   })
 }
@@ -470,7 +503,12 @@ async function onManualAdd() {
 }
 
 async function loadHoldings() {
-  try { holdings.value = await listHoldings() } catch (e) { console.warn('[holdings] load failed', e) }
+  try {
+    holdings.value = await listHoldings()
+    heldResearchList.value = holdings.value
+    // 默认全选持仓用于研报
+    if (heldResearchSel.value.size === 0) heldResearchSel.value = new Set(holdings.value.map((h) => h.stock_code))
+  } catch (e) { console.warn('[holdings] load failed', e) }
 }
 async function onHoldChange(h: Holding) {
   try { await upsertHolding({ stock_code: h.stock_code, short_name: h.short_name, shares: h.shares, cost_basis: h.cost_basis }); await loadLedger() } catch (e) { uni.showToast({ title: '保存失败', icon: 'none' }) }
@@ -518,12 +556,21 @@ async function onImport() {
 }
 
 // ── ③ 拟新买标的 ──
-const proposedOpen = ref(false)
+const proposedOpen = ref(true)
 const proposedTargets = ref<{ code: string; name: string; price: number | null }[]>([])
 
+function onCapitalInput(e: any) {
+  const v = Number(e?.detail?.value)
+  totalCapital.value = Number.isNaN(v) ? null : v
+}
+function onFeeInput(e: any) {
+  const v = Number(e?.detail?.value)
+  feeWan.value = Number.isNaN(v) ? null : v
+}
+
 // ── ④ 运行分析 ──
-const totalCapital = ref<number>(200000)
-const feeWan = ref<number>(2.5)
+const totalCapital = ref<number | null>(null)
+const feeWan = ref<number | null>(null)
 const feeWarning = computed(() => {
   const f = feeWan.value
   if (!f || f <= 0) return '请输入佣金费率'
@@ -561,8 +608,8 @@ async function onRunAnalyze() {
   analyzeStatus.value = '正在计算…'
   try {
     const r = await analyzePortfolio({
-      total_capital: totalCapital.value,
-      fee_wan: feeWan.value,
+      total_capital: totalCapital.value ?? 0,
+      fee_wan: feeWan.value ?? 0,
       stocks,
       existing,
       fee_confirmed: true,
@@ -572,7 +619,7 @@ async function onRunAnalyze() {
       uni.showModal({
         title: '费率确认', content: r.fee_msg || '', success: async (m) => {
           if (m.confirm) {
-            const r2 = await analyzePortfolio({ total_capital: totalCapital.value, fee_wan: feeWan.value, stocks, existing, fee_confirmed: true, price_confirmed_codes: priceConfirmedCodes.value })
+            const r2 = await analyzePortfolio({ total_capital: totalCapital.value ?? 0, fee_wan: feeWan.value ?? 0, stocks, existing, fee_confirmed: true, price_confirmed_codes: priceConfirmedCodes.value })
             analyzeReport.value = r2
             analyzeStatus.value = r2.ok ? '分析完成' : (r2.error || '分析失败')
             await loadPlans()
@@ -597,12 +644,37 @@ function onConfirmPrice(code: string) {
   onRunAnalyze()
 }
 
-// ── ⑤ AI 研报解读 ──
+// ── ⑤ AI 研报解读（双 tab） ──
+const researchTab = ref<'refine' | 'held'>('refine')
 const researchCode = ref('')
 const researchName = ref('')
 const researchQuery = ref('')
 const researchLoading = ref(false)
 const researchData = ref<ResearchReport | null>(null)
+// Tab2：已持仓标的研报
+const heldResearchList = ref<Holding[]>([])
+const heldResearchSel = ref<Set<string>>(new Set())
+const researchHeldLoading = ref(false)
+const heldResearchData = ref<ResearchReport[]>([])
+function toggleHeld(code: string) {
+  const s = new Set(heldResearchSel.value)
+  if (s.has(code)) s.delete(code); else s.add(code)
+  heldResearchSel.value = s
+}
+async function onResearchHeld() {
+  const codes = heldResearchList.value.filter((h) => heldResearchSel.value.has(h.stock_code))
+  if (codes.length === 0) { uni.showToast({ title: '请先勾选要分析的持仓', icon: 'none' }); return }
+  researchHeldLoading.value = true
+  try {
+    const out: ResearchReport[] = []
+    for (const h of codes) {
+      const r = await researchReport({ stock_code: h.stock_code, stock_name: h.short_name || '', query: '已持仓标的综合研判' })
+      out.push(r)
+    }
+    heldResearchData.value = out
+  } catch (e: any) { uni.showToast({ title: e?.message || '生成失败', icon: 'none' }) }
+  finally { researchHeldLoading.value = false }
+}
 async function onResearch() {
   const code = (researchCode.value || '').trim()
   const name = (researchName.value || '').trim()
@@ -638,12 +710,13 @@ function onTrackSelect(code: string) {
 }
 function buildSteps(it: PlanItem): any[] {
   const rows = it.plan_json?.rows || []
+  const tp = it.plan_json?.tp_rows || []
   const steps: any[] = []
   let cumShares = 0
+  // 1) 开/加仓（每笔后紧跟“对全部已持仓”级联动态止损）
   rows.forEach((r, i) => {
     const isOpen = i === 0
     cumShares += r.shares
-    // 开/加仓这一步
     steps.push({
       kind: isOpen ? 'open' : 'add',
       kindLabel: isOpen ? '首笔建仓' : `加仓·第${i}笔`,
@@ -654,7 +727,6 @@ function buildSteps(it: PlanItem): any[] {
       done: false,
       armed: false,
     })
-    // 紧接着：对“已持有的全部仓位”设置动态止损（级联）
     steps.push({
       kind: 'stop',
       kindLabel: i === 0 ? '动态止损（首笔）' : `动态止损（全部${cumShares}股）`,
@@ -665,6 +737,33 @@ function buildSteps(it: PlanItem): any[] {
       done: false,
       armed: false,
     })
+  })
+  // 2) 分批止盈（每档后紧跟“对剩余持仓”级联动态止损；最后一档为全平，不再跟止损）
+  tp.forEach((t, i) => {
+    steps.push({
+      kind: 'tp',
+      kindLabel: `止盈·第${i + 1}笔`,
+      price: t.price,
+      shares: t.cut_shares,
+      amount: 0,
+      info: `触发价 ${fmtMoney(t.price, 2)} · 减仓 ${t.cut_shares}股 · 剩余 ${t.remain_shares}股`,
+      done: false,
+      armed: false,
+    })
+    const isLast = i === tp.length - 1
+    if (!isLast) {
+      const stopPrice = t.dynamic_stop != null ? t.dynamic_stop : (rows[rows.length - 1]?.stop ?? 0)
+      steps.push({
+        kind: 'stop',
+        kindLabel: `动态止损（剩${t.remain_shares}股）`,
+        price: stopPrice,
+        shares: t.remain_shares,
+        amount: 0,
+        info: `对剩余 ${t.remain_shares} 股设止损价 ${fmtMoney(stopPrice, 2)}`,
+        done: false,
+        armed: false,
+      })
+    }
   })
   return steps
 }
@@ -811,7 +910,7 @@ $radius-lg: 20rpx;
 .pf-note--ok { color: $rf-green; }
 .pf-note--muted { color: $rf-muted; font-size: 21rpx; margin-bottom: 16rpx; }
 
-.pf-btn { display: inline-flex; align-items: center; justify-content: center; padding: 16rpx 28rpx; font-size: 26rpx; border-radius: 14rpx; border: 1rpx solid transparent; transition: transform 0.15s ease, opacity 0.15s ease; }
+.pf-btn { display: inline-flex; align-items: center; justify-content: center; padding: 16rpx 28rpx; font-size: 26rpx; border-radius: 14rpx; border: 1rpx solid transparent; transition: transform 0.15s ease, opacity 0.15s ease; box-sizing: border-box; max-width: 100%; }
 .pf-btn--xs { padding: 10rpx 20rpx; font-size: 24rpx; }
 .pf-btn--secondary { background: rgba(255, 184, 107, 0.05); border-color: rgba(255, 184, 107, 0.3); color: $color-text-primary; }
 .pf-btn--primary { background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%); color: $color-bg; font-weight: 600; border-color: $rf-amber; }
@@ -845,6 +944,23 @@ $radius-lg: 20rpx;
 .pf-proposed-labels { display: flex; gap: 8rpx; align-items: center; margin-bottom: 8rpx; padding: 0 4rpx; font-size: 22rpx; color: $color-text-secondary; }
 .pf-proposed-added { display: flex; flex-direction: column; gap: 8rpx; margin-bottom: 12rpx; }
 .pf-proposed-row { display: flex; gap: 8rpx; align-items: center; }
+.pf-proposed-actions { display: flex; gap: 12rpx; margin-top: 12rpx; }
+.pf-proposed-actions .pf-btn { flex: 1; }
+.pf-run-btn { flex: 1; }
+
+/* 研报 tabs */
+.pf-tabbar { display: flex; gap: 8rpx; margin-bottom: 16rpx; }
+.pf-tab { flex: 1; text-align: center; padding: 14rpx 8rpx; font-size: 24rpx; color: $color-text-secondary; background: rgba(255, 184, 107, 0.05); border: 1rpx solid rgba(255, 184, 107, 0.2); border-radius: 12rpx; box-sizing: border-box; }
+.pf-tab--active { color: $color-bg; background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%); font-weight: 600; border-color: $rf-amber; }
+.pf-research-tab { margin-top: 4rpx; }
+
+/* 已持仓研报勾选 */
+.pf-held-list { display: flex; flex-direction: column; gap: 8rpx; margin: 12rpx 0; }
+.pf-held-check { display: flex; justify-content: space-between; align-items: center; padding: 10rpx 14rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; }
+.pf-held-name { font-size: 24rpx; color: $color-text-primary; }
+.pf-held-checkbox { width: 44rpx; height: 44rpx; border-radius: 8rpx; border: 1rpx solid rgba(255, 184, 107, 0.4); color: $rf-amber; font-weight: 700; text-align: center; line-height: 42rpx; box-sizing: border-box; }
+.pf-held-checkbox--on { background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%); color: $color-bg; border-color: $rf-amber; }
+.pf-report-box--sub { margin-top: 16rpx; border-top: 1rpx dashed rgba(255, 184, 107, 0.2); }
 
 /* ④ 运行 */
 .pf-run-status { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; text-align: center; }
