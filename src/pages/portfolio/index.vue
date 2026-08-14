@@ -11,24 +11,24 @@
       <text class="pf-pull-text">{{ pullText }}</text>
     </view>
 
-    <!-- ① 账户与保证金账本 -->
+    <!-- ① 账户与保证金 -->
     <view class="pf-card pf-ledger">
       <view class="pf-import-head" @tap="ledgerOpen = !ledgerOpen">
-        <text class="pf-section-title">🏦 账户与保证金账本</text>
+        <text class="pf-section-title">🏦 账户与保证金</text>
         <text class="pf-toggle">{{ ledgerOpen ? '收起' : '展开' }}</text>
       </view>
 
       <view v-if="ledgerOpen" class="pf-ledger-body">
-        <!-- 未配置：初始录入 -->
+        <!-- 未配置：初始录入（总资金 + 佣金） -->
         <view v-if="!ledgerSnapshot.configured" class="pf-ledger-init">
           <view class="pf-row">
             <view class="pf-col">
-              <text class="pf-label">账户初始保证金 (元)</text>
-              <input class="pf-input" type="number" v-model.number="ledgerInitAmount" placeholder="200000" />
+              <text class="pf-label">总资金（元）</text>
+              <input class="pf-input" type="number" v-model.number="totalCapital" placeholder="200000" />
             </view>
             <view class="pf-col">
-              <text class="pf-label">手续费率 (万分之)</text>
-              <input class="pf-input" type="number" v-model.number="ledgerInitFee" placeholder="2.5" />
+              <text class="pf-label">佣金（万分之）</text>
+              <input class="pf-input" type="number" v-model.number="feeWan" placeholder="2.5" />
             </view>
           </view>
           <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onLedgerConfirmInit">
@@ -43,20 +43,20 @@
             <view class="pf-ledger-cell"><text class="pf-ledger-k">总保证金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.total_margin) }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">可开标的上限</text><text class="pf-ledger-v">{{ ledgerSnapshot.max_hold }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">已分配资金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.allocated) }}</text></view>
-            <view class="pf-ledger-cell"><text class="pf-ledger-k">可分配余额</text><text class="pf-ledger-v pf-ledger-v--cyan">{{ fmtMoney(ledgerSnapshot.available) }}</text></view>
-            <view class="pf-ledger-cell"><text class="pf-ledger-k">手续费率</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.fee_rate_wan, 2) }}‰</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">可分配额度</text><text class="pf-ledger-v pf-ledger-v--cyan">{{ fmtMoney(ledgerSnapshot.available) }}</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">收费费率</text><text class="pf-ledger-v">{{ ledgerSnapshot.fee_rate_wan }} 万分之</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">累计实现盈亏</text><text class="pf-ledger-v" :class="ledgerSnapshot.realized_pnl >= 0 ? 'pf-up' : 'pf-down'">{{ fmtMoney(ledgerSnapshot.realized_pnl) }}</text></view>
           </view>
 
           <view class="pf-ledger-meta">
-            可开标的 {{ ledgerSnapshot.max_hold }} 个 · 已分配 {{ fmtMoney(ledgerSnapshot.allocated) }} 元 · 可分配余额 {{ fmtMoney(ledgerSnapshot.available) }} 元
+            可开标的 {{ ledgerSnapshot.max_hold }} 个 · 已分配 {{ fmtMoney(ledgerSnapshot.allocated) }} 元 · 可分配额度 {{ fmtMoney(ledgerSnapshot.available) }} 元
           </view>
 
           <view class="pf-ledger-actions">
-            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerDeposit"><text>添加保证金</text></view>
-            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerWithdraw"><text>提取保证金</text></view>
-            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerFee"><text>手续费率</text></view>
-            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerReset"><text>重置账本</text></view>
+            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerDeposit"><text>加保证金</text></view>
+            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerWithdraw"><text>提保证金</text></view>
+            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerFee"><text>改手续费率</text></view>
+            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerReset"><text>重置账户</text></view>
           </view>
           <view v-if="ledgerMsg" class="pf-note" :class="ledgerMsgOk ? 'pf-note--ok' : 'pf-note--warn'">{{ ledgerMsg }}</view>
 
@@ -89,8 +89,21 @@
           placeholder="粘贴持仓（每行：代码 成本 数量）例如：&#10;600519 1700 100&#10;000858 165 200"
           :auto-height="true"
         />
-        <view class="pf-btn pf-btn--primary" hover-class="pf-btn--hover" @tap="onImport">
-          <text>导入到持仓列表</text>
+        <view class="pf-import-actions">
+          <view class="pf-btn pf-btn--primary" hover-class="pf-btn--hover" @tap="onImport">
+            <text>导入到持仓列表</text>
+          </view>
+          <view class="pf-btn pf-btn--secondary" hover-class="pf-btn--hover" @tap="manualOpen = !manualOpen">
+            <text>➕ 手动输入</text>
+          </view>
+        </view>
+        <!-- 手动输入表单 -->
+        <view v-if="manualOpen" class="pf-manual-row">
+          <input class="pf-input pf-input--sm" v-model="manualCode" placeholder="代码" />
+          <input class="pf-input pf-input--sm" v-model="manualName" placeholder="名称" />
+          <input class="pf-input pf-input--xs" type="number" v-model.number="manualCost" placeholder="成本" />
+          <input class="pf-input pf-input--xs" type="number" v-model.number="manualQty" placeholder="数量" />
+          <view class="pf-btn pf-btn--primary pf-btn--xs" hover-class="pf-btn--hover" @tap="onManualAdd"><text>添加</text></view>
         </view>
         <view v-if="ocrNote" class="pf-note">{{ ocrNote }}</view>
 
@@ -113,11 +126,17 @@
         <text class="pf-toggle">{{ proposedOpen ? '收起' : '展开' }}</text>
       </view>
       <view v-if="proposedOpen" class="pf-import-body">
+        <view class="pf-proposed-labels">
+          <text style="flex:0 0 200rpx">代码</text>
+          <text style="flex:1">名称</text>
+          <text style="flex:0 0 140rpx">基准价格</text>
+          <text style="flex:0 0 56rpx"></text>
+        </view>
         <view class="pf-proposed-added">
           <view v-for="(p, i) in proposedTargets" :key="i" class="pf-proposed-row">
             <input class="pf-input pf-input--sm" v-model="p.code" placeholder="代码" />
             <input class="pf-input pf-input--md" v-model="p.name" placeholder="名称" />
-            <input class="pf-input pf-input--xs" type="number" v-model.number="p.price" placeholder="现价" />
+            <input class="pf-input pf-input--xs" type="number" v-model.number="p.price" placeholder="基准价" />
             <text class="pf-rec-del" @tap="proposedTargets.splice(i, 1)">✕</text>
           </view>
         </view>
@@ -129,16 +148,7 @@
 
     <!-- ④ 运行分析 -->
     <view class="pf-card pf-run">
-      <view class="pf-row">
-        <view class="pf-col">
-          <text class="pf-label">总资金 (元)</text>
-          <input class="pf-input" type="number" v-model.number="totalCapital" placeholder="200000" />
-        </view>
-        <view class="pf-col">
-          <text class="pf-label">佣金 (万分之)</text>
-          <input class="pf-input" type="number" v-model.number="feeWan" placeholder="2.5" />
-        </view>
-      </view>
+      <text class="pf-section-title">🚀 运行分析</text>
       <view v-if="feeWarning" class="pf-fee-warn" :class="feeWarningClass">
         <text>⚠️ {{ feeWarning }}</text>
       </view>
@@ -440,6 +450,24 @@ const importOpen = ref(true)
 const importText = ref('')
 const ocrNote = ref('')
 const holdings = ref<Holding[]>([])
+
+// 手动输入
+const manualOpen = ref(false)
+const manualCode = ref('')
+const manualName = ref('')
+const manualCost = ref<number | null>(null)
+const manualQty = ref<number | null>(null)
+async function onManualAdd() {
+  const code = padCode(manualCode.value)
+  if (!/^\d{6}$/.test(code)) { uni.showToast({ title: '代码格式错误（6 位数字）', icon: 'none' }); return }
+  if (!manualCost.value || !manualQty.value) { uni.showToast({ title: '请输入成本与数量', icon: 'none' }); return }
+  try {
+    await upsertHolding({ stock_code: code, short_name: manualName.value.trim(), shares: manualQty.value, cost_basis: manualCost.value })
+    manualCode.value = ''; manualName.value = ''; manualCost.value = null; manualQty.value = null; manualOpen.value = false
+    await loadHoldings(); await loadLedger()
+    uni.showToast({ title: '已添加持仓', icon: 'success' })
+  } catch (e) { uni.showToast({ title: '添加失败', icon: 'none' }) }
+}
 
 async function loadHoldings() {
   try { holdings.value = await listHoldings() } catch (e) { console.warn('[holdings] load failed', e) }
@@ -764,10 +792,10 @@ $radius-lg: 20rpx;
 .pf-label { display: block; font-size: 22rpx; color: $color-text-secondary; margin-bottom: 8rpx; }
 .pf-row { display: flex; gap: 16rpx; }
 .pf-col { flex: 1; display: flex; flex-direction: column; }
-.pf-input { width: 100%; padding: 16rpx 20rpx; font-size: 28rpx; background: rgba(12, 10, 12, 0.6); color: $color-text-primary; border: 1rpx solid rgba(255, 184, 107, 0.3); border-radius: 12rpx; box-sizing: border-box; }
-.pf-input--xs { width: 120rpx; padding: 12rpx 16rpx; }
-.pf-input--sm { flex: 0 0 200rpx; padding: 12rpx 16rpx; }
-.pf-input--md { flex: 1; padding: 12rpx 16rpx; }
+.pf-input { width: 100%; height: 72rpx; min-height: 72rpx; padding: 0 20rpx; font-size: 28rpx; line-height: 72rpx; background: rgba(12, 10, 12, 0.6); color: $color-text-primary; border: 1rpx solid rgba(255, 184, 107, 0.3); border-radius: 12rpx; box-sizing: border-box; }
+.pf-input--xs { width: 140rpx; height: 72rpx; min-height: 72rpx; padding: 0 16rpx; line-height: 72rpx; }
+.pf-input--sm { flex: 0 0 200rpx; height: 72rpx; min-height: 72rpx; padding: 0 16rpx; line-height: 72rpx; }
+.pf-input--md { flex: 1; height: 72rpx; min-height: 72rpx; padding: 0 16rpx; line-height: 72rpx; }
 
 .pf-fee-warn { margin-top: 12rpx; padding: 12rpx 16rpx; font-size: 22rpx; border-radius: 10rpx; border: 1rpx solid; color: $rf-amber; background: rgba(255, 184, 107, 0.08); border-color: rgba(255, 184, 107, 0.3); }
 .pf-fee-warn--warn { color: $rf-amber; }
@@ -803,6 +831,9 @@ $radius-lg: 20rpx;
 .pf-ledger-meta { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; line-height: 1.5; }
 .pf-ledger-actions { display: flex; gap: 10rpx; flex-wrap: wrap; margin-top: 12rpx; }
 
+/* ② 手动输入行 */
+.pf-manual-row { display: flex; gap: 8rpx; align-items: center; margin-top: 12rpx; flex-wrap: wrap; }
+
 /* ② 持仓行 */
 .pf-hold-list { margin-top: 16rpx; display: flex; flex-direction: column; gap: 8rpx; }
 .pf-hold-row { display: grid; grid-template-columns: 1fr 160rpx 140rpx 60rpx; align-items: center; gap: 8rpx; padding: 8rpx 10rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; }
@@ -811,6 +842,7 @@ $radius-lg: 20rpx;
 .pf-hold-del { text-align: center; font-size: 28rpx; color: $rf-red; }
 
 /* ③ 拟买 */
+.pf-proposed-labels { display: flex; gap: 8rpx; align-items: center; margin-bottom: 8rpx; padding: 0 4rpx; font-size: 22rpx; color: $color-text-secondary; }
 .pf-proposed-added { display: flex; flex-direction: column; gap: 8rpx; margin-bottom: 12rpx; }
 .pf-proposed-row { display: flex; gap: 8rpx; align-items: center; }
 
