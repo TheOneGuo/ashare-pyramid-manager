@@ -1,37 +1,180 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none">
   <defs>
-    <linearGradient id="tier1" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFE9B8"/><stop offset="1" stop-color="#FBD784"/>
+    <linearGradient id="flameGrad" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#FFF6C2"/>
+      <stop offset="32%" stop-color="#FFD23E"/>
+      <stop offset="68%" stop-color="#F4380C"/>
+      <stop offset="100%" stop-color="#B80E00"/>
     </linearGradient>
-    <linearGradient id="tier2" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FBD784"/><stop offset="1" stop-color="#F2C052"/>
+    <linearGradient id="goldRing" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF4C0"/>
+      <stop offset="0.25" stop-color="#FFE27A"/>
+      <stop offset="0.5" stop-color="#F4C542"/>
+      <stop offset="0.75" stop-color="#D89C1C"/>
+      <stop offset="1" stop-color="#FBD968"/>
     </linearGradient>
-    <linearGradient id="tier3" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#F2C052"/><stop offset="1" stop-color="#E6A82E"/>
+    <linearGradient id="tier" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFE9B8"/>
+      <stop offset="0.45" stop-color="#E9AE32"/>
+      <stop offset="1" stop-color="#9C6F12"/>
     </linearGradient>
-    <linearGradient id="tier4" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#E6A82E"/><stop offset="1" stop-color="#CC8E12"/>
+    <linearGradient id="tierTop" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFF4D6"/>
+      <stop offset="0.5" stop-color="#F6D276"/>
+      <stop offset="1" stop-color="#BD881F"/>
     </linearGradient>
   </defs>
 
-  <!-- 外圈细金环 -->
-  <circle cx="128" cy="128" r="116" stroke="#D4AF37" stroke-width="4"/>
-  <circle cx="128" cy="128" r="108" stroke="#D4AF37" stroke-width="1" opacity="0.4"/>
+  <!-- 火氛围红晕（弱化，让火焰更跳） -->
+  <circle cx="128" cy="128" r="110" fill="#FF3B12" opacity="0.03"/>
 
-  <!-- 节节高：塔尖上方上箭头 -->
-  <path d="M128 22 L119 40 L128 36 L137 40 Z" fill="#FFB86B"/>
-  <rect x="124.5" y="36" width="7" height="20" rx="2" fill="#FFB86B"/>
-
-  <!-- 正金字塔：4 层（底宽顶尖） -->
-  <polygon points="128,72 142,100 114,100" fill="url(#tier1)"/>
-  <polygon points="114,100 142,100 156,128 100,128" fill="url(#tier2)"/>
-  <polygon points="100,128 156,128 170,156 86,156" fill="url(#tier3)"/>
-  <polygon points="86,156 170,156 184,184 72,184" fill="url(#tier4)"/>
-
-  <!-- 层间分隔（极细描边，强化阶梯感） -->
-  <g stroke="#0D1B2A" stroke-width="1.4" opacity="0.18">
-    <line x1="114" y1="100" x2="142" y2="100"/>
-    <line x1="100" y1="128" x2="156" y2="128"/>
-    <line x1="86"  y1="156" x2="170" y2="156"/>
+  <!-- 火轮：14 簇火焰绕金环 -->
+  <g transform="translate(128.00 70.00) scale(1.05 0.92)">
+    <path d="M0.00 0.00C-14.00 -6.00 -20.00 -26.00 -9.00 -48.00C-5.00 -56.00 -2.00 -60.00 0.00 -64.00C2.00 -60.00 5.00 -56.00 9.00 -48.00C20.00 -26.00 14.00 -6.00 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M0.00 -4.00C-6.00 -10.00 -8.00 -26.00 -4.00 -42.00C-1.00 -49.00 1.00 -49.00 4.00 -42.00C8.00 -26.00 6.00 -10.00 0.00 -4.00Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.85s" repeatCount="indefinite"/>
   </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.85s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(155.33 71.24) scale(1.19 1.09)">
+    <path d="M0.00 0.00C-9.19 -12.15 -4.50 -32.49 15.95 -46.16C23.39 -51.13 27.97 -53.12 31.69 -55.60C31.45 -51.14 32.07 -46.18 31.59 -37.25C30.25 -12.69 15.13 1.72 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M1.98 -3.48C-0.26 -11.66 5.92 -26.55 17.32 -38.47C23.39 -43.07 25.13 -42.08 24.27 -34.51C19.82 -18.63 10.16 -5.72 1.98 -3.48Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.97s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.97s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(173.35 91.84) scale(1.11 1.02)">
+    <path d="M0.00 0.00C-4.30 -14.61 7.29 -31.98 31.25 -37.53C39.97 -39.54 44.96 -39.78 49.32 -40.79C47.51 -36.70 46.34 -31.84 42.72 -23.66C32.78 -1.16 13.55 6.96 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M3.08 -2.55C3.88 -11.00 14.94 -22.74 29.82 -29.85C37.12 -32.00 38.40 -30.46 34.91 -23.69C25.13 -10.41 11.53 -1.75 3.08 -2.55Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.09s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.09s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(189.42 113.98) scale(1.24 0.95)">
+    <path d="M0.00 0.00C1.76 -15.13 19.22 -26.58 43.44 -22.31C52.25 -20.75 56.94 -19.02 61.35 -18.24C58.08 -15.18 55.10 -11.17 48.57 -5.05C30.62 11.76 9.74 11.71 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M3.83 -1.14C7.88 -8.60 22.64 -15.08 39.12 -15.81C46.68 -14.92 47.25 -13.01 41.40 -8.14C27.20 0.26 11.30 2.90 3.83 -1.14Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.21s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.21s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(184.55 140.91) scale(1.16 1.12)">
+    <path d="M0.00 0.00C9.38 -12.00 30.25 -12.68 48.70 3.59C55.41 9.50 58.51 13.43 61.87 16.38C57.49 17.29 52.85 19.17 44.10 20.99C20.01 25.99 2.22 15.07 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M3.87 1.02C11.20 -3.24 27.18 -1.08 41.62 6.89C47.62 11.58 47.11 13.51 39.58 14.62C23.09 14.39 8.13 8.36 3.87 1.02Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.33s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.33s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(177.26 167.28) scale(1.08 1.04)">
+    <path d="M0.00 0.00C13.80 -6.45 32.71 2.40 41.80 25.26C45.10 33.57 46.08 38.47 47.74 42.63C43.42 41.46 38.44 41.03 29.81 38.68C6.07 32.24 -4.85 14.44 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M2.98 2.66C11.46 2.19 24.72 11.35 33.99 24.99C37.21 31.89 35.88 33.38 28.66 30.96C14.06 23.29 3.46 11.14 2.98 2.66Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.85s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.85s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(153.17 180.26) scale(1.22 0.97)">
+    <path d="M0.00 0.00C15.17 -1.41 29.99 13.30 30.82 37.88C31.13 46.82 30.40 51.77 30.55 56.24C26.88 53.68 22.34 51.59 15.01 46.47C-5.16 32.39 -9.44 11.96 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M1.91 3.51C10.05 5.92 19.44 19.03 23.56 35.00C24.27 42.58 22.51 43.53 16.53 38.81C5.38 26.67 -0.50 11.65 1.91 3.51Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.97s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.97s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(128.00 191.00) scale(1.13 1.15)">
+    <path d="M0.00 0.00C14.25 5.39 21.10 25.11 11.06 47.57C7.41 55.73 4.59 59.86 2.76 63.94C0.59 60.03 -2.58 56.16 -6.92 48.34C-18.86 26.84 -13.73 6.60 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M0.17 4.00C6.43 9.73 9.11 25.63 5.81 41.79C3.11 48.91 1.11 49.00 -2.18 42.13C-6.87 26.32 -5.56 10.25 0.17 4.00Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.09s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.09s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(102.83 180.26) scale(1.05 1.07)">
+    <path d="M0.00 0.00C9.30 12.06 4.80 32.45 -15.52 46.30C-22.91 51.34 -27.48 53.37 -31.18 55.89C-30.97 51.43 -31.64 46.47 -31.24 37.54C-30.13 12.96 -15.15 -1.58 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M-1.95 3.49C0.37 11.66 -5.68 26.60 -16.97 38.63C-23.00 43.28 -24.74 42.31 -23.95 34.73C-19.65 18.81 -10.11 5.81 -1.95 3.49Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.21s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.21s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(78.74 167.28) scale(1.19 0.99)">
+    <path d="M0.00 0.00C3.63 14.79 -8.74 31.62 -32.93 36.07C-41.72 37.68 -46.72 37.69 -51.12 38.50C-49.13 34.50 -47.74 29.70 -43.76 21.69C-32.80 -0.33 -13.22 -7.57 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M-3.20 2.41C-4.38 10.81 -15.96 22.03 -31.14 28.46C-38.54 30.28 -39.74 28.68 -35.96 22.07C-25.58 9.25 -11.60 1.22 -3.20 2.41Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.33s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.33s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(71.45 140.91) scale(1.11 0.92)">
+    <path d="M0.00 0.00C-1.72 15.13 -19.15 26.63 -43.39 22.42C-52.20 20.88 -56.89 19.16 -61.30 18.39C-58.04 15.33 -55.07 11.31 -48.56 5.18C-30.65 -11.68 -9.77 -11.68 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M-3.83 1.15C-7.85 8.62 -22.60 15.14 -39.08 15.90C-46.65 15.04 -47.22 13.13 -41.38 8.24C-27.20 -0.19 -11.30 -2.87 -3.83 1.15Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.85s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.85s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(66.58 113.98) scale(1.24 1.09)">
+    <path d="M0.00 0.00C-8.84 12.41 -29.65 14.02 -48.82 -1.40C-55.78 -7.01 -59.06 -10.79 -62.54 -13.59C-58.21 -14.70 -53.66 -16.78 -44.99 -18.99C-21.16 -25.07 -2.89 -14.95 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M-3.91 -0.85C-11.05 3.74 -27.11 2.30 -41.89 -5.01C-48.09 -9.43 -47.67 -11.38 -40.19 -12.83C-23.71 -13.34 -8.50 -7.99 -3.91 -0.85Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.97s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="0.97s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(82.65 91.84) scale(1.16 1.02)">
+    <path d="M0.00 0.00C-13.89 6.25 -32.68 -2.86 -41.44 -25.84C-44.62 -34.20 -45.54 -39.12 -47.13 -43.30C-42.83 -42.06 -37.86 -41.57 -29.26 -39.10C-5.62 -32.32 5.05 -14.37 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M-2.95 -2.71C-11.42 -2.35 -24.56 -11.70 -33.64 -25.47C-36.76 -32.41 -35.41 -33.88 -28.22 -31.36C-13.74 -23.48 -3.31 -11.18 -2.95 -2.71Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.09s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.09s" repeatCount="indefinite"/>
+  </g>
+  <g transform="translate(100.67 71.24) scale(1.08 0.95)">
+    <path d="M0.00 0.00C-15.21 0.78 -29.41 -14.52 -29.23 -39.12C-29.17 -48.07 -28.24 -52.98 -28.21 -57.45C-24.65 -54.74 -20.19 -52.47 -13.07 -47.05C6.49 -32.15 9.92 -11.56 0.00 0.00Z" fill="url(#flameGrad)"/>
+    <path d="M-1.76 -3.59C-9.79 -6.33 -18.64 -19.81 -22.10 -35.94C-22.49 -43.54 -20.70 -44.43 -14.92 -39.46C-4.28 -26.86 0.98 -11.62 -1.76 -3.59Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.21s" repeatCount="indefinite"/>
+  </g>
+    <path d="M0,0 C-14,-6 -20,-26 -9,-48 C-5,-56 -2,-60 0,-64 C2,-60 5,-56 9,-48 C20,-26 14,-6 0,0 Z" fill="url(#flameGrad)"/>
+    <path d="M0,-4 C-6,-10 -8,-26 -4,-42 C-1,-49 1,-49 4,-42 C8,-26 6,-10 0,-4 Z" fill="#FFF3B0" opacity="0.9"/>
+    <animate attributeName="opacity" values="0.78;1;0.6;0.95;0.78" dur="1.21s" repeatCount="indefinite"/>
+  </g>
+
+
+  <!-- 加粗金属金环（r=70，外缘~84，明显更厚更抢眼） -->
+  <circle cx="128" cy="128" r="70" stroke="url(#goldRing)" stroke-width="20" fill="none"/>
+  <circle cx="128" cy="128" r="60" stroke="#6E4E10" stroke-width="1.4" opacity="0.55" fill="none"/>
+  <circle cx="128" cy="128" r="80" stroke="#6E4E10" stroke-width="1.2" opacity="0.5" fill="none"/>
+  <!-- 高光弧 -->
+  <path d="M 58 80 A 80 80 0 0 1 150 40" stroke="#FFF6CE" stroke-width="4" opacity="0.85" fill="none" stroke-linecap="round"/>
+
+  <!-- 4 层正金字塔 -->
+  <polygon points="128,82 138.8,106 117.2,106" fill="url(#tierTop)" stroke="#6E4E10" stroke-width="1"/>
+  <polygon points="117.2,106 138.8,106 150,132 106,132" fill="url(#tier)" stroke="#6E4E10" stroke-width="1"/>
+  <polygon points="106,132 150,132 161.6,158 94.4,158" fill="url(#tier)" stroke="#6E4E10" stroke-width="1"/>
+  <polygon points="94.4,158 161.6,158 172,184 84,184" fill="url(#tier)" stroke="#6E4E10" stroke-width="1"/>
+  <polygon points="128,82 122.6,97 133.4,97" fill="#FFF1D0" opacity="0.22"/>
+  <polygon points="117.2,106 113,118 138.8,106" fill="#FFF1D0" opacity="0.22"/>
+  <polygon points="106,132 101.6,146 150,132" fill="#FFF1D0" opacity="0.22"/>
+  <polygon points="94.4,158 90,172 161.6,158" fill="#FFF1D0" opacity="0.22"/>
+  <line x1="122.6" y1="97" x2="133.4" y2="97" stroke="#6E4E10" stroke-width="0.8" opacity="0.5"/>
+  <line x1="112" y1="118" x2="145" y2="118" stroke="#6E4E10" stroke-width="0.8" opacity="0.5"/>
+  <line x1="101.6" y1="146" x2="155.4" y2="146" stroke="#6E4E10" stroke-width="0.8" opacity="0.5"/>
+  <line x1="90" y1="172" x2="166" y2="172" stroke="#6E4E10" stroke-width="0.8" opacity="0.5"/>
 </svg>
