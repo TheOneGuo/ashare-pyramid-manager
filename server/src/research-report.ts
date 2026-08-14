@@ -1,0 +1,214 @@
+// research-report.ts · AI 研报解读（结构化 mock 版）
+// 对应原项目 ai-research-panel 的「十二个研究模块」展示。
+//
+// 当前为「展示壳 + 结构化 mock」：无需 API key 即可演示完整研报 UI。
+// 后续接真 LLM 时，只需把 buildMockReport 换成真实生成逻辑（保持返回结构一致即可）。
+
+// 十二个研究模块（与原项目体例一致）
+export const RESEARCH_MODULES: string[] = [
+  '公司概况与主营业务',
+  '行业空间与增长',
+  '竞争格局与护城河',
+  '商业模式与盈利质量',
+  '产业链与上下游',
+  '客户结构与大客户',
+  '产能、订单与供需',
+  '财务质量（三张表）',
+  '估值与同业对比',
+  '催化剂与时间轴',
+  '风险清单',
+  '管理层与公司治理',
+]
+
+// 风险提示（与免责声明一致，原项目风格）
+const DISCLAIMER =
+  '本研报由本地结构化模板生成（演示模式，未接入真实 LLM）。' +
+  '所有内容仅用于研究复盘与基本面跟踪参考，不构成任何买卖建议；实际决策请自行研判并控制风险。'
+
+export interface ResearchModuleBlock {
+  title: string
+  summary: string
+  points: string[]
+  verdict?: string // 模块级结论（如 强/中/弱）
+}
+
+export interface ResearchReport {
+  ok: true
+  stock_code: string
+  stock_name: string
+  query: string
+  generated_at: string
+  mode: 'mock' // 后续可扩展 'llm'
+  overall: string // 一句话总评
+  rating: string // 综合评级（如 跟踪 / 增持观察 / 谨慎）
+  modules: ResearchModuleBlock[]
+  disclaimer: string
+}
+
+function normalizeCode(code: string): string {
+  const c = String(code || '').trim()
+  return /^\d{6}$/.test(c) ? c : c
+}
+
+function mockBlock(title: string, name: string): ResearchModuleBlock {
+  // 每个模块给一个贴合 A股 研究语境的占位结论，避免空壳。
+  const map: Record<string, { summary: string; points: string[]; verdict?: string }> = {
+    '公司概况与主营业务': {
+      verdict: '中',
+      summary: `${name} 主营业务清晰，收入结构以核心产品为主，近年围绕主业做延伸布局。`,
+      points: [
+        '主营构成：核心产品占收入比重较高，业务集中度需关注。',
+        '区域/客户分布：以国内为主，海外占比视业务而定。',
+        '近三年营收复合增速与行业景气高度相关。',
+      ],
+    },
+    '行业空间与增长': {
+      verdict: '中高',
+      summary: `所在赛道处于成长期，下游需求受周期与政策双重驱动，渗透率仍有提升空间。`,
+      points: [
+        '市场规模：测算未来 3 年行业 CAGR 处双位数区间。',
+        '驱动因素：下游扩产、国产替代、新品迭代为三大增量。',
+        '观测指标：产能利用率、新增订单、招标量。',
+      ],
+    },
+    '竞争格局与护城河': {
+      verdict: '中',
+      summary: `${name} 在细分环节具备一定份额，但头部集中度仍高，护城河以成本/客户黏性为主。`,
+      points: [
+        '市占率：处于第二梯队，与龙头存在差距。',
+        '护城河：工艺know-how + 认证壁垒 + 规模效应。',
+        '潜在颠覆：新技术路线或跨界玩家的替代风险。',
+      ],
+    },
+    '商业模式与盈利质量': {
+      verdict: '中',
+      summary: '以制造/产品交付为主，毛利受原材料与产能利用率影响，盈利质量需结合现金流看。',
+      points: [
+        '收入确认：以产品交付/验收为主，回款周期适中。',
+        '毛利波动：与上游价格、良率高度相关。',
+        '盈利质量：关注经营现金流对净利润的覆盖。',
+      ],
+    },
+    '产业链与上下游': {
+      verdict: '中',
+      summary: '上游受大宗/电子料价格影响，下游对接终端或中游客户，议价能力中游。',
+      points: [
+        '上游：关键材料/设备存在进口依赖或集中供应。',
+        '下游：绑定大客户可平滑波动，但集中度风险并存。',
+        '库存：关注存货周转与减值迹象。',
+      ],
+    },
+    '客户结构与大客户': {
+      verdict: '中',
+      summary: '大客户贡献占比较高，需关注单一客户依赖与年降压力。',
+      points: [
+        '前五大客户占比：偏高，需分散。',
+        '粘性：通过认证+联合研发形成绑定。',
+        '风险：大客户自研/二供导入的份额侵蚀。',
+      ],
+    },
+    '产能、订单与供需': {
+      verdict: '中高',
+      summary: '处于扩产周期，新增产能释放节奏决定供需与价格弹性。',
+      points: [
+        '产能：在建/规划产能较大，关注投产时点。',
+        '订单：在手订单覆盖度与能见度。',
+        '供需：新增供给若集中释放，价格或承压。',
+      ],
+    },
+    '财务质量（三张表）': {
+      verdict: '中',
+      summary: '资产负债率适中，资本开支阶段性抬升，关注自由现金流。',
+      points: [
+        '资产负债表：有息负债与授信额度匹配扩产。',
+        '利润表：毛利/费用率随稼动率波动。',
+        '现金流量表：Capex 高峰自由现金流转负属正常。',
+      ],
+    },
+    '估值与同业对比': {
+      verdict: '中',
+      summary: '当前估值处于板块中枢，需结合增速用 PEG 综合判断。',
+      points: [
+        'PE/PEG：与可比公司对比处合理区间。',
+        'EV/EBITDA：重资产属性下需纳入考量。',
+        '隐含预期：股价已反映部分扩产兑现预期。',
+      ],
+    },
+    '催化剂与时间轴': {
+      verdict: '中',
+      summary: '未来 1-2 年催化集中于产能落地、大客户导入与业绩兑现。',
+      points: [
+        '近催化：新建产线投产 / 新品送样通过。',
+        '中催化：大客户份额提升 / 中标落地。',
+        '远催化：行业需求拐点 / 政策利好。',
+      ],
+    },
+    '风险清单': {
+      verdict: '关注',
+      summary: '核心风险为价格下行、产能消化不及预期与宏观需求波动。',
+      points: [
+        '价格风险：供需错配导致产品降价。',
+        '执行风险：扩产延期或良率不达标。',
+        '外部风险：贸易限制、汇率、利率扰动。',
+      ],
+    },
+    '管理层与公司治理': {
+      verdict: '中',
+      summary: '实控人持股集中，治理规范性随上市年限提升。',
+      points: [
+        '股权：实控人/管理层持股稳定。',
+        '激励：股权激励覆盖核心骨干。',
+        '治理：关注关联交易与信息披露合规。',
+      ],
+    },
+  }
+  const m = map[title] || { summary: '', points: [], verdict: undefined }
+  return { title, ...m }
+}
+
+export function buildMockReport(input: {
+  stock_code?: string
+  stock_name?: string
+  query?: string
+}): ResearchReport {
+  const code = normalizeCode(input.stock_code || '')
+  const name = (input.stock_name || '该标的').trim() || '该标的'
+  const query = (input.query || '').trim()
+
+  const modules = RESEARCH_MODULES.map((t) => mockBlock(t, name))
+
+  // 综合评级（基于各模块 verdict 的简单聚合，演示用）
+  const verdicts = modules.map((m) => m.verdict || '')
+  const positive = verdicts.filter((v) => v.includes('高')).length
+  const cautious = verdicts.filter((v) => v === '关注').length
+  let rating = '跟踪观察'
+  if (positive >= 3 && cautious === 0) rating = '增持观察'
+  else if (cautious >= 2) rating = '谨慎'
+
+  const overall =
+    `${name}（${code || '—'}）基本面处于成长期，扩产与国产替代为主线，` +
+    `需重点跟踪产能消化与价格变化；综合评级：${rating}。`
+
+  return {
+    ok: true,
+    stock_code: code,
+    stock_name: name,
+    query,
+    generated_at: new Date().toISOString(),
+    mode: 'mock',
+    overall,
+    rating,
+    modules,
+    disclaimer: DISCLAIMER,
+  }
+}
+
+// 处理入口（供 Express 路由调用）
+export async function handleResearch(body: {
+  stock_code?: string
+  stock_name?: string
+  query?: string
+} = {}): Promise<ResearchReport> {
+  // 后续接真 LLM：在此根据 env 中的 AI 配置切换 buildMockReport / buildLlmReport
+  return buildMockReport(body)
+}

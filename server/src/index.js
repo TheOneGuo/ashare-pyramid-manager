@@ -21,8 +21,11 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, upsertHolding, removeHolding, listHoldings } from './db.js';
+import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, upsertHolding, removeHolding, listHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, ROLE_LABELS } from './db.js';
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
+import { handleAnalyze } from './portfolio-analyzer.js';
+import { handleExtract } from './portfolio-extract.js';
+import { handleResearch } from './research-report.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 9999);
@@ -155,6 +158,109 @@ app.delete('/api/holdings/:code', async (req, res) => {
   try {
     await removeHolding(req.params.code);
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// =====================================================
+// Portfolio Recommendations (4 role：机构/游资/北向/散户)
+// 数据由用户手动录入
+// =====================================================
+app.get('/api/portfolio/roles', async (_req, res) => {
+  res.json({ ok: true, roles: ROLE_LABELS });
+});
+
+app.get('/api/portfolio/recommendations', async (req, res) => {
+  try {
+    const role = req.query.role || null;
+    const items = await listRecommendations(role);
+    res.json({ ok: true, count: items.length, items });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/portfolio/recommendations', async (req, res) => {
+  try {
+    const { role, items } = req.body || {};
+    if (!role || !ROLE_LABELS[role]) {
+      return res.status(400).json({ ok: false, error: 'role 必须 ∈ {institution, hot_money, northbound, retail}' });
+    }
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ ok: false, error: 'items 必须是数组' });
+    }
+    await bulkSetRecommendations(role, items);
+    res.json({ ok: true, role, count: items.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/portfolio/recommendations/item', async (req, res) => {
+  try {
+    const { role, stock_code, stock_name, weight, note } = req.body || {};
+    if (!role || !ROLE_LABELS[role]) {
+      return res.status(400).json({ ok: false, error: 'role 无效' });
+    }
+    if (!stock_code) {
+      return res.status(400).json({ ok: false, error: 'stock_code 必填' });
+    }
+    await upsertRecommendation({ role, stock_code, stock_name, weight, note });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/portfolio/recommendations/:role/:code', async (req, res) => {
+  try {
+    await removeRecommendation({ role: req.params.role, stock_code: req.params.code });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/portfolio/recommendations/compare', async (req, res) => {
+  try {
+    const role = req.query.role;
+    if (!role || !ROLE_LABELS[role]) {
+      return res.status(400).json({ ok: false, error: 'role 无效' });
+    }
+    const data = await compareWithRole(role);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// =====================================================
+// Portfolio Analyze（截图识别 + 5 步校验 + pyramid 算方案）
+// =====================================================
+app.post('/api/portfolio/extract', async (req, res) => {
+  try {
+    const result = await handleExtract(req.body || {});
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/portfolio/analyze', async (req, res) => {
+  try {
+    const result = await handleAnalyze(req.body || {});
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// AI 研报解读（结构化 mock，后续接真 LLM）
+app.post('/api/portfolio/research', async (req, res) => {
+  try {
+    const result = await handleResearch(req.body || {});
+    res.json(result);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
