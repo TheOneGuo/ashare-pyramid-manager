@@ -203,18 +203,20 @@
 
       <!-- Tab 2：已持仓标的 AI 研报分析 -->
       <view v-else class="pf-research-tab">
-        <text class="pf-note pf-note--muted">对当前持仓列表中的标的逐个生成 AI 研报（当前为演示模式）。勾选后点「生成已持仓研报」。</text>
+        <text class="pf-note pf-note--muted">对当前已持仓标的，逐一点击「生成 AI 研报」即可按十二个研究模块生成完整研报，生成后可在下方按章节阅读（当前为演示模式，后续接入真实 LLM）。</text>
         <view v-if="heldResearchList.length === 0" class="pf-empty"><text>暂无持仓。请先在「已有持仓」中导入或手动输入。</text></view>
         <view v-else class="pf-held-list">
-          <view v-for="h in heldResearchList" :key="h.stock_code" class="pf-held-check">
-            <text class="pf-held-name">{{ h.short_name || h.stock_code }} · {{ h.stock_code }}</text>
-            <text class="pf-held-checkbox" :class="{ 'pf-held-checkbox--on': heldResearchSel.has(h.stock_code) }" @tap="toggleHeld(h.stock_code)">{{ heldResearchSel.has(h.stock_code) ? '✓' : '' }}</text>
+          <view v-for="h in heldResearchList" :key="h.stock_code" class="pf-held-row">
+            <view class="pf-held-info">
+              <text class="pf-held-name">{{ h.short_name || h.stock_code }}</text>
+              <text class="pf-held-code">{{ h.stock_code }}</text>
+            </view>
+            <view class="pf-btn pf-btn--primary pf-held-gen" hover-class="pf-btn--hover" @tap="onResearchHeld(h.stock_code)" :class="{ 'pf-btn--loading': researchHeldLoading === h.stock_code }">
+              <text>{{ hasHeldReport(h.stock_code) ? '重读研报' : '生成 AI 研报' }}</text>
+            </view>
           </view>
         </view>
-        <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onResearchHeld" :class="{ 'pf-btn--loading': researchHeldLoading }">
-          <text>{{ researchHeldLoading ? '生成中…' : '生成已持仓研报' }}</text>
-        </view>
-        <view v-for="rd in heldResearchData" :key="rd.stock_code" v-if="heldResearchData.length" class="pf-report-box pf-report-box--sub">
+        <view v-for="rd in heldResearchData" :key="rd.stock_code" class="pf-report-box pf-report-box--sub">
           <view class="pf-report-head">
             <text class="pf-report-title">{{ rd.stock_name }} · {{ rd.stock_code }}</text>
             <text class="pf-report-rating">综合评级：{{ rd.rating }}</text>
@@ -506,8 +508,6 @@ async function loadHoldings() {
   try {
     holdings.value = await listHoldings()
     heldResearchList.value = holdings.value
-    // 默认全选持仓用于研报
-    if (heldResearchSel.value.size === 0) heldResearchSel.value = new Set(holdings.value.map((h) => h.stock_code))
   } catch (e) { console.warn('[holdings] load failed', e) }
 }
 async function onHoldChange(h: Holding) {
@@ -651,29 +651,26 @@ const researchName = ref('')
 const researchQuery = ref('')
 const researchLoading = ref(false)
 const researchData = ref<ResearchReport | null>(null)
-// Tab2：已持仓标的研报
+// Tab2：已持仓标的研报（逐标的点击生成）
 const heldResearchList = ref<Holding[]>([])
-const heldResearchSel = ref<Set<string>>(new Set())
-const researchHeldLoading = ref(false)
+const researchHeldLoading = ref<string>('')         // 正在生成的 stock_code
 const heldResearchData = ref<ResearchReport[]>([])
-function toggleHeld(code: string) {
-  const s = new Set(heldResearchSel.value)
-  if (s.has(code)) s.delete(code); else s.add(code)
-  heldResearchSel.value = s
+function hasHeldReport(code: string) {
+  return heldResearchData.value.some((r) => r.stock_code === code)
 }
-async function onResearchHeld() {
-  const codes = heldResearchList.value.filter((h) => heldResearchSel.value.has(h.stock_code))
-  if (codes.length === 0) { uni.showToast({ title: '请先勾选要分析的持仓', icon: 'none' }); return }
-  researchHeldLoading.value = true
+async function onResearchHeld(code: string) {
+  const h = heldResearchList.value.find((x) => x.stock_code === code)
+  if (!h) return
+  researchHeldLoading.value = code
   try {
-    const out: ResearchReport[] = []
-    for (const h of codes) {
-      const r = await researchReport({ stock_code: h.stock_code, stock_name: h.short_name || '', query: '已持仓标的综合研判' })
-      out.push(r)
-    }
-    heldResearchData.value = out
+    const r = await researchReport({ stock_code: code, stock_name: h.short_name || '', query: '已持仓标的综合研判（十二研究模块）' })
+    // 同标的重复生成则替换，否则追加
+    const arr = heldResearchData.value.filter((x) => x.stock_code !== code)
+    arr.push(r)
+    heldResearchData.value = arr
+    uni.showToast({ title: '研报已生成', icon: 'success' })
   } catch (e: any) { uni.showToast({ title: e?.message || '生成失败', icon: 'none' }) }
-  finally { researchHeldLoading.value = false }
+  finally { researchHeldLoading.value = '' }
 }
 async function onResearch() {
   const code = (researchCode.value || '').trim()
@@ -904,6 +901,7 @@ $radius-lg: 20rpx;
 .pf-toggle { font-size: 24rpx; color: $rf-cyan; }
 .pf-import-body { margin-top: 16rpx; }
 .pf-import-actions { display: flex; gap: 12rpx; margin-bottom: 12rpx; }
+.pf-import-actions .pf-btn { flex: 1; }
 .pf-textarea { width: 100%; padding: 16rpx; font-size: 24rpx; background: rgba(12, 10, 12, 0.7); color: $color-text-primary; border: 1rpx solid rgba(255, 184, 107, 0.2); border-radius: 12rpx; margin-bottom: 12rpx; min-height: 100rpx; box-sizing: border-box; }
 .pf-note { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; line-height: 1.5; }
 .pf-note--warn { color: $rf-amber; }
@@ -955,11 +953,12 @@ $radius-lg: 20rpx;
 .pf-research-tab { margin-top: 4rpx; }
 
 /* 已持仓研报勾选 */
-.pf-held-list { display: flex; flex-direction: column; gap: 8rpx; margin: 12rpx 0; }
-.pf-held-check { display: flex; justify-content: space-between; align-items: center; padding: 10rpx 14rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; }
-.pf-held-name { font-size: 24rpx; color: $color-text-primary; }
-.pf-held-checkbox { width: 44rpx; height: 44rpx; border-radius: 8rpx; border: 1rpx solid rgba(255, 184, 107, 0.4); color: $rf-amber; font-weight: 700; text-align: center; line-height: 42rpx; box-sizing: border-box; }
-.pf-held-checkbox--on { background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%); color: $color-bg; border-color: $rf-amber; }
+.pf-held-list { display: flex; flex-direction: column; gap: 10rpx; margin: 12rpx 0; }
+.pf-held-row { display: flex; justify-content: space-between; align-items: center; gap: 12rpx; padding: 14rpx 18rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 12rpx; }
+.pf-held-info { display: flex; flex-direction: column; min-width: 0; }
+.pf-held-name { font-size: 26rpx; color: $color-text-primary; font-weight: 600; }
+.pf-held-code { font-size: 21rpx; color: $color-text-secondary; margin-top: 2rpx; }
+.pf-held-gen { flex: 0 0 200rpx; }
 .pf-report-box--sub { margin-top: 16rpx; border-top: 1rpx dashed rgba(255, 184, 107, 0.2); }
 
 /* ④ 运行 */
