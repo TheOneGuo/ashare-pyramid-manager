@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none">
+  <defs>
+    <linearGradient id="tier1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFE9B8"/><stop offset="1" stop-color="#FBD784"/>
+    </linearGradient>
+    <linearGradient id="tier2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBD784"/><stop offset="1" stop-color="#F2C052"/>
+    </linearGradient>
+    <linearGradient id="tier3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F2C052"/><stop offset="1" stop-color="#E6A82E"/>
+    </linearGradient>
+    <linearGradient id="tier4" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#E6A82E"/><stop offset="1" stop-color="#CC8E12"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 外圈细金环 -->
+  <circle cx="128" cy="128" r="116" stroke="#D4AF37" stroke-width="4"/>
+  <circle cx="128" cy="128" r="108" stroke="#D4AF37" stroke-width="1" opacity="0.4"/>
+
+  <!-- 节节高：塔尖上方上箭头 -->
+  <path d="M128 22 L119 40 L128 36 L137 40 Z" fill="#FFB86B"/>
+  <rect x="124.5" y="36" width="7" height="20" rx="2" fill="#FFB86B"/>
+
+  <!-- 正金字塔：4 层（底宽顶尖） -->
+  <polygon points="128,72 142,100 114,100" fill="url(#tier1)"/>
+  <polygon points="114,100 142,100 156,128 100,128" fill="url(#tier2)"/>
+  <polygon points="100,128 156,128 170,156 86,156" fill="url(#tier3)"/>
+  <polygon points="86,156 170,156 184,184 72,184" fill="url(#tier4)"/>
+
+  <!-- 层间分隔（极细描边，强化阶梯感） -->
+  <g stroke="#0D1B2A" stroke-width="1.4" opacity="0.18">
+    <line x1="114" y1="100" x2="142" y2="100"/>
+    <line x1="100" y1="128" x2="156" y2="128"/>
+    <line x1="86"  y1="156" x2="170" y2="156"/>
+  </g>
+</svg>
