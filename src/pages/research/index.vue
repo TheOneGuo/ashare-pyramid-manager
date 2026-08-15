@@ -1,6 +1,8 @@
 <template>
   <view class="rs-page" :class="{ 'h5-mode': isH5 }">
     <TabBarComp v-if="isH5" />
+    <!-- 固定在顶部的 head 区：标题 + 两个子 tab -->
+    <view class="rs-head">
     <view class="rs-header">
       <text class="rs-title">AI 研报</text>
       <text class="rs-meta">引入外部研报 · AI 精读提炼 · 已持仓标的逐标分析</text>
@@ -15,7 +17,10 @@
         <text>已持仓标的 AI 研报分析</text>
       </view>
     </view>
+    </view>
 
+    <!-- 可滚动内容区（滚动条仅在此区域内） -->
+    <view class="rs-body">
     <!-- Tab 1：研报 AI 精读提炼 -->
     <view v-if="tab === 'refine'" class="rs-pane">
       <view class="rs-card rs-input-card">
@@ -148,6 +153,7 @@
 
     <view class="rs-disclaimer-bar">
       <text>AI 生成内容不构成投资建议；当前为演示模式，研报数据未接入真实 LLM。</text>
+    </view>
     </view>
   </view>
 </template>
@@ -311,25 +317,39 @@ $spacing-base: 24rpx;
   padding-bottom: 120rpx;
 }
 
-/* H5：页面作为滚动容器，底部止于 tab 上沿 */
+/* H5：页面作为包含 head(固定) + body(滚动) 的容器，止于 tab 上沿 */
 .rs-page.h5-mode {
   position: fixed;
   left: 0;
   right: 0;
   top: 0;
   bottom: calc(110rpx + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* head 区固定，不参与滚动 */
+.rs-head {
+  flex: 0 0 auto;
+  padding: $spacing-base $spacing-base 0;
+  background: $app-bg;
+}
+/* body 区滚动，右侧美化金色滚动条只在此处 */
+.rs-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding-bottom: $spacing-base;
+  padding: 0 $spacing-base $spacing-base;
 }
-.rs-page.h5-mode::-webkit-scrollbar { width: 5rpx; }
-.rs-page.h5-mode::-webkit-scrollbar-track { background: transparent; }
-.rs-page.h5-mode::-webkit-scrollbar-thumb {
+.rs-body::-webkit-scrollbar { width: 5rpx; }
+.rs-body::-webkit-scrollbar-track { background: transparent; }
+.rs-body::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #fff4c0 0%, #f4c542 50%, #d89c1c 100%);
   border-radius: 6rpx;
 }
-.rs-page.h5-mode { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
+.rs-body { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
 .rs-header { padding: $spacing-base 0; margin-bottom: 8rpx; }
 .rs-title { display: block; font-size: 44rpx; font-weight: 600; color: $app-text; }
 .rs-meta { display: block; font-size: 24rpx; color: $app-text-muted; margin-top: 8rpx; }

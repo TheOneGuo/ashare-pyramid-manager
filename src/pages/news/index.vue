@@ -1,12 +1,15 @@
 <template>
   <view class="news-page" :class="{ 'h5-mode': isH5 }">
-    <view class="news-header">
-      <text class="news-title">财经快讯</text>
-      <text class="news-hint">下拉刷新最新资讯</text>
-    </view>
+    <TabBarComp v-if="isH5" />
+    <!-- 固定在顶部的 head 区：标题 + 两段筛选 -->
+    <view class="news-head">
+      <view class="news-header">
+        <text class="news-title">财经快讯</text>
+        <text class="news-hint">下拉刷新最新资讯</text>
+      </view>
 
-    <!-- 两段式：全部 / 持仓标的相关 -->
-    <view class="news-source-strip">
+      <!-- 两段式：全部 / 持仓标的相关 -->
+      <view class="news-source-strip">
       <view
         class="news-source-chip"
         :class="{ active: activeScope === 'all' }"
@@ -22,7 +25,10 @@
         <text>持仓标的相关 · {{ holdingCount }}</text>
       </view>
     </view>
+    </view>
 
+    <!-- 可滚动内容区（滚动条仅在此区域内） -->
+    <view class="news-body">
     <view v-if="loading && items.length === 0" class="news-empty">
       <text>正在读取快讯…</text>
     </view>
@@ -34,7 +40,6 @@
       <text v-else>最近 24 小时暂时没有可展示的重要快讯，下拉试试。</text>
     </view>
 
-    <TabBarComp v-if="isH5" />
     <view class="news-list">
       <view
         v-for="item in visibleItems"
@@ -54,6 +59,7 @@
         <text v-if="item.summary" class="news-item-summary">{{ item.summary }}</text>
         <text v-if="item.url" class="news-item-link">查看原文 ›</text>
       </view>
+    </view>
     </view>
   </view>
 </template>
@@ -271,25 +277,39 @@ $radius-full: 999px;
   padding: 24rpx 24rpx 150rpx;
 }
 
-/* H5：页面本身作为滚动容器，底部止于 tab 上沿；右侧滚动条只到这里，且美化 */
+/* H5：页面作为包含 head(固定) + body(滚动) 的容器，止于 tab 上沿 */
 .news-page.h5-mode {
   position: fixed;
   left: 0;
   right: 0;
   top: 0;
   bottom: calc(110rpx + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* head 区固定，不参与滚动 */
+.news-head {
+  flex: 0 0 auto;
+  padding: 16rpx 24rpx 0;
+  background: $color-bg;
+}
+/* body 区滚动，右侧美化金色滚动条只在此处 */
+.news-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding-bottom: 24rpx;
+  padding: 0 24rpx 24rpx;
 }
-.news-page.h5-mode::-webkit-scrollbar { width: 5rpx; }
-.news-page.h5-mode::-webkit-scrollbar-track { background: transparent; }
-.news-page.h5-mode::-webkit-scrollbar-thumb {
+.news-body::-webkit-scrollbar { width: 5rpx; }
+.news-body::-webkit-scrollbar-track { background: transparent; }
+.news-body::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #fff4c0 0%, #f4c542 50%, #d89c1c 100%);
   border-radius: 6rpx;
 }
-.news-page.h5-mode { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
+.news-body { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
 
 .news-header {
   display: flex;

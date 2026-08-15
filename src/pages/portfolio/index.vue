@@ -1,12 +1,14 @@
 <template>
   <view class="pf-page" :class="{ 'h5-mode': isH5 }" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd">
     <TabBarComp v-if="isH5" />
-    <!-- Head + 下拉提示 -->
+    <!-- 固定在顶部的 head 区：标题 + 提示 -->
     <view class="pf-head">
       <text class="pf-title">持仓分析</text>
       <text class="pf-hint">下拉刷新最新 · AI 建议仅供参考</text>
     </view>
 
+    <!-- 可滚动内容区（滚动条仅在此区域内） -->
+    <view class="pf-body">
     <!-- Touch 下拉指示器 -->
     <view v-if="pullDistance > 0" class="pf-pull-indicator" :style="{ height: pullDistance + 'px', opacity: pullProgress }">
       <text class="pf-pull-text">{{ pullText }}</text>
@@ -254,6 +256,7 @@
 
     <view class="pf-disclaimer">
       <text>AI + 算法建议不构成投资建议 · 投资有风险，入市需谨慎</text>
+    </view>
     </view>
   </view>
 </template>
@@ -758,24 +761,39 @@ $radius-lg: 20rpx;
 .pf-page { min-height: 100vh; background: $color-bg; padding: 24rpx 24rpx 150rpx; overscroll-behavior-y: contain; }
 
 /* H5：页面作为滚动容器，底部止于 tab 上沿 */
+/* H5：页面作为包含 head(固定) + body(滚动) 的容器，止于 tab 上沿 */
 .pf-page.h5-mode {
   position: fixed;
   left: 0;
   right: 0;
   top: 0;
   bottom: calc(110rpx + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* head 区固定，不参与滚动 */
+.pf-head {
+  flex: 0 0 auto;
+  padding: 16rpx 24rpx 8rpx;
+  background: $color-bg;
+}
+/* body 区滚动，右侧美化金色滚动条只在此处 */
+.pf-body {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding-bottom: 24rpx;
+  padding: 0 24rpx 24rpx;
 }
-.pf-page.h5-mode::-webkit-scrollbar { width: 5rpx; }
-.pf-page.h5-mode::-webkit-scrollbar-track { background: transparent; }
-.pf-page.h5-mode::-webkit-scrollbar-thumb {
+.pf-body::-webkit-scrollbar { width: 5rpx; }
+.pf-body::-webkit-scrollbar-track { background: transparent; }
+.pf-body::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #fff4c0 0%, #f4c542 50%, #d89c1c 100%);
   border-radius: 6rpx;
 }
-.pf-page.h5-mode { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
+.pf-body { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
 .pf-head { padding: 16rpx 0 8rpx; margin-bottom: 12rpx; }
 .pf-title { display: block; font-size: 44rpx; font-weight: 700; color: $color-text-primary; letter-spacing: 1rpx; }
 .pf-hint { display: block; margin-top: 8rpx; font-size: 22rpx; color: $color-text-secondary; letter-spacing: 1rpx; }
