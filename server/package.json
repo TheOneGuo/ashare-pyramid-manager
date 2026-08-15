@@ -17,6 +17,7 @@
     "fast-xml-parser": "^5.10.1",
     "node-cron": "^3.0.3",
     "node-fetch": "^3.3.2",
+    "pdf-parse": "^1.1.1",
     "tsx": "^4.19.2",
     "undici": "^8.10.0"
   }

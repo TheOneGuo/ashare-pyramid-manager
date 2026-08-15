@@ -18,6 +18,9 @@ export interface Holding {
   market?: string
   shares: number
   cost_basis: number
+  current_price?: number | null
+  pnl?: number | null
+  pnl_pct?: number | null
   added_at?: number
   updated_at?: number
 }
@@ -304,6 +307,18 @@ export async function upsertHolding(body: { stock_code: string; short_name?: str
 
 export async function deleteHolding(code: string) {
   return jget(`/api/holdings/${code}`, { method: 'DELETE' })
+}
+
+// 持仓富化入库：拍照/文件/手动 → 自动补全代码/名称/现价/盈亏
+export async function importHoldings(body: {
+  source: 'photo' | 'file' | 'manual' | 'text'
+  images?: string[]
+  file_b64?: string
+  file_name?: string
+  text?: string
+  items?: { code?: string; name?: string; cost: number; shares: number }[]
+}) {
+  return jget('/api/portfolio/holdings/import', { method: 'POST', body, timeoutMs: 40000 })
 }
 
 // ---- Roles + Recommendations ----

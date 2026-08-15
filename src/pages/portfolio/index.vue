@@ -71,53 +71,51 @@
       </view>
     </view>
 
-    <!-- ② 截图 / 手动输入 Import 折叠区 -->
+    <!-- ② 已有持仓：拍照 / 导入文件 / 手动输入 → 自动补全代码/名称/现价/盈亏 -->
     <view class="pf-card pf-import">
-      <view class="pf-import-head" @tap="importOpen = !importOpen">
-        <text class="pf-section-title">📥 已有持仓（截图或手动）</text>
-        <text class="pf-toggle">{{ importOpen ? '收起' : '展开' }}</text>
+      <text class="pf-section-title">📥 已有持仓</text>
+      <view class="pf-import-actions pf-import-actions--3">
+        <view class="pf-btn pf-btn--primary pf-btn--flex" hover-class="pf-btn--hover" @tap="onCamera">
+          <text>📷 拍照</text>
+        </view>
+        <view class="pf-btn pf-btn--primary pf-btn--flex" hover-class="pf-btn--hover" @tap="onPickFile">
+          <text>📁 导入文件到持仓</text>
+        </view>
+        <view class="pf-btn pf-btn--primary pf-btn--flex" hover-class="pf-btn--hover" @tap="manualOpen = !manualOpen">
+          <text>✏️ 手动输入</text>
+        </view>
       </view>
-      <view v-if="importOpen" class="pf-import-body">
-        <view class="pf-import-actions">
-          <view class="pf-btn pf-btn--secondary" hover-class="pf-btn--hover" @tap="onUpload">
-            <text>📷 上传截图</text>
-          </view>
-          <view class="pf-btn pf-btn--secondary" hover-class="pf-btn--hover" @tap="onMockExtract">
-            <text>🤖 智能识别（mock）</text>
-          </view>
-        </view>
-        <textarea
-          v-model="importText"
-          class="pf-textarea"
-          placeholder="粘贴持仓（每行：代码 成本 数量）例如：&#10;600519 1700 100&#10;000858 165 200"
-          :auto-height="true"
-        />
-        <view class="pf-import-actions">
-          <view class="pf-btn pf-btn--primary" hover-class="pf-btn--hover" @tap="onImport">
-            <text>导入到持仓列表</text>
-          </view>
-          <view class="pf-btn pf-btn--primary" hover-class="pf-btn--hover" @tap="manualOpen = !manualOpen">
-            <text>➕ 手动输入</text>
-          </view>
-        </view>
-        <!-- 手动输入表单 -->
-        <view v-if="manualOpen" class="pf-manual-row">
-          <input class="pf-input pf-input--sm" v-model="manualCode" placeholder="代码" />
-          <input class="pf-input pf-input--sm" v-model="manualName" placeholder="名称" />
-          <input class="pf-input pf-input--xs" type="number" v-model.number="manualCost" placeholder="成本" />
-          <input class="pf-input pf-input--xs" type="number" v-model.number="manualQty" placeholder="数量" />
-          <view class="pf-btn pf-btn--primary pf-btn--xs" hover-class="pf-btn--hover" @tap="onManualAdd"><text>添加</text></view>
-        </view>
-        <view v-if="ocrNote" class="pf-note">{{ ocrNote }}</view>
+      <!-- 隐藏的文件选择（截图/CSV/PDF 通用） -->
+      <input v-if="isH5" ref="fileInput" type="file" accept="image/*,text/csv,.csv,.txt,application/pdf" style="display:none" @change="onFilePicked" />
 
-        <!-- 持仓列表（逐行编辑/删除） -->
-        <view v-if="holdings.length" class="pf-hold-list">
-          <view v-for="h in holdings" :key="h.stock_code" class="pf-hold-row">
-            <text class="pf-hold-name">{{ h.short_name || h.stock_code }} · {{ h.stock_code }}</text>
-            <input class="pf-hold-input pf-hold-input--cost" type="number" v-model.number="h.cost_basis" @blur="onHoldChange(h)" />
-            <input class="pf-hold-input pf-hold-input--qty" type="number" v-model.number="h.shares" @blur="onHoldChange(h)" />
-            <text class="pf-hold-del" @tap="onHoldDel(h)">✕</text>
-          </view>
+      <!-- 手动输入表单 -->
+      <view v-if="manualOpen" class="pf-manual-row">
+        <input class="pf-input pf-input--sm" v-model="manualCode" placeholder="代码(或名称)" />
+        <input class="pf-input pf-input--sm" v-model="manualName" placeholder="名称(或代码)" />
+        <input class="pf-input pf-input--xs" type="number" v-model.number="manualCost" placeholder="综合成本" />
+        <input class="pf-input pf-input--xs" type="number" v-model.number="manualQty" placeholder="股数" />
+        <view class="pf-btn pf-btn--primary pf-btn--xs" hover-class="pf-btn--hover" @tap="onManualAdd"><text>添加</text></view>
+      </view>
+      <view v-if="importNote" class="pf-note">{{ importNote }}</view>
+
+      <!-- 持仓列表：代码 名称 综合成本 股数 现价 盈亏 -->
+      <view v-if="holdings.length" class="pf-hold-list">
+        <view class="pf-hold-head">
+          <text class="pf-col pf-col--code">代码</text>
+          <text class="pf-col pf-col--name">名称</text>
+          <text class="pf-col pf-col--num">综合成本</text>
+          <text class="pf-col pf-col--num">股数</text>
+          <text class="pf-col pf-col--num">现价</text>
+          <text class="pf-col pf-col--num">盈亏</text>
+        </view>
+        <view v-for="h in holdings" :key="h.stock_code" class="pf-hold-row">
+          <text class="pf-col pf-col--code">{{ h.stock_code }}</text>
+          <text class="pf-col pf-col--name">{{ h.short_name || '—' }}</text>
+          <text class="pf-col pf-col--num">{{ fmtMoney(h.cost_basis, 2) }}</text>
+          <text class="pf-col pf-col--num">{{ h.shares }}</text>
+          <text class="pf-col pf-col--num">{{ h.current_price != null ? fmtMoney(h.current_price, 2) : '—' }}</text>
+          <text class="pf-col pf-col--num" :class="pnlClass(h)">{{ h.pnl != null ? (h.pnl >= 0 ? '+' : '') + fmtMoney(h.pnl, 0) : '—' }}</text>
+          <text class="pf-hold-del" @tap="onHoldDel(h)">✕</text>
         </view>
       </view>
     </view>
@@ -268,14 +266,14 @@ import { onShow } from '@dcloudio/uni-app'
 const isH5 = ref(typeof window !== 'undefined')
 import TabBarComp from '@/custom-tab-bar/index.vue'
 import {
-  listHoldings, upsertHolding, deleteHolding,
-  extractFromImages, analyzePortfolio,
+  listHoldings, deleteHolding,
+  importHoldings, analyzePortfolio,
   getLedger, appendLedgerEvent, previewLedgerEvent, clearLedger,
   listPlans, deletePlan,
   type Holding, type AnalyzeReport,
   type LedgerSnapshot, type LedgerEvent, type PlanItem,
 } from '@/api/portfolio'
-import { parseHoldingsText, fmtMoney, fmtPct, tierLabel, padCode } from '@/utils/portfolioFormat'
+import { fmtMoney, fmtPct, tierLabel, padCode } from '@/utils/portfolioFormat'
 
 // ── ① 账本 ──
 const ledgerOpen = ref(true)
@@ -408,9 +406,9 @@ function uniPrompt(title: string, placeholder: string): Promise<number | null> {
 
 // ── ② 已有持仓 ──
 const importOpen = ref(true)
-const importText = ref('')
-const ocrNote = ref('')
+const importNote = ref('')
 const holdings = ref<Holding[]>([])
+const fileInput = ref<any>(null)
 
 // 手动输入
 const manualOpen = ref(false)
@@ -419,15 +417,22 @@ const manualName = ref('')
 const manualCost = ref<number | null>(null)
 const manualQty = ref<number | null>(null)
 async function onManualAdd() {
-  const code = padCode(manualCode.value)
-  if (!/^\d{6}$/.test(code)) { uni.showToast({ title: '代码格式错误（6 位数字）', icon: 'none' }); return }
-  if (!manualCost.value || !manualQty.value) { uni.showToast({ title: '请输入成本与数量', icon: 'none' }); return }
+  if (!manualCost.value || !manualQty.value) { uni.showToast({ title: '请输入综合成本与股数', icon: 'none' }); return }
+  if (!manualCode.value.trim() && !manualName.value.trim()) { uni.showToast({ title: '请输入代码或名称至少一项', icon: 'none' }); return }
+  uni.showLoading({ title: '补全行情中…' })
   try {
-    await upsertHolding({ stock_code: code, short_name: manualName.value.trim(), shares: manualQty.value, cost_basis: manualCost.value })
-    manualCode.value = ''; manualName.value = ''; manualCost.value = null; manualQty.value = null; manualOpen.value = false
-    await loadHoldings(); await loadLedger()
-    uni.showToast({ title: '已添加持仓', icon: 'success' })
-  } catch (e) { uni.showToast({ title: '添加失败', icon: 'none' }) }
+    const r: any = await importHoldings({ source: 'manual', items: [{ code: manualCode.value.trim(), name: manualName.value.trim(), cost: Number(manualCost.value), shares: Number(manualQty.value) }] })
+    uni.hideLoading()
+    if (r.ok) {
+      manualCode.value = ''; manualName.value = ''; manualCost.value = null; manualQty.value = null; manualOpen.value = false
+      importNote.value = `已入库 ${r.imported} 条（自动补全名称/现价/盈亏）`
+      await loadHoldings(); await loadLedger()
+      uni.showToast({ title: '已添加持仓', icon: 'success' })
+    } else {
+      importNote.value = (r.errors && r.errors[0]) || '添加失败'
+      uni.showToast({ title: importNote.value, icon: 'none' })
+    }
+  } catch (e: any) { uni.hideLoading(); uni.showToast({ title: e?.message || '添加失败', icon: 'none' }) }
 }
 
 async function loadHoldings() {
@@ -435,49 +440,87 @@ async function loadHoldings() {
     holdings.value = await listHoldings()
   } catch (e) { console.warn('[holdings] load failed', e) }
 }
-async function onHoldChange(h: Holding) {
-  try { await upsertHolding({ stock_code: h.stock_code, short_name: h.short_name, shares: h.shares, cost_basis: h.cost_basis }); await loadLedger() } catch (e) { uni.showToast({ title: '保存失败', icon: 'none' }) }
-}
 async function onHoldDel(h: Holding) {
   try { await deleteHolding(h.stock_code); await loadHoldings(); await loadLedger() } catch (e) { uni.showToast({ title: '删除失败', icon: 'none' }) }
 }
-function onUpload() {
+function pnlClass(h: Holding) {
+  if (h.pnl == null) return ''
+  return h.pnl >= 0 ? 'pf-pnl--up' : 'pf-pnl--down'
+}
+
+// 拍照：uni.chooseImage → OCR → 富化入库
+async function onCamera() {
+  // #ifdef H5
+  if (fileInput.value) fileInput.value.click()
+  return
+  // #endif
   uni.chooseImage({
     count: 1,
-    success: async (res) => {
-      const fp = res.tempFilePaths?.[0]
-      if (!fp) return
-      uni.hideLoading()
-      uni.showToast({ title: '已选图，请用下方「智能识别」跑 mock，或手动输入', icon: 'none', duration: 3000 })
-      ocrNote.value = `已选图（${fp}）。注：浏览器端跨域文件读取受限；用「智能识别」跑 mock 数据演示。`
-    },
+    sourceType: ['camera', 'album'],
+    success: async (res) => { await sendPhoto(res.tempFilePaths?.[0]) },
   })
 }
-async function onMockExtract() {
+async function sendPhoto(fp: string) {
+  if (!fp) return
   uni.showLoading({ title: '识别中…' })
   try {
-    const r = await extractFromImages(['data:image/png;base64,iVBORw0KGgo='])
+    const b64 = await fileToBase64(fp)
+    const r: any = await importHoldings({ source: 'photo', images: [b64] })
     uni.hideLoading()
-    if (r.ok && r.positions && r.positions.length) {
-      const lines = r.positions.map((p) => `${p.code} ${p.cost} ${p.qty}`).join('\n')
-      importText.value = lines
-      ocrNote.value = r.mock ? `（mock 数据：${r.note || 'LLM 未配置'}）— 点击下方"导入到持仓列表"入库` : `识别成功 ${r.positions.length} 条 — 点击下方"导入到持仓列表"入库`
-    } else { ocrNote.value = r.error || '识别失败' }
-  } catch (e: any) { uni.hideLoading(); ocrNote.value = e?.message || '识别失败' }
+    importNote.value = r.ok ? `已识别入库 ${r.imported} 条` : (r.errors?.[0] || '识别失败（可改手动输入）')
+    if (r.ok) { await loadHoldings(); await loadLedger() }
+    uni.showToast({ title: importNote.value, icon: r.ok ? 'success' : 'none' })
+  } catch (e: any) { uni.hideLoading(); uni.showToast({ title: e?.message || '识别失败', icon: 'none' }) }
 }
-async function onImport() {
-  const list = parseHoldingsText(importText.value)
-  if (list.length === 0) { uni.showToast({ title: '没解析到有效持仓（每行：代码 成本 数量）', icon: 'none' }); return }
-  uni.showLoading({ title: '导入中…' })
-  let ok = 0
-  for (const p of list) {
-    try { await upsertHolding({ stock_code: p.code, short_name: '', shares: p.qty, cost_basis: p.cost }); ok++ } catch (e) { console.warn('[import] upsert failed', p, e) }
+
+// 导入文件（截图/CSV/PDF 通用）
+function onPickFile() {
+  // #ifdef H5
+  if (fileInput.value) fileInput.value.click()
+  // #endif
+  // #ifndef H5
+  uni.chooseMessageFile({
+    count: 1,
+    type: 'file',
+    extension: ['csv', 'txt', 'pdf', 'png', 'jpg', 'jpeg'],
+    success: async (res) => {
+      const f = res.tempFiles?.[0]
+      if (!f) return
+      await sendFileByPath(f.path, f.name)
+    },
+  })
+  // #endif
+}
+async function onFilePicked(e: any) {
+  const f = e?.target?.files?.[0]
+  if (!f) return
+  await sendFileByPath(f, f.name)
+}
+async function sendFileByPath(fp: any, name: string) {
+  uni.showLoading({ title: '解析中…' })
+  try {
+    const b64 = await fileToBase64(fp)
+    const r: any = await importHoldings({ source: 'file', file_b64: b64, file_name: name })
+    uni.hideLoading()
+    importNote.value = r.ok ? `已导入 ${r.imported} 条` : (r.errors?.[0] || '解析失败')
+    if (r.ok) { await loadHoldings(); await loadLedger() }
+    uni.showToast({ title: importNote.value, icon: r.ok ? 'success' : 'none' })
+  } catch (e: any) { uni.hideLoading(); uni.showToast({ title: e?.message || '解析失败', icon: 'none' }) }
+}
+async function fileToBase64(fp: any): Promise<string> {
+  // #ifdef H5
+  if (typeof fp === 'object' && fp.arrayBuffer) {
+    const buf = await fp.arrayBuffer(); return 'data:' + (fp.type || 'application/octet-stream') + ';base64,' + uni.arrayBufferToBase64(buf)
   }
-  uni.hideLoading()
-  uni.showToast({ title: `导入 ${ok}/${list.length} 条`, icon: 'success' })
-  importText.value = ''
-  await loadHoldings()
-  await loadLedger()
+  if (typeof fp === 'string') {
+    const res = await fetch(fp); const buf = await res.arrayBuffer(); return 'data:image/*;base64,' + uni.arrayBufferToBase64(buf)
+  }
+  // #endif
+  return new Promise((resolve, reject) => {
+    // #ifndef H5
+    uni.getFileSystemManager().readFile({ filePath: fp, encoding: 'base64', success: (r) => resolve('data:image/*;base64,' + r.data), fail: reject })
+    // #endif
+  }) as Promise<string>
 }
 
 // ── ③ 拟新买标的 ──
@@ -822,6 +865,7 @@ $radius-lg: 20rpx;
 .pf-import-body { margin-top: 16rpx; }
 .pf-import-actions { display: flex; gap: 12rpx; margin-bottom: 12rpx; }
 .pf-import-actions .pf-btn { flex: 1; }
+.pf-import-actions--3 .pf-btn--flex { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pf-textarea { width: 100%; padding: 16rpx; font-size: 24rpx; background: rgba(12, 10, 12, 0.7); color: $color-text-primary; border: 1rpx solid rgba(255, 184, 107, 0.2); border-radius: 12rpx; margin-bottom: 12rpx; min-height: 100rpx; box-sizing: border-box; }
 .pf-note { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; line-height: 1.5; }
 .pf-note--warn { color: $rf-amber; }
@@ -861,11 +905,32 @@ $radius-lg: 20rpx;
 /* ② 手动输入行 */
 .pf-manual-row { display: flex; gap: 8rpx; align-items: center; margin-top: 12rpx; flex-wrap: wrap; }
 
-/* ② 持仓行 */
+/* ② 持仓列表：代码 名称 综合成本 股数 现价 盈亏 */
 .pf-hold-list { margin-top: 16rpx; display: flex; flex-direction: column; gap: 8rpx; }
-.pf-hold-row { display: grid; grid-template-columns: 1fr 160rpx 140rpx 60rpx; align-items: center; gap: 8rpx; padding: 8rpx 10rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; }
-.pf-hold-name { font-size: 22rpx; color: $color-text-primary; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pf-hold-input { width: 100%; padding: 8rpx 10rpx; font-size: 22rpx; background: rgba(12, 10, 12, 0.6); color: $color-text-primary; border: 1rpx solid rgba(255, 184, 107, 0.2); border-radius: 8rpx; }
+.pf-hold-head,
+.pf-hold-row {
+  display: grid;
+  grid-template-columns: 1.1fr 1.4fr 1.2fr 0.8fr 1.2fr 1.2fr 40rpx;
+  align-items: center;
+  gap: 6rpx;
+}
+.pf-hold-head {
+  padding: 6rpx 10rpx;
+  font-size: 20rpx;
+  color: $color-text-secondary;
+  border-bottom: 1rpx solid rgba(255, 184, 107, 0.15);
+}
+.pf-hold-row {
+  padding: 10rpx;
+  background: rgba(255, 184, 107, 0.03);
+  border: 1rpx solid rgba(255, 184, 107, 0.1);
+  border-radius: 10rpx;
+}
+.pf-col { font-size: 22rpx; color: $color-text-primary; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pf-col--num { text-align: right; }
+.pf-col--name { color: $rf-cyan; }
+.pf-pnl--up { color: $rf-green !important; }
+.pf-pnl--down { color: $rf-red !important; }
 .pf-hold-del { text-align: center; font-size: 28rpx; color: $rf-red; }
 
 /* ③ 拟买 */
@@ -972,7 +1037,9 @@ $radius-lg: 20rpx;
 /* 响应式 */
 @media (max-width: 390px) {
   .pf-ledger-grid { grid-template-columns: 1fr 1fr; }
-  .pf-hold-row { grid-template-columns: 1fr 120rpx 100rpx 50rpx; }
+  .pf-hold-head,
+  .pf-hold-row { grid-template-columns: 1fr 1.3fr 1.1fr 0.7fr 1.1fr 1.1fr 32rpx; }
+  .pf-col { font-size: 20rpx; }
 }
 @media (min-width: 761px) {
   .pf-page { max-width: 1080rpx; margin: 0 auto; padding: 32rpx 32rpx 64rpx; }

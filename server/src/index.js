@@ -21,7 +21,8 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, upsertHolding, removeHolding, listHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, ROLE_LABELS } from './db.js';
+import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, ROLE_LABELS } from './db.js';
+import { enrichHolding, importFromText, importFromFile } from './stock-service.js';
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
 import { handleExtract } from './portfolio-extract.js';
@@ -246,6 +247,42 @@ app.post('/api/portfolio/extract', async (req, res) => {
   try {
     const result = await handleExtract(req.body || {});
     res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// =====================================================
+// 持仓入库（拍照/导入文件/手动）→ 富化（代码/名称/现价/盈亏）
+// 等价替代 akshare：腾讯行情 + 新浪提示
+// =====================================================
+app.post('/api/portfolio/holdings/import', async (req, res) => {
+  try {
+    const { source, images, file_b64, file_name, text, items } = req.body || {};
+    let enriched = [];
+    let errors = [];
+    if (source === 'manual' && Array.isArray(items) && items.length) {
+      for (const it of items) {
+        try { enriched.push(await enrichHolding({ code: it.code, name: it.name, cost: Number(it.cost), shares: Number(it.shares) })); }
+        catch (e) { errors.push(`${it.code || it.name || '?'}：${e.message}`); }
+      }
+    } else if (source === 'file' && file_b64) {
+      const r = await importFromFile(file_b64, file_name || 'upload', (imgs) => handleExtract({ images: imgs }));
+      enriched = r.enriched; errors = r.errors;
+    } else if (source === 'photo' && Array.isArray(images) && images.length) {
+      const ocr = await handleExtract({ images });
+      for (const p of (ocr.positions || [])) {
+        try { enriched.push(await enrichHolding({ code: p.code, name: p.name, cost: Number(p.cost), shares: Number(p.qty) })); }
+        catch (e) { errors.push(`${p.code || p.name || '?'}：${e.message}`); }
+      }
+    } else if (text) {
+      const r = await importFromText(text, source || 'text');
+      enriched = r.enriched; errors = r.errors;
+    } else {
+      return res.status(400).json({ ok: false, error: '缺少入库数据（images/file_b64/text/items）' });
+    }
+    const okCount = await importHoldings(enriched);
+    res.json({ ok: okCount > 0, imported: okCount, total: enriched.length, errors });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

@@ -89,13 +89,16 @@ CREATE TABLE IF NOT EXISTS portfolio_snapshots (
 CREATE INDEX IF NOT EXISTS idx_snapshot_user_time ON portfolio_snapshots(user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS portfolio_holdings (
-  stock_code   TEXT NOT NULL,
-  short_name   TEXT NOT NULL DEFAULT '',
-  market       TEXT NOT NULL DEFAULT '',
-  shares       INTEGER NOT NULL DEFAULT 0,
-  cost_basis   REAL,
-  added_at     INTEGER NOT NULL,
-  updated_at   INTEGER NOT NULL,
+  stock_code      TEXT NOT NULL,
+  short_name      TEXT NOT NULL DEFAULT '',
+  market          TEXT NOT NULL DEFAULT '',
+  shares          INTEGER NOT NULL DEFAULT 0,
+  cost_basis      REAL,
+  current_price   REAL,
+  pnl             REAL,
+  pnl_pct         REAL,
+  added_at        INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL,
   PRIMARY KEY (stock_code)
 );
 
@@ -183,7 +186,8 @@ export async function initDb() {
     }
   }
   initialized = true;
-  console.log('[db] schema initialized (5 tables)');
+  await migrateHoldingsColumns();
+  console.log('[db] schema initialized (holdings migrated)');
 }
 
 export function getClient() { return client; }
@@ -354,15 +358,18 @@ export async function cleanupOldNews(cutoff_ms) {
 // Portfolio Holdings
 // =====================================================
 
-export async function upsertHolding({ stock_code, short_name, market, shares, cost_basis }) {
+export async function upsertHolding({ stock_code, short_name, market, shares, cost_basis, current_price, pnl, pnl_pct }) {
   await client.execute({
-    sql: `INSERT INTO portfolio_holdings(stock_code,short_name,market,shares,cost_basis,added_at,updated_at)
-          VALUES(?,?,?,?,?,?,?)
+    sql: `INSERT INTO portfolio_holdings(stock_code,short_name,market,shares,cost_basis,current_price,pnl,pnl_pct,added_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?)
           ON CONFLICT(stock_code) DO UPDATE SET
             short_name=excluded.short_name,
             market=excluded.market,
             shares=excluded.shares,
             cost_basis=excluded.cost_basis,
+            current_price=excluded.current_price,
+            pnl=excluded.pnl,
+            pnl_pct=excluded.pnl_pct,
             updated_at=excluded.updated_at`,
     args: [
       String(stock_code).padStart(6, '0'),
@@ -370,10 +377,44 @@ export async function upsertHolding({ stock_code, short_name, market, shares, co
       String(market || '').slice(0, 10),
       Number(shares) || 0,
       Number(cost_basis) || 0,
+      current_price === undefined ? null : Number(current_price),
+      pnl === undefined ? null : Number(pnl),
+      pnl_pct === undefined ? null : Number(pnl_pct),
       Date.now(),
       Date.now(),
     ],
   });
+}
+
+// 批量入库（富化后的持仓），返回成功条数
+export async function importHoldings(items) {
+  let ok = 0;
+  for (const it of items || []) {
+    try {
+      await upsertHolding(it);
+      ok++;
+    } catch (e) {
+      console.warn('[db] importHoldings skip:', e.message);
+    }
+  }
+  return ok;
+}
+
+// 旧库迁移：补齐新增列
+export async function migrateHoldingsColumns() {
+  const needed = [
+    ['current_price', 'REAL'],
+    ['pnl', 'REAL'],
+    ['pnl_pct', 'REAL'],
+  ];
+  for (const [col, type] of needed) {
+    try {
+      await client.execute({ sql: `ALTER TABLE portfolio_holdings ADD COLUMN ${col} ${type}` });
+      console.log(`[db] migrated holdings +${col}`);
+    } catch (e) {
+      // 列已存在则忽略
+    }
+  }
 }
 
 export async function removeHolding(stock_code) {
@@ -384,13 +425,16 @@ export async function removeHolding(stock_code) {
 }
 
 export async function listHoldings() {
-  const r = await client.execute(`SELECT stock_code,short_name,market,shares,cost_basis,added_at,updated_at FROM portfolio_holdings ORDER BY stock_code`);
+  const r = await client.execute(`SELECT stock_code,short_name,market,shares,cost_basis,current_price,pnl,pnl_pct,added_at,updated_at FROM portfolio_holdings ORDER BY stock_code`);
   return r.rows.map((row) => ({
     stock_code: row.stock_code,
     short_name: row.short_name,
     market: row.market,
     shares: Number(row.shares),
     cost_basis: Number(row.cost_basis),
+    current_price: row.current_price === null ? null : Number(row.current_price),
+    pnl: row.pnl === null ? null : Number(row.pnl),
+    pnl_pct: row.pnl_pct === null ? null : Number(row.pnl_pct),
     added_at: Number(row.added_at),
     updated_at: Number(row.updated_at),
   }));
