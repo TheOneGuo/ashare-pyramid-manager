@@ -241,8 +241,8 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
     }
   }
 
-  // 清理过期
-  await db.cleanupOldNews(now - NEWS_RETENTION_HOURS * 3600_000);
+  // 清理过期（持仓相关公告/个股新闻因发布时间可能很早，不参与清理）
+  await db.cleanupOldNews(now - NEWS_RETENTION_HOURS * 3600_000, db.HOLDING_NEWS_CHANNELS);
 
   return summary;
 }

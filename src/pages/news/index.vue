@@ -13,14 +13,14 @@
       <view
         class="news-source-chip"
         :class="{ active: activeScope === 'all' }"
-        @tap="activeScope = 'all'"
+        @tap="onScopeChange(); activeScope = 'all'"
       >
         <text>全部 · {{ allCount }}</text>
       </view>
       <view
         class="news-source-chip"
         :class="{ active: activeScope === 'holding' }"
-        @tap="activeScope = 'holding'"
+        @tap="onScopeChange(); activeScope = 'holding'"
       >
         <text>持仓标的相关 · {{ holdingCount }}</text>
       </view>
@@ -144,10 +144,13 @@ function detectMatchedHoldings(item: NewsItem): string[] {
   return Array.from(new Set(hits))
 }
 
-async function fetchNews(showLoading = true) {
+async function fetchNews(showLoading = true, scope: 'all' | 'holding' | null = null) {
+  const useScope = scope || activeScope.value
   if (showLoading) loading.value = true
   try {
-    const url = `${API_BASE}/api/news?limit=100`
+    const q = useScope === 'holding' ? 'limit=100&holding=1' : 'limit=100'
+    const url = `${API_BASE}/api/news?${q}`
+    if (useScope === 'holding') holdingTotal.value = 0
     // #ifdef H5
     console.log('[news] GET', url)
     // #endif
@@ -155,6 +158,7 @@ async function fetchNews(showLoading = true) {
     const data: any = (res as any).data
     if (data && data.ok && Array.isArray(data.items)) {
       items.value = data.items.map((it: RawNews) => mapItem(it))
+      if (useScope === 'holding') holdingTotal.value = data.count ?? data.items.length
     } else {
       console.warn('[news] bad payload', data)
     }
@@ -214,11 +218,14 @@ function formatTime(ts: number) {
 
 // 计数（依赖 items 重算）
 const allCount = computed(() => items.value.length)
-const holdingCount = computed(() => items.value.filter((i) => i.matchedHoldings.length > 0).length)
+// 持仓相关数：由持仓 feed 实际返回量决定（服务端已按持仓+宏观过滤）
+const holdingTotal = ref(0)
+const holdingCount = computed(() => (activeScope.value === 'holding' ? items.value.length : holdingTotal.value))
 
 const visibleItems = computed(() => {
   if (activeScope.value === 'all') return items.value
-  return items.value.filter((i) => i.matchedHoldings.length > 0)
+  // 持仓相关：服务端已返回关联内容，这里直接展示（matchedHoldings 仅用于标签）
+  return items.value
 })
 
 onMounted(async () => {
@@ -227,11 +234,9 @@ onMounted(async () => {
 })
 
 onShow(async () => {
-  // 切回前台：如果 holdings 变了，重新匹配一次
+  // 切回前台：如果 holdings 变了，按当前 tab 重新拉取
   await loadHoldings()
-  if (items.value.length > 0) {
-    items.value = items.value.map((it) => ({ ...it, matchedHoldings: detectMatchedHoldings(it) }))
-  }
+  await fetchNews(false)
 })
 
 onPullDownRefresh(async () => {
@@ -239,6 +244,11 @@ onPullDownRefresh(async () => {
   await fetchNews(true)
   uni.stopPullDownRefresh()
 })
+
+function onScopeChange() {
+  // 切换全部/持仓相关：重新拉取对应数据源
+  fetchNews(false)
+}
 
 onBeforeUnmount(() => {})
 </script>

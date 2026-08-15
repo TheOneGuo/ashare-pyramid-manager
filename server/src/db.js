@@ -289,31 +289,10 @@ export async function recordSourceError({ source_channel, source_name, feed_url,
   });
 }
 
-/** 读取最新 N 条新闻（可按 source_channel 过滤） */
-export async function fetchNews({ limit = 30, since = 0, source_channel = null, holding_codes = null } = {}) {
-  let sql = `SELECT id,source_channel,source_name,title,summary,content,link,published_at,fetched_at,raw_json
-             FROM news_items WHERE published_at >= ?`;
-  const args = [since];
+const NEWS_COLS = `id,source_channel,source_name,title,summary,content,link,published_at,fetched_at,raw_json`;
 
-  if (source_channel) {
-    sql += ` AND source_channel = ?`;
-    args.push(source_channel);
-  } else if (Array.isArray(holding_codes) && holding_codes.length > 0) {
-    const tgChannels = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
-    const all = [
-      ...tgChannels,
-      ...holding_codes.map((c) => `eastmoney_stock_news_${c}`),
-      ...holding_codes.map((c) => `eastmoney_announcement_${c}`),
-    ];
-    sql += ` AND source_channel IN (${all.map(() => '?').join(',')})`;
-    args.push(...all);
-  }
-
-  sql += ` ORDER BY published_at DESC LIMIT ?`;
-  args.push(Math.min(200, Math.max(1, limit)));
-
-  const r = await client.execute({ sql, args });
-  return r.rows.map((row) => ({
+function mapNewsRow(row) {
+  return {
     id: row.id,
     source_channel: row.source_channel,
     source_name: row.source_name,
@@ -324,7 +303,56 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
     published_at: Number(row.published_at),
     fetched_at: Number(row.fetched_at),
     raw: row.raw_json ? safeJson(row.raw_json) : {},
-  }));
+  };
+}
+
+/** 读取最新 N 条新闻
+ * - 默认：所有源按时间倒序
+ * - holding_codes：电报三源(宏观) + 每个持仓的东财公告/个股新闻 各自独立取数再合并，
+ *   避免持仓源被电报海量新帖在 LIMIT 下挤出
+ */
+export async function fetchNews({ limit = 30, since = 0, source_channel = null, holding_codes = null } = {}) {
+  const cap = Math.min(200, Math.max(1, limit));
+
+  if (source_channel) {
+    const sql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
+    const r = await client.execute({ sql, args: [since, source_channel, cap] });
+    return r.rows.map(mapNewsRow);
+  }
+
+  if (Array.isArray(holding_codes) && holding_codes.length > 0) {
+    const tgChannels = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
+    const perSrc = Math.max(20, Math.ceil(cap / 2)); // 每个持仓源保底 20 条
+    const rows = [];
+    // 宏观电报（作为持仓相关的大盘背景）
+    const tgSql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
+    for (const ch of tgChannels) {
+      const r = await client.execute({ sql: tgSql, args: [since, ch, cap] });
+      rows.push(...r.rows);
+    }
+    // 持仓专属源（公告 + 个股新闻）单独取，不与其他源抢 LIMIT
+    const holdSql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
+    for (const c of holding_codes) {
+      for (const ch of [`eastmoney_stock_news_${c}`, `eastmoney_announcement_${c}`]) {
+        const r = await client.execute({ sql: holdSql, args: [since, ch, perSrc] });
+        rows.push(...r.rows);
+      }
+    }
+    // 去重 + 排序 + 限顶
+    const seen = new Set();
+    const dedup = [];
+    for (const row of rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      dedup.push(row);
+    }
+    dedup.sort((a, b) => Number(b.published_at) - Number(a.published_at));
+    return dedup.slice(0, cap).map(mapNewsRow);
+  }
+
+  const sql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? ORDER BY published_at DESC LIMIT ?`;
+  const r = await client.execute({ sql, args: [since, cap] });
+  return r.rows.map(mapNewsRow);
 }
 
 function safeJson(s) { try { return JSON.parse(s); } catch { return {}; } }
@@ -344,18 +372,35 @@ export async function fetchNewsSources() {
   }));
 }
 
-/** 清理超过 cutoff_ms 的新闻 */
-export async function cleanupOldNews(cutoff_ms) {
+/** 清理超过 cutoff_ms 的新闻
+ * keepChannels 内的源（持仓相关公告/个股新闻，发布时间可能很早）不参与清理
+ */
+export async function cleanupOldNews(cutoff_ms, keepChannels = []) {
   try {
-    const r = await client.execute({
-      sql: `DELETE FROM news_items WHERE published_at < ?`,
-      args: [cutoff_ms],
-    });
+    let sql = `DELETE FROM news_items WHERE published_at < ?`;
+    const args = [cutoff_ms];
+    if (keepChannels.length > 0) {
+      const clause = keepChannels.map(() => 'source_channel <> ?').join(' AND ');
+      sql += ` AND ${clause}`;
+      args.push(...keepChannels);
+    }
+    const r = await client.execute({ sql, args });
     return r.rowsAffected || 0;
   } catch (e) {
     console.warn(`[db] cleanupOldNews: ${e.message?.slice(0, 80)}`);
     return 0;
   }
+}
+
+// 持仓相关源不参与时间清理（公告/个股新闻发布时间可能很早，但对持仓监控长期有用）
+export const HOLDING_NEWS_CHANNELS = [
+  'eastmoney_announcement',
+  'eastmoney_stock_news',
+];
+
+// 判断某 source_channel 是否属于持仓相关源（前缀匹配）
+export function isHoldingChannel(ch) {
+  return HOLDING_NEWS_CHANNELS.some((p) => ch.startsWith(p));
 }
 
 // =====================================================
