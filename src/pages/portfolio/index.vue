@@ -933,9 +933,10 @@ $radius-lg: 20rpx;
   border: 1rpx solid rgba(255, 184, 107, 0.1);
   border-radius: 10rpx;
 }
-.pf-col { font-size: 22rpx; color: $color-text-primary; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.pf-col--num { text-align: right; }
+.pf-col { font-size: 22rpx; color: $color-text-primary; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: center; padding: 0 6rpx; }
+.pf-col--num { text-align: center; }
 .pf-col--name { color: $rf-cyan; }
+.pf-col:not(:first-child) { border-left: 1rpx solid rgba(255, 184, 107, 0.22); }
 .pf-pnl--up { color: $rf-green !important; }
 .pf-pnl--down { color: $rf-red !important; }
 .pf-hold-del { text-align: center; font-size: 28rpx; color: $rf-red; }
