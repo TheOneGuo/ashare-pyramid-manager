@@ -6,7 +6,7 @@
     </view>
 
     <!-- 两段式：全部 / 持仓标的相关 -->
-    <scroll-view class="news-source-strip" scroll-x enable-flex>
+    <view class="news-source-strip">
       <view
         class="news-source-chip"
         :class="{ active: activeScope === 'all' }"
@@ -21,7 +21,7 @@
       >
         <text>持仓标的相关 · {{ holdingCount }}</text>
       </view>
-    </scroll-view>
+    </view>
 
     <view v-if="loading && items.length === 0" class="news-empty">
       <text>正在读取快讯…</text>
@@ -245,6 +245,7 @@ onBeforeUnmount(() => {})
 <style lang="scss" scoped>
 // 原项目色板（heatmap_app tokens.css）
 $rf-cyan: #72f7ff;
+$rf-amber: #ffb86b;
 $rf-orange: rgba(255, 184, 107, 1);
 $rf-cream: #f5ecd9;
 $rf-muted: #a89a82;
@@ -288,26 +289,26 @@ $radius-full: 999px;
 
 /* 源筛选条 */
 .news-source-strip {
-  white-space: nowrap;
   display: flex;
   gap: 12rpx;
   padding: 16rpx 0 20rpx;
 }
 
 .news-source-chip {
-  display: inline-block;
-  padding: 10rpx 22rpx;
-  font-size: 24rpx;
+  flex: 1;
+  box-sizing: border-box;
+  text-align: center;
+  padding: 20rpx 12rpx;
+  font-size: 26rpx;
   color: $color-text-secondary;
-  background: rgba(255, 184, 107, 0.05);
-  border: 1rpx solid rgba(255, 184, 107, 0.18);
-  border-radius: $radius-full;
-  flex-shrink: 0;
+  background: $color-card-bg;
+  border: 1rpx solid $color-border;
+  border-radius: $radius-md;
 
   &.active {
     color: $color-bg;
-    background: $rf-cyan;
-    border-color: $rf-cyan;
+    background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%);
+    border-color: transparent;
     font-weight: 600;
   }
 }
