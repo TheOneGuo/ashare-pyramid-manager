@@ -155,86 +155,6 @@
       </view>
     </view>
 
-    <!-- ⑤ AI 研报解读（两个 tab） -->
-    <view class="pf-card pf-research">
-      <view class="pf-tabbar">
-        <view class="pf-tab" :class="{ 'pf-tab--active': researchTab === 'refine' }" @tap="researchTab = 'refine'"><text>研报 AI 精读提炼</text></view>
-        <view class="pf-tab" :class="{ 'pf-tab--active': researchTab === 'held' }" @tap="researchTab = 'held'"><text>已持仓标的 AI 研报分析</text></view>
-      </view>
-
-      <!-- Tab 1：研报 AI 精读提炼 -->
-      <view v-if="researchTab === 'refine'" class="pf-research-tab">
-        <text class="pf-note pf-note--muted">AI 会按十二个研究模块整理公开资料生成研报（当前为演示模式，后续接入真实 LLM）。</text>
-        <view class="pf-row pf-research-inputs">
-          <input class="pf-input pf-input--sm" v-model="researchCode" placeholder="代码" />
-          <input class="pf-input pf-input--md" v-model="researchName" placeholder="名称（可选）" />
-        </view>
-        <textarea
-          v-model="researchQuery"
-          class="pf-textarea"
-          placeholder="用一句话说明你想验证的问题，例如：重点看产能扩张、海外客户与未来三年增长空间。"
-          :auto-height="true"
-        />
-        <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onResearch" :class="{ 'pf-btn--loading': researchLoading }">
-          <text>{{ researchLoading ? '生成中…' : '生成 AI 研报' }}</text>
-        </view>
-        <view v-if="researchData" class="pf-report-box">
-          <view class="pf-report-head">
-            <text class="pf-report-title">{{ researchData.stock_name }} · {{ researchData.stock_code || '—' }}</text>
-            <text class="pf-report-rating">综合评级：{{ researchData.rating }}</text>
-          </view>
-          <text class="pf-report-overall">{{ researchData.overall }}</text>
-          <view v-for="(m, i) in researchData.modules" :key="i" class="pf-module">
-            <view class="pf-module-head">
-              <text class="pf-module-no">{{ i + 1 }}</text>
-              <text class="pf-module-title">{{ m.title }}</text>
-              <text v-if="m.verdict" class="pf-module-verdict">· {{ m.verdict }}</text>
-            </view>
-            <text class="pf-module-summary">{{ m.summary }}</text>
-            <view v-if="m.points && m.points.length" class="pf-module-points">
-              <view v-for="(p, j) in m.points" :key="j" class="pf-module-point">
-                <text class="pf-dot">·</text><text>{{ p }}</text>
-              </view>
-            </view>
-          </view>
-          <text class="pf-report-disclaimer">{{ researchData.disclaimer }}</text>
-        </view>
-      </view>
-
-      <!-- Tab 2：已持仓标的 AI 研报分析 -->
-      <view v-else class="pf-research-tab">
-        <text class="pf-note pf-note--muted">对当前已持仓标的，逐一点击「生成 AI 研报」即可按十二个研究模块生成完整研报，生成后可在下方按章节阅读（当前为演示模式，后续接入真实 LLM）。</text>
-        <view v-if="heldResearchList.length === 0" class="pf-empty"><text>暂无持仓。请先在「已有持仓」中导入或手动输入。</text></view>
-        <view v-else class="pf-held-list">
-          <view v-for="h in heldResearchList" :key="h.stock_code" class="pf-held-row">
-            <view class="pf-held-info">
-              <text class="pf-held-name">{{ h.short_name || h.stock_code }}</text>
-              <text class="pf-held-code">{{ h.stock_code }}</text>
-            </view>
-            <view class="pf-btn pf-btn--primary pf-held-gen" hover-class="pf-btn--hover" @tap="onResearchHeld(h.stock_code)" :class="{ 'pf-btn--loading': researchHeldLoading === h.stock_code }">
-              <text>{{ hasHeldReport(h.stock_code) ? '重读研报' : '生成 AI 研报' }}</text>
-            </view>
-          </view>
-        </view>
-        <view v-for="rd in heldResearchData" :key="rd.stock_code" class="pf-report-box pf-report-box--sub">
-          <view class="pf-report-head">
-            <text class="pf-report-title">{{ rd.stock_name }} · {{ rd.stock_code }}</text>
-            <text class="pf-report-rating">综合评级：{{ rd.rating }}</text>
-          </view>
-          <text class="pf-report-overall">{{ rd.overall }}</text>
-          <view v-for="(m, i) in rd.modules" :key="i" class="pf-module">
-            <view class="pf-module-head">
-              <text class="pf-module-no">{{ i + 1 }}</text>
-              <text class="pf-module-title">{{ m.title }}</text>
-              <text v-if="m.verdict" class="pf-module-verdict">· {{ m.verdict }}</text>
-            </view>
-            <text class="pf-module-summary">{{ m.summary }}</text>
-          </view>
-          <text class="pf-report-disclaimer">{{ rd.disclaimer }}</text>
-        </view>
-      </view>
-    </view>
-
     <!-- ⑥ 策略方案（现有持仓处置 + 新标的方案） -->
     <view v-if="analyzeReport" class="pf-card pf-report">
       <text class="pf-section-title">📐 策略方案</text>
@@ -343,10 +263,9 @@ import { onShow } from '@dcloudio/uni-app'
 import {
   listHoldings, upsertHolding, deleteHolding,
   extractFromImages, analyzePortfolio,
-  researchReport,
   getLedger, appendLedgerEvent, previewLedgerEvent, clearLedger,
   listPlans, deletePlan,
-  type Holding, type AnalyzeReport, type ResearchReport,
+  type Holding, type AnalyzeReport,
   type LedgerSnapshot, type LedgerEvent, type PlanItem,
 } from '@/api/portfolio'
 import { parseHoldingsText, fmtMoney, fmtPct, tierLabel, padCode } from '@/utils/portfolioFormat'
@@ -507,7 +426,6 @@ async function onManualAdd() {
 async function loadHoldings() {
   try {
     holdings.value = await listHoldings()
-    heldResearchList.value = holdings.value
   } catch (e) { console.warn('[holdings] load failed', e) }
 }
 async function onHoldChange(h: Holding) {
@@ -642,46 +560,6 @@ async function onRunAnalyze() {
 function onConfirmPrice(code: string) {
   if (!priceConfirmedCodes.value.includes(code)) priceConfirmedCodes.value.push(code)
   onRunAnalyze()
-}
-
-// ── ⑤ AI 研报解读（双 tab） ──
-const researchTab = ref<'refine' | 'held'>('refine')
-const researchCode = ref('')
-const researchName = ref('')
-const researchQuery = ref('')
-const researchLoading = ref(false)
-const researchData = ref<ResearchReport | null>(null)
-// Tab2：已持仓标的研报（逐标的点击生成）
-const heldResearchList = ref<Holding[]>([])
-const researchHeldLoading = ref<string>('')         // 正在生成的 stock_code
-const heldResearchData = ref<ResearchReport[]>([])
-function hasHeldReport(code: string) {
-  return heldResearchData.value.some((r) => r.stock_code === code)
-}
-async function onResearchHeld(code: string) {
-  const h = heldResearchList.value.find((x) => x.stock_code === code)
-  if (!h) return
-  researchHeldLoading.value = code
-  try {
-    const r = await researchReport({ stock_code: code, stock_name: h.short_name || '', query: '已持仓标的综合研判（十二研究模块）' })
-    // 同标的重复生成则替换，否则追加
-    const arr = heldResearchData.value.filter((x) => x.stock_code !== code)
-    arr.push(r)
-    heldResearchData.value = arr
-    uni.showToast({ title: '研报已生成', icon: 'success' })
-  } catch (e: any) { uni.showToast({ title: e?.message || '生成失败', icon: 'none' }) }
-  finally { researchHeldLoading.value = '' }
-}
-async function onResearch() {
-  const code = (researchCode.value || '').trim()
-  const name = (researchName.value || '').trim()
-  if (!code && !name) { uni.showToast({ title: '请输入代码或名称', icon: 'none' }); return }
-  researchLoading.value = true
-  try {
-    const r = await researchReport({ stock_code: code, stock_name: name, query: researchQuery.value.trim() })
-    researchData.value = r
-  } catch (e: any) { uni.showToast({ title: e?.message || '生成失败', icon: 'none' }) }
-  finally { researchLoading.value = false }
 }
 
 // ── ⑦ 持仓方案跟踪 ──

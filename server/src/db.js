@@ -135,6 +135,37 @@ CREATE TABLE IF NOT EXISTS portfolio_plans (
   updated_at   INTEGER NOT NULL,
   PRIMARY KEY (stock_code)
 );
+
+-- 研报 AI 精读：外部整篇研报入库（外资/内资券商/行业研究等）
+CREATE TABLE IF NOT EXISTS research_reports (
+  id           TEXT PRIMARY KEY,
+  title        TEXT NOT NULL DEFAULT '',
+  broker       TEXT NOT NULL DEFAULT '',   -- 来源机构/券商
+  industry     TEXT NOT NULL DEFAULT '',   -- 行业/主题（可选）
+  source_url   TEXT NOT NULL DEFAULT '',   -- 原文链接（可选）
+  raw_text     TEXT NOT NULL DEFAULT '',   -- 用户粘贴/上传的整篇研报原文
+  tldr         TEXT NOT NULL DEFAULT '',   -- AI 一句话精读
+  key_points   TEXT NOT NULL DEFAULT '[]', -- JSON 数组：核心观点提炼
+  opportunities TEXT NOT NULL DEFAULT '[]',-- JSON 数组：发现的新机会
+  risks        TEXT NOT NULL DEFAULT '[]', -- JSON 数组：风险点
+  status       TEXT NOT NULL DEFAULT 'refined', -- pending / refined
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_created ON research_reports(created_at DESC);
+
+-- 已持仓标的 AI 研报分析：按十二研究模块生成的逐标的研报
+CREATE TABLE IF NOT EXISTS research_stock_reports (
+  stock_code   TEXT NOT NULL,
+  stock_name   TEXT NOT NULL DEFAULT '',
+  report_json  TEXT NOT NULL DEFAULT '{}',  -- ResearchReport 结构（12 模块）
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  PRIMARY KEY (stock_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_report_updated ON research_stock_reports(updated_at DESC);
 `;
 
 let initialized = false;
@@ -572,6 +603,83 @@ export async function removePlan(stock_code) {
     sql: `DELETE FROM portfolio_plans WHERE stock_code=?`,
     args: [String(stock_code).padStart(6, '0')],
   });
+}
+
+// =====================================================
+// 研报 AI 精读（外部整篇研报入库）
+// =====================================================
+
+export async function upsertResearchReport({ id, title, broker, industry, source_url, raw_text, tldr, key_points, opportunities, risks, status = 'refined' }) {
+  const now = Date.now();
+  await client.execute({
+    sql: `INSERT INTO research_reports(id,title,broker,industry,source_url,raw_text,tldr,key_points,opportunities,risks,status,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET
+            title=excluded.title, broker=excluded.broker, industry=excluded.industry,
+            source_url=excluded.source_url, raw_text=excluded.raw_text, tldr=excluded.tldr,
+            key_points=excluded.key_points, opportunities=excluded.opportunities, risks=excluded.risks,
+            status=excluded.status, updated_at=excluded.updated_at`,
+    args: [
+      String(id), String(title || '').slice(0, 200), String(broker || '').slice(0, 80),
+      String(industry || '').slice(0, 80), String(source_url || '').slice(0, 500),
+      String(raw_text || '').slice(0, 60000), String(tldr || '').slice(0, 2000),
+      JSON.stringify(key_points || []), JSON.stringify(opportunities || []), JSON.stringify(risks || []),
+      String(status), now, now,
+    ],
+  });
+}
+
+export async function listResearchReports() {
+  const r = await client.execute(`SELECT id,title,broker,industry,source_url,raw_text,tldr,key_points,opportunities,risks,status,created_at,updated_at FROM research_reports ORDER BY created_at DESC LIMIT 100`);
+  return r.rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    broker: row.broker,
+    industry: row.industry,
+    source_url: row.source_url,
+    raw_text: row.raw_text,
+    tldr: row.tldr,
+    key_points: safeJson(row.key_points),
+    opportunities: safeJson(row.opportunities),
+    risks: safeJson(row.risks),
+    status: row.status,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  }));
+}
+
+export async function deleteResearchReport(id) {
+  await client.execute({ sql: `DELETE FROM research_reports WHERE id=?`, args: [String(id)] });
+}
+
+// =====================================================
+// 已持仓标的 AI 研报（十二模块，逐标的持久化）
+// =====================================================
+
+export async function upsertStockReport({ stock_code, stock_name, report_json }) {
+  const now = Date.now();
+  await client.execute({
+    sql: `INSERT INTO research_stock_reports(stock_code,stock_name,report_json,created_at,updated_at)
+          VALUES(?,?,?,?,?)
+          ON CONFLICT(stock_code) DO UPDATE SET
+            stock_name=excluded.stock_name, report_json=excluded.report_json, updated_at=excluded.updated_at`,
+    args: [String(stock_code).padStart(6, '0'), String(stock_name || '').slice(0, 40), JSON.stringify(report_json || {}).slice(0, 20000), now, now],
+  });
+}
+
+export async function listStockReports() {
+  const r = await client.execute(`SELECT stock_code,stock_name,report_json,created_at,updated_at FROM research_stock_reports ORDER BY updated_at DESC`);
+  return r.rows.map((row) => ({
+    stock_code: row.stock_code,
+    stock_name: row.stock_name,
+    report: safeJson(row.report_json),
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  }));
+}
+
+export async function deleteStockReport(stock_code) {
+  await client.execute({ sql: `DELETE FROM research_stock_reports WHERE stock_code=?`, args: [String(stock_code).padStart(6, '0')] });
 }
 
 export { client as db };

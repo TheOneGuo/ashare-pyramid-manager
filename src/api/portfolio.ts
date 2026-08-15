@@ -243,6 +243,32 @@ export interface ResearchReport {
   disclaimer: string
 }
 
+// 研报 AI 精读：外部整篇研报入库后提炼的结构
+export interface RefinedReport {
+  ok: boolean
+  id: string
+  title: string
+  broker: string
+  industry: string
+  source_url: string
+  raw_text: string
+  tldr: string
+  key_points: string[]
+  opportunities: string[]
+  risks: string[]
+  status: string
+  created_at: number
+}
+
+// 已持仓标的 AI 研报（逐标的持久化）
+export interface StockReportItem {
+  stock_code: string
+  stock_name: string
+  report: ResearchReport
+  created_at: number
+  updated_at: number
+}
+
 // ---- 通用 fetch ----
 async function jget<T>(path: string, opts: { method?: string; body?: any; timeoutMs?: number } = {}): Promise<T> {
   const url = `${API_BASE}${path}`
@@ -322,13 +348,49 @@ export async function analyzePortfolio(body: {
   return jget('/api/portfolio/analyze', { method: 'POST', body, timeoutMs: 15000 })
 }
 
-// ---- AI 研报解读 ----
+// ---- AI 研报解读（已持仓标的，十二模块） ----
 export async function researchReport(body: {
   stock_code?: string
   stock_name?: string
   query?: string
 }): Promise<ResearchReport> {
   return jget('/api/portfolio/research', { method: 'POST', body, timeoutMs: 20000 })
+}
+
+// ---- 研报 AI 精读（外部整篇研报入库 + 提炼） ----
+export async function ingestReport(body: {
+  title?: string
+  broker?: string
+  industry?: string
+  source_url?: string
+  raw_text: string
+}): Promise<RefinedReport> {
+  return jget('/api/research/ingest', { method: 'POST', body, timeoutMs: 20000 })
+}
+
+export async function listReports(): Promise<{ ok: boolean; items: RefinedReport[] }> {
+  return jget('/api/research/reports')
+}
+
+export async function deleteReport(id: string): Promise<{ ok: boolean }> {
+  return jget(`/api/research/reports/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+// 已持仓标的研报持久化
+function parseReport(r: any): ResearchReport | null {
+  return r && r.report ? (r.report as ResearchReport) : null
+}
+export async function saveStockReport(stock_code: string, stock_name: string, report: ResearchReport): Promise<{ ok: boolean }> {
+  return jget('/api/research/stock-report', { method: 'POST', body: { stock_code, stock_name, report }, timeoutMs: 15000 })
+}
+
+export async function listStockReports(): Promise<{ ok: boolean; items: StockReportItem[] }> {
+  const r: any = await jget('/api/research/stock-reports')
+  return { ok: !!r.ok, items: (r.items || []).map((it: any) => ({ ...it, report: parseReport(it) })) }
+}
+
+export async function deleteStockReport(code: string): Promise<{ ok: boolean }> {
+  return jget(`/api/research/stock-reports/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
 
 // ---- 账户与保证金账本 ----

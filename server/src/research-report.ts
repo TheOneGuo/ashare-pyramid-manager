@@ -1,4 +1,4 @@
-// research-report.ts · AI 研报解读（结构化 mock 版）
+﻿// research-report.ts · AI 研报解读（结构化 mock 版）
 // 对应原项目 ai-research-panel 的「十二个研究模块」展示。
 //
 // 当前为「展示壳 + 结构化 mock」：无需 API key 即可演示完整研报 UI。
@@ -200,6 +200,92 @@ export function buildMockReport(input: {
     rating,
     modules,
     disclaimer: DISCLAIMER,
+  }
+}
+
+// ─── 研报 AI 精读：整篇外部研报入库 + 提炼 ───
+// 输入一段完整研报原文（外资/内资券商/行业研究等），输出结构化精读。
+// 当前为结构化 mock：按原文长度/关键词做轻量提炼；接真 LLM 时替换 extractFromText。
+
+export interface RefinedReport {
+  ok: true
+  id: string
+  title: string
+  broker: string
+  industry: string
+  source_url: string
+  raw_text: string
+  tldr: string
+  key_points: string[]
+  opportunities: string[]
+  risks: string[]
+  status: string
+  created_at: number
+}
+
+function hashId(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0
+  return 'r' + h.toString(36) + Date.now().toString(36)
+}
+
+// 关键词命中（演示用）+ 句级切分
+function splitSentences(text: string): string[] {
+  return text
+    .replace(/\r/g, '')
+    .split(/[。！？\.\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 6)
+}
+
+const OPPORTUNITY_HINTS = ['空间', '增长', '扩容', '国产替代', '渗透率', '提价', '订单', '中标', '扩产', '新品', '催化', '拐点', '受益', '份额']
+const RISK_HINTS = ['风险', '下滑', '降价', '承压', '不及预期', '波动', '竞争', '监管', '贸易', '汇率', '减值', '延期']
+
+function pickByHints(sentences: string[], hints: string[], max = 6): string[] {
+  const hit = sentences.filter((s) => hints.some((h) => s.includes(h)))
+  const out = hit.slice(0, max)
+  // 不足则用首尾句补足
+  if (out.length < 3 && sentences.length) {
+    for (const s of [sentences[0], sentences[sentences.length - 1]]) {
+      if (s && !out.includes(s)) out.push(s)
+      if (out.length >= 3) break
+    }
+  }
+  return out
+}
+
+export function refineExternalReport(input: {
+  title?: string
+  broker?: string
+  industry?: string
+  source_url?: string
+  raw_text: string
+}): RefinedReport {
+  const raw = (input.raw_text || '').trim()
+  const sentences = splitSentences(raw)
+  const prefix = input.broker ? '由' + input.broker + '提供' : '为外部研报'
+  const theme = input.industry ? '，主题：' + input.industry : ''
+  const firstSentence = sentences[0] || '（原文较短，未提取到可总结句）'
+  const tldr = '本报告' + prefix + theme + '，全文约 ' + raw.length + ' 字。核心结论：' + firstSentence
+const key_points = pickByHints(sentences, ['认为', '预计', '预计', '建议', '看好', '核心', '重点', '指出', '目标'], 6)
+  const opportunities = pickByHints(sentences, OPPORTUNITY_HINTS, 6)
+  const risks = pickByHints(sentences, RISK_HINTS, 6)
+  const id = hashId(raw.slice(0, 200) + (input.title || ''))
+  const now = Date.now()
+  return {
+    ok: true,
+    id,
+    title: (input.title || '').trim() || '未命名研报',
+    broker: (input.broker || '').trim(),
+    industry: (input.industry || '').trim(),
+    source_url: (input.source_url || '').trim(),
+    raw_text: raw,
+    tldr,
+    key_points,
+    opportunities,
+    risks,
+    status: 'refined',
+    created_at: now,
   }
 }
 

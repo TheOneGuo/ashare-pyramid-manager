@@ -25,9 +25,11 @@ import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSo
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
 import { handleExtract } from './portfolio-extract.js';
-import { handleResearch } from './research-report.js';
+import { handleResearch, refineExternalReport } from './research-report.js';
 import { buildAccount, previewChange, checkWithdraw, TERMS, EVENT_DEPOSIT, EVENT_WITHDRAW, EVENT_FEE_RATE } from './account-ledger.js';
-import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans, removePlan } from './db.js';
+import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans, removePlan,
+  upsertResearchReport, listResearchReports, deleteResearchReport,
+  upsertStockReport, listStockReports, deleteStockReport } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 9999);
@@ -291,6 +293,69 @@ app.post('/api/portfolio/research', async (req, res) => {
   try {
     const result = await handleResearch(req.body || {});
     res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// =====================================================
+// 研报 AI 精读（外部整篇研报入库 + 提炼）
+// =====================================================
+app.post('/api/research/ingest', async (req, res) => {
+  try {
+    const { title, broker, industry, source_url, raw_text } = req.body || {};
+    if (!raw_text || !String(raw_text).trim()) {
+      return res.status(400).json({ ok: false, error: '请提供研报原文（粘贴或上传）' });
+    }
+    const refined = refineExternalReport({ title, broker, industry, source_url, raw_text });
+    await upsertResearchReport(refined);
+    res.json(refined);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/research/reports', async (_req, res) => {
+  try {
+    res.json({ ok: true, items: await listResearchReports() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/research/reports/:id', async (req, res) => {
+  try {
+    await deleteResearchReport(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 已持仓标的 AI 研报（十二模块）：持久化 / 列表 / 删除
+app.post('/api/research/stock-report', async (req, res) => {
+  try {
+    const { stock_code, stock_name, report } = req.body || {};
+    if (!stock_code) return res.status(400).json({ ok: false, error: '缺少 stock_code' });
+    await upsertStockReport({ stock_code, stock_name, report_json: report });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.get('/api/research/stock-reports', async (_req, res) => {
+  try {
+    res.json({ ok: true, items: await listStockReports() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/research/stock-reports/:code', async (req, res) => {
+  try {
+    await deleteStockReport(req.params.code);
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
