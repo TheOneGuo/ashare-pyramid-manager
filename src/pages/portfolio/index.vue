@@ -47,7 +47,7 @@
             <view class="pf-ledger-cell"><text class="pf-ledger-k">可开标的上限</text><text class="pf-ledger-v">{{ ledgerSnapshot.max_hold }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">已分配资金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.allocated) }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">可分配额度</text><text class="pf-ledger-v pf-ledger-v--cyan">{{ fmtMoney(ledgerSnapshot.available) }}</text></view>
-            <view class="pf-ledger-cell"><text class="pf-ledger-k">收费费率</text><text class="pf-ledger-v">{{ ledgerSnapshot.fee_rate_wan }} 万分之</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">手续费率</text><text class="pf-ledger-v">万分之 {{ ledgerSnapshot.fee_rate_wan }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">累计实现盈亏</text><text class="pf-ledger-v" :class="ledgerSnapshot.realized_pnl >= 0 ? 'pf-up' : 'pf-down'">{{ fmtMoney(ledgerSnapshot.realized_pnl) }}</text></view>
           </view>
 
@@ -59,7 +59,7 @@
             <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerDeposit"><text>加保证金</text></view>
             <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerWithdraw"><text>提保证金</text></view>
             <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerFee"><text>改手续费率</text></view>
-            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerReset"><text>重置账户</text></view>
+            <view class="pf-btn pf-btn--secondary pf-btn--xs" hover-class="pf-btn--hover" @tap="onLedgerReset"><text>重置</text></view>
           </view>
           <view v-if="ledgerMsg" class="pf-note" :class="ledgerMsgOk ? 'pf-note--ok' : 'pf-note--warn'">{{ ledgerMsg }}</view>
 
@@ -497,7 +497,7 @@ function onFeeInput(e: any) {
 const totalCapital = ref<number | null>(null)
 const feeWan = ref<number | null>(null)
 const feeWarning = computed(() => {
-  const f = feeWan.value
+  const f = feeWan.value ?? ledgerSnapshot.value.fee_rate_wan
   if (!f || f <= 0) return '请输入佣金费率'
   if (f < 0.1 || f > 10) return '费率需在万分之 0.1 ~ 10 之间'
   if (f < 0.5) return '您输入的费率偏低（万分之 0.5 以下），请核对'
@@ -505,7 +505,7 @@ const feeWarning = computed(() => {
   return ''
 })
 const feeWarningClass = computed(() => {
-  const f = feeWan.value
+  const f = feeWan.value ?? ledgerSnapshot.value.fee_rate_wan
   if (!f || f <= 0 || f < 0.1 || f > 10) return 'pf-fee-warn--hard'
   if (f < 0.5 || f > 3) return 'pf-fee-warn--warn'
   return ''
@@ -534,7 +534,7 @@ async function onRunAnalyze() {
   try {
     const r = await analyzePortfolio({
       total_capital: totalCapital.value ?? 0,
-      fee_wan: feeWan.value ?? 0,
+      fee_wan: feeWan.value ?? ledgerSnapshot.value.fee_rate_wan ?? 0,
       stocks,
       existing,
       fee_confirmed: true,
@@ -846,7 +846,8 @@ $radius-lg: 20rpx;
 .pf-up { color: $rf-green !important; }
 .pf-down { color: $rf-red !important; }
 .pf-ledger-meta { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; line-height: 1.5; }
-.pf-ledger-actions { display: flex; gap: 10rpx; flex-wrap: wrap; margin-top: 12rpx; }
+.pf-ledger-actions { display: flex; gap: 10rpx; flex-wrap: nowrap; margin-top: 12rpx; }
+.pf-ledger-actions .pf-btn { flex: 1; min-width: 0; }
 
 /* ② 手动输入行 */
 .pf-manual-row { display: flex; gap: 8rpx; align-items: center; margin-top: 12rpx; flex-wrap: wrap; }
