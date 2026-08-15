@@ -287,6 +287,19 @@ onMounted(() => { loadReports(); loadHoldings(); loadStockReports() })
 </script>
 
 <style lang="scss" scoped>
+// ---- design tokens (matching portfolio page palette) ----
+$rf-amber: #ffb86b;
+$rf-orange: #ff7a3d;
+$color-bg: #0d1b2a;
+$app-bg: #0d1b2a;
+$app-card-bg: linear-gradient(180deg, rgba(255, 184, 107, 0.055), rgba(114, 247, 255, 0.025));
+$app-border: rgba(255, 184, 107, 0.24);
+$app-text: #f5ecd9;
+$app-text-muted: #a89a82;
+$radius-md: 14rpx;
+$radius-lg: 20rpx;
+$spacing-base: 24rpx;
+
 .rs-page {
   min-height: 100vh;
   background: $app-bg;
