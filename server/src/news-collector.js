@@ -121,6 +121,7 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
           guid: `${channelMeta.channel}:mock:${now}:${i}`,
           title: it.title,
           summary: it.summary,
+          content: it.summary,
           link: it.link,
           published_at: it.published_at,
           raw: { mock: true },

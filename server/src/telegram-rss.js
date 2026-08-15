@@ -91,9 +91,10 @@ function parseRssText(xmlText, sourceChannel, sourceName) {
       guid: guid || link || crypto.createHash('sha1').update(`${sourceChannel}|${title}|${summary}`).digest('hex'),
       title: title || '(无标题)',
       summary: summary || '',
+      content: summary || '',
       link: link || '',
       published_at,
-      raw: { title, summary, link, published_at, fetch_mode: 'rss' },
+      raw: { title, summary, content: summary, link, published_at, fetch_mode: 'rss' },
     };
   });
 }
@@ -121,9 +122,10 @@ function parseAtomText(xmlText, sourceChannel, sourceName) {
       guid: guid || link || crypto.createHash('sha1').update(`${sourceChannel}|${title}|${summary}`).digest('hex'),
       title: title || '(无标题)',
       summary: summary || '',
+      content: summary || '',
       link: link || '',
       published_at,
-      raw: { title, summary, link, published_at, fetch_mode: 'rss' },
+      raw: { title, summary, content: summary, link, published_at, fetch_mode: 'rss' },
     };
   });
 }
@@ -160,17 +162,18 @@ function parseTelegramPage(html, sourceChannel) {
     const lm = linkRe.exec(body);
     let link = lm ? lm[1] : `https://t.me/${post}`;
     if (link.startsWith('/')) link = 'https://t.me' + link;
-    // 标题 = 第一行；摘要 = 之后
+    // 标题 = 首行（列表展示用）；content = 整帖全文（不砍行）；summary = 整帖（放宽上限）
     const lines = raw_text.split('\n').map((s) => s.trim()).filter(Boolean);
     const title = lines[0] || raw_text.slice(0, 80);
-    const summary = lines.slice(1).join('\n').slice(0, 900);
+    const full = raw_text;
     out.push({
       guid: post,
       title: title.slice(0, 120),
-      summary,
+      summary: full.slice(0, 4000),
+      content: full,
       link,
       published_at,
-      raw: { title, summary, link, published_at, fetch_mode: 'telegram_page', post },
+      raw: { title, summary: full, content: full, link, published_at, fetch_mode: 'telegram_page', post },
     });
     seen.add(post);
   }

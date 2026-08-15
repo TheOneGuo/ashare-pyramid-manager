@@ -77,6 +77,7 @@ interface RawNews {
   id: string
   title: string
   summary?: string
+  content?: string
   source_channel?: string
   source_name?: string
   link?: string
@@ -182,7 +183,7 @@ function mapItem(raw: RawNews): NewsItem {
   const base: NewsItem = {
     id: raw.id,
     title: raw.title || '(无标题)',
-    summary: raw.summary || '',
+    summary: raw.content || raw.summary || '',
     sourceChannel: raw.source_channel || 'unknown',
     sourceName: raw.source_name || raw.source_channel || '来源',
     publishedAt: raw.published_at || Date.now(),

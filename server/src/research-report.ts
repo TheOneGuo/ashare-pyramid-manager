@@ -1,4 +1,4 @@
-﻿// research-report.ts · AI 研报解读（结构化 mock 版）
+// research-report.ts · AI 研报解读（结构化 mock 版）
 // 对应原项目 ai-research-panel 的「十二个研究模块」展示。
 //
 // 当前为「展示壳 + 结构化 mock」：无需 API key 即可演示完整研报 UI。

@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS news_items (
   source_name     TEXT NOT NULL DEFAULT '',
   title           TEXT NOT NULL,
   summary         TEXT NOT NULL DEFAULT '',
+  content         TEXT NOT NULL DEFAULT '',
   link            TEXT NOT NULL DEFAULT '',
   published_at    INTEGER NOT NULL,
   fetched_at      INTEGER NOT NULL,
@@ -187,6 +188,7 @@ export async function initDb() {
   }
   initialized = true;
   await migrateHoldingsColumns();
+  await migrateNewsContent();
   console.log('[db] schema initialized (holdings migrated)');
 }
 
@@ -213,10 +215,10 @@ export async function upsertNewsItems({ source_channel, source_name, feed_url, i
       const id = String(it.guid || `${source_channel}|${it.link || ''}|${it.title}`);
       if (!it.title) continue;
       await client.execute({
-        sql: `INSERT INTO news_items(id,source_channel,source_name,title,summary,link,published_at,fetched_at,raw_json)
-              VALUES(?,?,?,?,?,?,?,?,?)
+        sql: `INSERT INTO news_items(id,source_channel,source_name,title,summary,content,link,published_at,fetched_at,raw_json)
+              VALUES(?,?,?,?,?,?,?,?,?,?)
               ON CONFLICT(id) DO UPDATE SET
-                title=excluded.title, summary=excluded.summary,
+                title=excluded.title, summary=excluded.summary, content=excluded.content,
                 link=excluded.link, published_at=excluded.published_at,
                 fetched_at=excluded.fetched_at, raw_json=excluded.raw_json`,
         args: [
@@ -224,7 +226,8 @@ export async function upsertNewsItems({ source_channel, source_name, feed_url, i
           String(source_channel || '').slice(0, 80),
           String(source_name || '').slice(0, 80),
           String(it.title || '').slice(0, 500),
-          String(it.summary || '').slice(0, 1000),
+          String(it.content || it.summary || '').slice(0, 4000),
+          String(it.content || '').slice(0, 16000),
           String(it.link || '').slice(0, 500),
           Number(it.published_at) || Number(now_ts),
           Number(now_ts) || Date.now(),
@@ -288,7 +291,7 @@ export async function recordSourceError({ source_channel, source_name, feed_url,
 
 /** 读取最新 N 条新闻（可按 source_channel 过滤） */
 export async function fetchNews({ limit = 30, since = 0, source_channel = null, holding_codes = null } = {}) {
-  let sql = `SELECT id,source_channel,source_name,title,summary,link,published_at,fetched_at,raw_json
+  let sql = `SELECT id,source_channel,source_name,title,summary,content,link,published_at,fetched_at,raw_json
              FROM news_items WHERE published_at >= ?`;
   const args = [since];
 
@@ -316,6 +319,7 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
     source_name: row.source_name,
     title: row.title,
     summary: row.summary,
+    content: row.content || '',
     link: row.link,
     published_at: Number(row.published_at),
     fetched_at: Number(row.fetched_at),
@@ -415,6 +419,20 @@ export async function migrateHoldingsColumns() {
       // 列已存在则忽略
     }
   }
+}
+
+// 旧库迁移：news_items 增加 content 整帖字段
+export async function migrateNewsContent() {
+  try {
+    await client.execute({ sql: `ALTER TABLE news_items ADD COLUMN content TEXT NOT NULL DEFAULT ''` });
+    console.log('[db] migrated news_items +content');
+  } catch (e) {
+    // 列已存在则忽略
+  }
+  // 回填：旧行的 content 为空时，用已有 summary 兜底（新抓取会用整帖覆盖）
+  try {
+    await client.execute({ sql: `UPDATE news_items SET content = summary WHERE content = ''` });
+  } catch (e) { /* ignore */ }
 }
 
 export async function removeHolding(stock_code) {
