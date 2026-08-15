@@ -14,7 +14,7 @@
         <text>研报 AI 精读提炼</text>
       </view>
       <view class="rs-tab" :class="{ 'rs-tab--active': tab === 'held' }" @tap="tab = 'held'">
-        <text>已持仓标的 AI 研报分析</text>
+        <text>持仓标的 AI 研报分析</text>
       </view>
     </view>
     </view>
@@ -103,10 +103,10 @@
       </view>
     </view>
 
-    <!-- Tab 2：已持仓标的 AI 研报分析 -->
+    <!-- Tab 2：持仓标的 AI 研报分析 -->
     <view v-else class="rs-pane">
       <view class="rs-card">
-        <text class="rs-section-title">📊 已持仓标的 AI 研报分析</text>
+        <text class="rs-section-title">📊 持仓标的 AI 研报分析</text>
         <text class="rs-note rs-note--muted">对当前持仓列表中的标的，逐一点击「生成 AI 研报」即可按十二个研究模块生成完整研报，生成后可按章节阅读（当前为演示模式，后续接入真实 LLM）。</text>
 
         <view v-if="holdings.length === 0" class="rs-empty"><text>暂无持仓。请先到「持仓」页面导入或手动输入持仓。</text></view>

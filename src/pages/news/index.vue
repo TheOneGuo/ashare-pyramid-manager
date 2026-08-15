@@ -347,11 +347,11 @@ $radius-full: 999px;
   color: $color-text-secondary;
   background: $color-card-bg;
   border: 1rpx solid $color-border;
-  border-radius: $radius-md;
+  border-radius: 14rpx;
 
   &.active {
     color: $color-bg;
-    background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%);
+    background: linear-gradient(135deg, $rf-amber 0%, #ff7a3d 100%);
     border-color: transparent;
     font-weight: 600;
   }
