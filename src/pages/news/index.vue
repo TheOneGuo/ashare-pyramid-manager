@@ -35,7 +35,7 @@
     </view>
 
     <TabBarComp v-if="isH5" />
-    <view v-else class="news-list">
+    <view class="news-list">
       <view
         v-for="item in visibleItems"
         :key="item.id"

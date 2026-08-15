@@ -8,6 +8,7 @@
       :class="{ 'is-active': current === i }"
       @tap="onTap(i)"
     >
+      <view class="tabbar__glow" />
       <view class="tabbar__indicator" />
       <view class="tabbar__icon" v-html="item.icon" />
       <text class="tabbar__label">{{ item.text }}</text>
@@ -77,14 +78,19 @@ onShow(sync)
   box-shadow: 0 -10rpx 34rpx rgba(0, 0, 0, 0.45);
 }
 
-/* 顶部一抹金线，呼应品牌色 */
+/* 底部 tab 上沿泛出的金色光芒（取代细金线） */
 .tabbar__hairline {
   position: absolute;
-  top: 0;
+  top: -2rpx;
   left: 0;
   right: 0;
-  height: 2rpx;
-  background: linear-gradient(90deg, transparent 0%, rgba(244, 197, 66, 0.55) 50%, transparent 100%);
+  height: 30rpx;
+  background: linear-gradient(180deg,
+    rgba(244, 197, 66, 0.55) 0%,
+    rgba(244, 197, 66, 0.20) 40%,
+    rgba(244, 197, 66, 0.0) 100%);
+  filter: blur(6rpx);
+  pointer-events: none;
 }
 
 .tabbar__item {
@@ -100,15 +106,15 @@ onShow(sync)
 }
 
 .tabbar__icon {
-  width: 46rpx;
-  height: 46rpx;
-  line-height: 46rpx;
+  width: 38rpx;
+  height: 38rpx;
+  line-height: 38rpx;
   opacity: 0.72;
   transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
 .tabbar__label {
-  font-size: 28rpx;        /* 比原生大两号 */
+  font-size: 24rpx;
   font-weight: 600;
   letter-spacing: 2rpx;
   transition: color 0.18s ease;
@@ -130,9 +136,27 @@ onShow(sync)
   -webkit-text-fill-color: transparent;
 }
 
+.tabbar__glow {
+  position: absolute;
+  top: -12rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 120rpx;
+  height: 24rpx;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(244, 197, 66, 0.5) 0%, rgba(244, 197, 66, 0.0) 70%);
+  opacity: 0;
+  transition: opacity 0.22s ease;
+  pointer-events: none;
+}
+
+.tabbar__item.is-active .tabbar__glow {
+  opacity: 1;
+}
+
 .tabbar__indicator {
   position: absolute;
-  top: 8rpx;
+  top: 10rpx;
   width: 40rpx;
   height: 4rpx;
   border-radius: 4rpx;
