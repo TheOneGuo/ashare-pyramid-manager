@@ -75,14 +75,17 @@
     <view class="pf-card pf-import">
       <text class="pf-section-title">📥 已有持仓</text>
       <view class="pf-import-actions pf-import-actions--3">
-        <view class="pf-btn pf-btn--primary pf-btn--flex" hover-class="pf-btn--hover" @tap="onCamera">
-          <text>📷 拍照</text>
+        <view class="pf-btn pf-btn--primary pf-btn--flex pf-btn--icontext" hover-class="pf-btn--hover" @tap="onCamera">
+          <text class="pf-btn__icon">📷</text>
+          <view class="pf-btn__text"><text>拍照</text></view>
         </view>
-        <view class="pf-btn pf-btn--primary pf-btn--flex" hover-class="pf-btn--hover" @tap="onPickFile">
-          <text>📁 导入文件到持仓</text>
+        <view class="pf-btn pf-btn--primary pf-btn--flex pf-btn--icontext" hover-class="pf-btn--hover" @tap="onPickFile">
+          <text class="pf-btn__icon">📁</text>
+          <view class="pf-btn__text"><text>导入</text><text>持仓</text></view>
         </view>
-        <view class="pf-btn pf-btn--primary pf-btn--flex" hover-class="pf-btn--hover" @tap="manualOpen = !manualOpen">
-          <text>✏️ 手动输入</text>
+        <view class="pf-btn pf-btn--primary pf-btn--flex pf-btn--icontext" hover-class="pf-btn--hover" @tap="manualOpen = !manualOpen">
+          <text class="pf-btn__icon">✏️</text>
+          <view class="pf-btn__text"><text>手动</text><text>输入</text></view>
         </view>
       </view>
       <!-- 隐藏的文件选择（截图/CSV/PDF 通用） -->
@@ -866,6 +869,10 @@ $radius-lg: 20rpx;
 .pf-import-actions { display: flex; gap: 12rpx; margin-bottom: 12rpx; }
 .pf-import-actions .pf-btn { flex: 1; }
 .pf-import-actions--3 .pf-btn--flex { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-btn--icontext { display: flex; flex-direction: row; align-items: center; justify-content: center; gap: 8rpx; padding: 16rpx 8rpx; line-height: 1; }
+.pf-btn__icon { font-size: 30rpx; line-height: 1; flex: 0 0 auto; display: flex; align-items: center; height: 100%; }
+.pf-btn__text { display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.05; font-size: 23rpx; font-weight: 600; }
+.pf-btn__text > text { display: block; }
 .pf-textarea { width: 100%; padding: 16rpx; font-size: 24rpx; background: rgba(12, 10, 12, 0.7); color: $color-text-primary; border: 1rpx solid rgba(255, 184, 107, 0.2); border-radius: 12rpx; margin-bottom: 12rpx; min-height: 100rpx; box-sizing: border-box; }
 .pf-note { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; line-height: 1.5; }
 .pf-note--warn { color: $rf-amber; }
