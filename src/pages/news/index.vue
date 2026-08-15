@@ -45,8 +45,7 @@
         v-for="item in visibleItems"
         :key="item.id"
         class="news-item"
-        :class="{ 'is-matched': item.matchedHoldings.length > 0 }"
-        @tap="onTapItem(item)"
+        :class="{ 'is-matched': item.matchedHoldings.length > 0, 'is-expanded': expandedIds.has(item.id) }"
       >
         <view class="news-item-head">
           <text class="news-item-source">{{ item.sourceName || item.sourceChannel }}</text>
@@ -56,8 +55,16 @@
           <text class="news-item-tag">持仓 {{ item.matchedHoldings.join(' · ') }}</text>
         </view>
         <text class="news-item-title">{{ item.title }}</text>
-        <text v-if="item.summary" class="news-item-summary">{{ item.summary }}</text>
-        <text v-if="item.url" class="news-item-link">查看原文 ›</text>
+        <text v-if="item.summary && !expandedIds.has(item.id)" class="news-item-summary">{{ item.summary }}</text>
+        <view class="news-item-actions">
+          <text v-if="item.url" class="news-item-link" @tap.stop="toggleExpand(item)">{{ expandedIds.has(item.id) ? '收起原文 ∧' : '查看原文 ›' }}</text>
+          <text v-if="item.url" class="news-item-open" @tap.stop="openOriginal(item)">打开链接 ↗</text>
+        </view>
+        <view v-if="expandedIds.has(item.id)" class="news-item-original">
+          <text class="news-item-original-label">原文</text>
+          <text class="news-item-original-text">{{ item.title }}</text>
+          <text v-if="item.summary" class="news-item-original-text">{{ item.summary }}</text>
+        </view>
       </view>
     </view>
     </view>
@@ -195,7 +202,14 @@ function mapItem(raw: RawNews): NewsItem {
   return base
 }
 
-function onTapItem(item: NewsItem) {
+const expandedIds = ref<Set<string>>(new Set())
+function toggleExpand(item: NewsItem) {
+  const next = new Set(expandedIds.value)
+  if (next.has(item.id)) next.delete(item.id)
+  else next.add(item.id)
+  expandedIds.value = next
+}
+function openOriginal(item: NewsItem) {
   if (!item.url) return
   // #ifdef H5
   window.open(item.url, '_blank', 'noopener')
@@ -449,5 +463,37 @@ $radius-full: 999px;
   margin-top: 14rpx;
   font-size: 22rpx;
   color: $rf-cyan;
+}
+.news-item-actions {
+  display: flex;
+  gap: 24rpx;
+  align-items: center;
+  margin-top: 14rpx;
+}
+.news-item-open {
+  font-size: 22rpx;
+  color: $rf-amber;
+}
+.news-item-original {
+  margin-top: 16rpx;
+  padding: 18rpx 20rpx;
+  background: rgba(12, 10, 12, 0.5);
+  border-radius: $radius-md;
+  border-left: 4rpx solid $rf-cyan;
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+.news-item-original-label {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: $rf-cyan;
+}
+.news-item-original-text {
+  font-size: 26rpx;
+  line-height: 1.7;
+  color: $color-text-primary;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>

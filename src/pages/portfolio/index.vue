@@ -847,7 +847,7 @@ $radius-lg: 20rpx;
 .pf-down { color: $rf-red !important; }
 .pf-ledger-meta { margin-top: 12rpx; font-size: 22rpx; color: $color-text-secondary; line-height: 1.5; }
 .pf-ledger-actions { display: flex; gap: 10rpx; flex-wrap: nowrap; margin-top: 12rpx; }
-.pf-ledger-actions .pf-btn { flex: 1; min-width: 0; }
+.pf-ledger-actions .pf-btn { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ② 手动输入行 */
 .pf-manual-row { display: flex; gap: 8rpx; align-items: center; margin-top: 12rpx; flex-wrap: wrap; }
