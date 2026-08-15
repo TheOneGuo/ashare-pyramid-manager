@@ -1,5 +1,5 @@
 <template>
-  <view class="rs-page">
+  <view class="rs-page" :class="{ 'h5-mode': isH5 }">
     <TabBarComp v-if="isH5" />
     <view class="rs-header">
       <text class="rs-title">AI 研报</text>
@@ -310,6 +310,26 @@ $spacing-base: 24rpx;
   padding: $spacing-base;
   padding-bottom: 120rpx;
 }
+
+/* H5：页面作为滚动容器，底部止于 tab 上沿 */
+.rs-page.h5-mode {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: calc(110rpx + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-bottom: $spacing-base;
+}
+.rs-page.h5-mode::-webkit-scrollbar { width: 5rpx; }
+.rs-page.h5-mode::-webkit-scrollbar-track { background: transparent; }
+.rs-page.h5-mode::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #fff4c0 0%, #f4c542 50%, #d89c1c 100%);
+  border-radius: 6rpx;
+}
+.rs-page.h5-mode { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
 .rs-header { padding: $spacing-base 0; margin-bottom: 8rpx; }
 .rs-title { display: block; font-size: 44rpx; font-weight: 600; color: $app-text; }
 .rs-meta { display: block; font-size: 24rpx; color: $app-text-muted; margin-top: 8rpx; }

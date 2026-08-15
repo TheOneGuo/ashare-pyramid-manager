@@ -1,5 +1,5 @@
 <template>
-  <view class="pf-page" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd">
+  <view class="pf-page" :class="{ 'h5-mode': isH5 }" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd">
     <TabBarComp v-if="isH5" />
     <!-- Head + 下拉提示 -->
     <view class="pf-head">
@@ -756,6 +756,26 @@ $color-text-warm: #d3c3ad;
 $radius-lg: 20rpx;
 
 .pf-page { min-height: 100vh; background: $color-bg; padding: 24rpx 24rpx 150rpx; overscroll-behavior-y: contain; }
+
+/* H5：页面作为滚动容器，底部止于 tab 上沿 */
+.pf-page.h5-mode {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: calc(110rpx + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding-bottom: 24rpx;
+}
+.pf-page.h5-mode::-webkit-scrollbar { width: 5rpx; }
+.pf-page.h5-mode::-webkit-scrollbar-track { background: transparent; }
+.pf-page.h5-mode::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #fff4c0 0%, #f4c542 50%, #d89c1c 100%);
+  border-radius: 6rpx;
+}
+.pf-page.h5-mode { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
 .pf-head { padding: 16rpx 0 8rpx; margin-bottom: 12rpx; }
 .pf-title { display: block; font-size: 44rpx; font-weight: 700; color: $color-text-primary; letter-spacing: 1rpx; }
 .pf-hint { display: block; margin-top: 8rpx; font-size: 22rpx; color: $color-text-secondary; letter-spacing: 1rpx; }

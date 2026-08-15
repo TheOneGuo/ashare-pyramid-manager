@@ -8,7 +8,6 @@
       :class="{ 'is-active': current === i }"
       @tap="onTap(i)"
     >
-      <view class="tabbar__glow" />
       <view class="tabbar__indicator" />
       <view class="tabbar__icon" v-html="item.icon" />
       <text class="tabbar__label">{{ item.text }}</text>
@@ -78,19 +77,14 @@ onShow(sync)
   box-shadow: 0 -10rpx 34rpx rgba(0, 0, 0, 0.45);
 }
 
-/* 底部 tab 上沿泛出的金色光芒（取代细金线） */
+/* 上沿细金线，呼应品牌色 */
 .tabbar__hairline {
   position: absolute;
-  top: -2rpx;
+  top: 0;
   left: 0;
   right: 0;
-  height: 30rpx;
-  background: linear-gradient(180deg,
-    rgba(244, 197, 66, 0.55) 0%,
-    rgba(244, 197, 66, 0.20) 40%,
-    rgba(244, 197, 66, 0.0) 100%);
-  filter: blur(6rpx);
-  pointer-events: none;
+  height: 2rpx;
+  background: linear-gradient(90deg, transparent 0%, rgba(244, 197, 66, 0.7) 50%, transparent 100%);
 }
 
 .tabbar__item {
@@ -134,24 +128,6 @@ onShow(sync)
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-}
-
-.tabbar__glow {
-  position: absolute;
-  top: -12rpx;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 120rpx;
-  height: 24rpx;
-  border-radius: 50%;
-  background: radial-gradient(ellipse at center, rgba(244, 197, 66, 0.5) 0%, rgba(244, 197, 66, 0.0) 70%);
-  opacity: 0;
-  transition: opacity 0.22s ease;
-  pointer-events: none;
-}
-
-.tabbar__item.is-active .tabbar__glow {
-  opacity: 1;
 }
 
 .tabbar__indicator {
