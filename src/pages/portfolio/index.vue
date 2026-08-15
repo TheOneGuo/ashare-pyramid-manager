@@ -1,5 +1,6 @@
 <template>
   <view class="pf-page" @touchstart="onTouchStart" @touchmove="onTouchMove" @touchend="onTouchEnd">
+    <TabBarComp v-if="isH5" />
     <!-- Head + 下拉提示 -->
     <view class="pf-head">
       <text class="pf-title">持仓分析</text>
@@ -260,6 +261,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
+// H5 端手动挂载自定义 tabBar（WeChat 端由 custom:true 自动挂载，此处按条件跳过）
+const isH5 = ref(typeof window !== 'undefined')
+import TabBarComp from '@/custom-tab-bar/index.vue'
 import {
   listHoldings, upsertHolding, deleteHolding,
   extractFromImages, analyzePortfolio,
@@ -751,7 +755,7 @@ $color-text-secondary: $rf-muted;
 $color-text-warm: #d3c3ad;
 $radius-lg: 20rpx;
 
-.pf-page { min-height: 100vh; background: $color-bg; padding: 24rpx 24rpx 48rpx; overscroll-behavior-y: contain; }
+.pf-page { min-height: 100vh; background: $color-bg; padding: 24rpx 24rpx 150rpx; overscroll-behavior-y: contain; }
 .pf-head { padding: 16rpx 0 8rpx; margin-bottom: 12rpx; }
 .pf-title { display: block; font-size: 44rpx; font-weight: 700; color: $color-text-primary; letter-spacing: 1rpx; }
 .pf-hint { display: block; margin-top: 8rpx; font-size: 22rpx; color: $color-text-secondary; letter-spacing: 1rpx; }

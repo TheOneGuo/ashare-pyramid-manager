@@ -21,10 +21,10 @@
     }
   ],
   "tabBar": {
+    "custom": true,
     "color": "#8A8A8E",
     "selectedColor": "#D4AF37",
-    "backgroundColor": "#FFFFFF",
-    "borderStyle": "black",
+    "backgroundColor": "#0D1B2A",
     "list": [
       {
         "pagePath": "pages/news/index",

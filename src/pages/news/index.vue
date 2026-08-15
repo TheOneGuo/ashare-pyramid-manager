@@ -34,6 +34,7 @@
       <text v-else>最近 24 小时暂时没有可展示的重要快讯，下拉试试。</text>
     </view>
 
+    <TabBarComp v-if="isH5" />
     <view v-else class="news-list">
       <view
         v-for="item in visibleItems"
@@ -61,6 +62,9 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { onShow, onPullDownRefresh } from '@dcloudio/uni-app'
 import { env } from '@/utils/env'
+// H5 端 uni-app 不会自动挂载 custom-tab-bar，需手动引入；WeChat 端走 custom:true 自动挂载，此处按条件跳过避免重复
+const isH5 = ref(typeof window !== 'undefined')
+import TabBarComp from '@/custom-tab-bar/index.vue'
 
 // dev 阶段 vite proxy 把 /api 转到 9999；生产环境用 API_BASE_URL（uniCloud / Express）
 const API_BASE = (env.API_BASE_URL && env.API_BASE_URL.length > 0) ? env.API_BASE_URL : ''
@@ -264,7 +268,7 @@ $radius-full: 999px;
 .news-page {
   min-height: 100vh;
   background: $color-bg;
-  padding: 24rpx 24rpx 48rpx;
+  padding: 24rpx 24rpx 150rpx;
 }
 
 .news-header {

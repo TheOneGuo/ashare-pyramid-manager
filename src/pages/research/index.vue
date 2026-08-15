@@ -1,5 +1,6 @@
 <template>
   <view class="rs-page">
+    <TabBarComp v-if="isH5" />
     <view class="rs-header">
       <text class="rs-title">AI 研报</text>
       <text class="rs-meta">引入外部研报 · AI 精读提炼 · 已持仓标的逐标分析</text>
@@ -153,6 +154,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+// H5 端手动挂载自定义 tabBar（WeChat 端由 custom:true 自动挂载，此处按条件跳过）
+const isH5 = ref(typeof window !== 'undefined')
+import TabBarComp from '@/custom-tab-bar/index.vue'
 import {
   ingestReport, listReports, deleteReport,
   listHoldings, researchReport, saveStockReport, listStockReports, deleteStockReport,
