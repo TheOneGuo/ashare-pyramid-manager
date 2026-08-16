@@ -136,6 +136,8 @@ CREATE TABLE IF NOT EXISTS portfolio_plans (
   atr_pct      REAL,
   total_invest REAL,
   plan_json    TEXT NOT NULL DEFAULT '{}',  -- rows + tp_rows + 派生步骤
+  last_price   REAL,
+  last_price_at INTEGER,
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL,
   PRIMARY KEY (stock_code)
@@ -204,6 +206,7 @@ export async function initDb() {
   initialized = true;
   await migrateHoldingsColumns();
   await migrateNewsContent();
+  await migratePlansColumns();
   console.log('[db] schema initialized (holdings migrated)');
 }
 
@@ -326,7 +329,7 @@ function mapNewsRow(row) {
  * - holding_codes：电报三源(宏观) + 每个持仓的东财公告/个股新闻 各自独立取数再合并，
  *   避免持仓源被电报海量新帖在 LIMIT 下挤出
  */
-export async function fetchNews({ limit = 30, since = 0, source_channel = null, holding_codes = null } = {}) {
+export async function fetchNews({ limit = 30, since = 0, source_channel = null, holding_codes = null, channels = null } = {}) {
   const cap = Math.min(200, Math.max(1, limit));
 
   if (source_channel) {
@@ -336,42 +339,15 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
   }
 
   if (Array.isArray(holding_codes) && holding_codes.length > 0) {
-    const directCh = [];
-    const perSrc = Math.max(20, Math.ceil(cap / 2)); // 每个持仓源保底 20 条
-    const rows = [];
-    // ① 直接关联：每个持仓的东财公告（中文，按代码命中）单独取，不抢 LIMIT
+    // 持仓标的相关：仅直接关联（每持仓的东财公告），各自独立取数，不抢 LIMIT
+    const perSrc = Math.max(20, Math.ceil(cap / 2));
     const holdSql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
+    const rows = [];
     for (const c of holding_codes) {
       const ch = `eastmoney_announcement_${c}`;
-      directCh.push(ch);
       const r = await client.execute({ sql: holdSql, args: [since, ch, perSrc] });
       rows.push(...r.rows);
     }
-    // ② 间接关联：宏观/电报/商品新闻中命中持仓产业链画像关键词（不含英文源、不混入全量）
-    const indirectChannels = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet', 'macro_commodity', 'macro_sina_roll', 'macro_bdi', 'macro_policy_csrc'];
-    const tgSql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
-    // 画像优先取 DB（可编辑），DB 无则用静态种子兜底
-    let dbProfiles = [];
-    try { dbProfiles = await listHoldingProfiles(); } catch { dbProfiles = []; }
-    const profiles = dbProfiles
-      .filter((p) => holding_codes.includes(p.stock_code))
-      .map((p) => ({
-        stock_code: p.stock_code,
-        short_name: p.short_name || p.stock_code,
-        industry: p.industry || '',
-        raw_materials: p.raw_materials, products: p.products, customers: p.customers,
-        overseas_peers: p.overseas_peers, policy_domains: p.policy_domains,
-        transport: p.transport, extra_keywords: p.extra_keywords,
-      }));
-    for (const ch of indirectChannels) {
-      const r = await client.execute({ sql: tgSql, args: [since, ch, cap] });
-      for (const row of r.rows) {
-        const text = `${row.title || ''}\n${row.summary || ''}\n${row.content || ''}`;
-        const matched = matchHoldingProfile(text, profiles);
-        if (matched.length > 0) rows.push(row);
-      }
-    }
-    // 去重 + 排序 + 限顶
     const seen = new Set();
     const dedup = [];
     for (const row of rows) {
@@ -383,8 +359,16 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
     return dedup.slice(0, cap).map(mapNewsRow);
   }
 
-  const sql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? ORDER BY published_at DESC LIMIT ?`;
-  const r = await client.execute({ sql, args: [since, cap] });
+  // 默认 / 全部：可由 channels 限定（如仅电报三源）
+  let sql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ?`;
+  const args = [since];
+  if (Array.isArray(channels) && channels.length > 0) {
+    sql += ` AND source_channel IN (${channels.map(() => '?').join(',')})`;
+    args.push(...channels);
+  }
+  sql += ` ORDER BY published_at DESC LIMIT ?`;
+  args.push(cap);
+  const r = await client.execute({ sql, args });
   return r.rows.map(mapNewsRow);
 }
 
@@ -493,6 +477,22 @@ export async function migrateHoldingsColumns() {
     try {
       await client.execute({ sql: `ALTER TABLE portfolio_holdings ADD COLUMN ${col} ${type}` });
       console.log(`[db] migrated holdings +${col}`);
+    } catch (e) {
+      // 列已存在则忽略
+    }
+  }
+}
+
+// 旧库迁移：portfolio_plans 增加 last_price 跟踪字段
+export async function migratePlansColumns() {
+  const needed = [
+    ['last_price', 'REAL'],
+    ['last_price_at', 'INTEGER'],
+  ];
+  for (const [col, type] of needed) {
+    try {
+      await client.execute({ sql: `ALTER TABLE portfolio_plans ADD COLUMN ${col} ${type}` });
+      console.log(`[db] migrated plans +${col}`);
     } catch (e) {
       // 列已存在则忽略
     }
@@ -696,11 +696,11 @@ export async function clearLedger() {
 // 持仓方案跟踪（固定项持久化，供前端恢复跟踪列表）
 // =====================================================
 
-export async function upsertPlan({ stock_code, stock_name, p0, atr, atr_pct, total_invest, plan_json }) {
+export async function upsertPlan({ stock_code, stock_name, p0, atr, atr_pct, total_invest, plan_json, last_price, last_price_at }) {
   const now = Date.now();
   await client.execute({
-    sql: `INSERT INTO portfolio_plans(stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?)
+    sql: `INSERT INTO portfolio_plans(stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,last_price,last_price_at,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?)
           ON CONFLICT(stock_code) DO UPDATE SET
             stock_name=excluded.stock_name,
             p0=excluded.p0,
@@ -708,6 +708,8 @@ export async function upsertPlan({ stock_code, stock_name, p0, atr, atr_pct, tot
             atr_pct=excluded.atr_pct,
             total_invest=excluded.total_invest,
             plan_json=excluded.plan_json,
+            last_price=COALESCE(excluded.last_price, last_price),
+            last_price_at=COALESCE(excluded.last_price_at, last_price_at),
             updated_at=excluded.updated_at`,
     args: [
       String(stock_code).padStart(6, '0'),
@@ -717,14 +719,45 @@ export async function upsertPlan({ stock_code, stock_name, p0, atr, atr_pct, tot
       Number(atr_pct) || 0,
       Number(total_invest) || 0,
       JSON.stringify(plan_json || {}).slice(0, 12000),
+      last_price != null ? Number(last_price) : null,
+      last_price_at != null ? Number(last_price_at) : null,
       now,
       now,
     ],
   });
 }
 
+export async function getPlan(stock_code) {
+  const r = await client.execute({
+    sql: `SELECT stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,last_price,last_price_at,created_at,updated_at FROM portfolio_plans WHERE stock_code=?`,
+    args: [String(stock_code).padStart(6, '0')],
+  });
+  if (!r.rows.length) return null;
+  const row = r.rows[0];
+  return {
+    stock_code: row.stock_code,
+    stock_name: row.stock_name,
+    p0: Number(row.p0),
+    atr: Number(row.atr),
+    atr_pct: Number(row.atr_pct),
+    total_invest: Number(row.total_invest),
+    plan_json: safeJson(row.plan_json),
+    last_price: row.last_price != null ? Number(row.last_price) : null,
+    last_price_at: row.last_price_at != null ? Number(row.last_price_at) : null,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  };
+}
+
+export async function updatePlanPrice(stock_code, price, ts = Date.now()) {
+  await client.execute({
+    sql: `UPDATE portfolio_plans SET last_price=?, last_price_at=?, updated_at=? WHERE stock_code=?`,
+    args: [Number(price) || 0, Number(ts), Number(ts), String(stock_code).padStart(6, '0')],
+  });
+}
+
 export async function listPlans() {
-  const r = await client.execute(`SELECT stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,created_at,updated_at FROM portfolio_plans ORDER BY updated_at DESC`);
+  const r = await client.execute(`SELECT stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,last_price,last_price_at,created_at,updated_at FROM portfolio_plans ORDER BY updated_at DESC`);
   return r.rows.map((row) => ({
     stock_code: row.stock_code,
     stock_name: row.stock_name,
@@ -733,6 +766,8 @@ export async function listPlans() {
     atr_pct: Number(row.atr_pct),
     total_invest: Number(row.total_invest),
     plan_json: safeJson(row.plan_json),
+    last_price: row.last_price != null ? Number(row.last_price) : null,
+    last_price_at: row.last_price_at != null ? Number(row.last_price_at) : null,
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   }));

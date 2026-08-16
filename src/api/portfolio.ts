@@ -434,6 +434,17 @@ export async function deletePlan(code: string): Promise<{ ok: boolean }> {
   return jget(`/api/portfolio/plans/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
 
+// 显式「确认并加入跟踪」：把分析得到的方案写入持仓方案跟踪
+export async function addPlan(item: {
+  stock_code: string
+  stock_name?: string
+  p0?: number
+  atr?: number
+  plan_json: any
+}): Promise<{ ok: boolean; persisted?: number }> {
+  return jget('/api/portfolio/plans', { method: 'POST', body: item })
+}
+
 // ---- 持仓产业链画像（可编辑，间接关联匹配用） ----
 export interface HoldingProfile {
   stock_code: string

@@ -22,7 +22,8 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, ROLE_LABELS } from './db.js';
-import { enrichHolding, importFromText, importFromFile } from './stock-service.js';
+import { enrichHolding, importFromText, importFromFile, fetchQuote } from './stock-service.js';
+import { computeTrackState } from './track-executor.js';
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
 import { handleExtract } from './portfolio-extract.js';
@@ -36,6 +37,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 9999);
 const MODE = (process.env.NEWS_SOURCE_MODE || 'real').toLowerCase();
 const PREVIEW_DIR = path.resolve(__dirname, '../../preview');
+
+const TELEGRAM_CHANNELS = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
 
 const app = express();
 
@@ -100,7 +103,8 @@ app.get('/api/news', async (req, res) => {
       const codes = holdings.map((h) => h.stock_code);
       items = await fetchNews({ limit, since, holding_codes: codes });
     } else {
-      items = await fetchNews({ limit, since });
+      // 全部：仅电报三源（用户要求固定为这三个内容源，不加其他）
+      items = await fetchNews({ limit, since, channels: TELEGRAM_CHANNELS });
     }
     res.json({ ok: true, count: items.length, items });
   } catch (e) {
@@ -291,35 +295,33 @@ app.post('/api/portfolio/holdings/import', async (req, res) => {
 app.post('/api/portfolio/analyze', async (req, res) => {
   try {
     const result = await handleAnalyze(req.body || {});
-    // 分析成功后，把每个有方案的标的写入「持仓方案跟踪」表（供模块5恢复）
-    if (result && result.ok && Array.isArray(result.stocks)) {
-      for (const s of result.stocks) {
-        if (s && s.plan && s.plan.ok) {
-          try {
-            await upsertPlan({
-              stock_code: s.code,
-              stock_name: s.name || '',
-              p0: s.p0,
-              atr: s.atr,
-              atr_pct: s.plan.atr_pct,
-              total_invest: s.plan.total_invest,
-              plan_json: {
-                rows: s.plan.rows,
-                tp_rows: s.plan.tp_rows,
-                total_invest: s.plan.total_invest,
-                atr_pct: s.plan.atr_pct,
-                ratio_note: s.plan.ratio_note,
-                notices: s.plan.notices,
-                stop_loss_pct: s.plan.stop_loss_pct,
-              },
-            });
-          } catch (pe) {
-            console.warn('[plans] persist failed', s.code, pe.message);
-          }
-        }
-      }
-    }
+    // 注意：分析仅返回方案，不再自动写入「持仓方案跟踪」。
+    // 由前端用户在「策略方案」中点「确认并加入跟踪」后，调用 POST /api/portfolio/plans 显式加入。
     res.json(result);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 显式「确认并加入跟踪」：前端用户在策略方案中点确认后调用
+app.post('/api/portfolio/plans', async (req, res) => {
+  try {
+    const items = Array.isArray(req.body) ? req.body : [req.body];
+    let ok = 0;
+    for (const it of items) {
+      if (!it || !it.stock_code || !it.plan_json) continue;
+      await upsertPlan({
+        stock_code: it.stock_code,
+        stock_name: it.stock_name || '',
+        p0: it.p0 || (it.plan_json.rows && it.plan_json.rows[0] && it.plan_json.rows[0].price) || 0,
+        atr: it.atr || 0,
+        atr_pct: it.plan_json.atr_pct || 0,
+        total_invest: it.plan_json.total_invest || 0,
+        plan_json: it.plan_json,
+      });
+      ok++;
+    }
+    res.json({ ok: true, persisted: ok });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -640,6 +642,45 @@ async function main() {
       console.warn(`[server] scheduled refresh failed: ${e.message}`);
     }
   }, Math.max(60, refreshIntervalSeconds()) * 1000);
+
+  // 持仓方案跟踪轮询（实时价 → 自动执行 → 写回持仓）
+  setInterval(runTrackOnce, TRACK_POLL_MS);
+  // 启动后 5s 跑一次，尽快体现跟踪
+  setTimeout(runTrackOnce, 5000);
+}
+
+// =====================================================
+// 持仓方案跟踪：持续采集实时价 → 到价位自动执行 → 写回已有持仓列表
+// 间隔 60s（与行情刷新解耦，独立轻量轮询）
+// =====================================================
+const TRACK_POLL_MS = 60_000;
+
+async function runTrackOnce() {
+  try {
+    const plans = await listPlans();
+    if (!plans.length) return;
+    for (const p of plans) {
+      const code = p.stock_code;
+      const q = await fetchQuote(code);
+      if (!q || !q.price) continue;
+      await updatePlanPrice(code, q.price, Date.now());
+      const state = computeTrackState(p, q.price);
+      // 未到建仓价前不写入持仓（避免把持仓清零），清仓时保留 0 股记录
+      if (!state.opened && !state.cleared) continue;
+      await importHoldings([{
+        code,
+        name: p.stock_name || q.name,
+        cost: state.avg_cost || p.p0,
+        shares: state.shares,
+        current_price: q.price,
+      }]);
+      if (state.cleared) {
+        console.log(`[track] ${code} 已清仓（实时价 ${q.price}）`);
+      }
+    }
+  } catch (e) {
+    console.warn('[track] loop error:', e.message);
+  }
 }
 
 main().catch((e) => {

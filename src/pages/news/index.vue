@@ -29,6 +29,28 @@
 
     <!-- 可滚动内容区（滚动条仅在此区域内） -->
     <view class="news-body">
+    <!-- 持仓标的关键词（顶部，用于筛选新闻） -->
+    <view v-if="activeScope === 'holding'" class="news-kw-card">
+      <view class="news-kw-head">
+        <text class="news-kw-title">持仓标的关键词</text>
+        <text class="news-kw-sub">提炼持仓相关关键词，自动筛选新闻</text>
+      </view>
+      <view v-if="focusCode" class="news-kw-focus">
+        正在聚焦：<text class="news-kw-focus-code">{{ focusName }}（{{ focusCode }}）</text>
+        <text class="news-kw-focus-clear" @tap="clearFocus">✕ 取消聚焦</text>
+      </view>
+      <view v-for="pr in kwProfiles" :key="pr.stock_code" class="news-kw-item">
+        <view class="news-kw-row">
+          <text class="news-kw-name">{{ pr.short_name || pr.stock_code }}</text>
+          <text class="news-kw-code">{{ pr.stock_code }}</text>
+        </view>
+        <input class="news-kw-input" v-model="pr.keywords" placeholder="上游原材料, 产品, 客户, 政策域, 自定义…" />
+      </view>
+      <view class="news-kw-actions">
+        <view class="news-kw-btn" hover-class="news-kw-btn--hover" @tap="saveKeywords">保存关键词</view>
+      </view>
+    </view>
+
     <view v-if="loading && items.length === 0" class="news-empty">
       <text>正在读取快讯…</text>
     </view>
@@ -70,6 +92,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { onShow, onPullDownRefresh } from '@dcloudio/uni-app'
 import { env } from '@/utils/env'
+import { listHoldingProfiles, upsertHoldingProfile } from '@/api/portfolio'
 // H5 端 uni-app 不会自动挂载 custom-tab-bar，需手动引入；WeChat 端走 custom:true 自动挂载，此处按条件跳过避免重复
 const isH5 = ref(typeof window !== 'undefined')
 import TabBarComp from '@/custom-tab-bar/index.vue'
@@ -110,6 +133,9 @@ function toggleExpand(id: string) {
   expandedIds.value = next
 }
 const holdings = ref<Array<{ stock_code: string; short_name?: string }>>([])
+const kwProfiles = ref<Array<{ stock_code: string; short_name?: string; keywords: string }>>([])
+const focusCode = ref<string>('')
+const focusName = ref<string>('')
 
 function normalizeCode(c: string) {
   return String(c || '').padStart(6, '0').slice(-6)
@@ -137,7 +163,54 @@ async function loadHoldings() {
     console.warn('[news] loadHoldings failed', e?.errMsg || e?.message)
     holdings.value = []
   }
+  // 同步持仓关键词画像
+  await loadProfiles()
 }
+
+// 持仓标的关键词画像（顶部卡片可编辑，库表 holding_profiles）
+async function loadProfiles() {
+  try {
+    const r: any = await listHoldingProfiles()
+    const list = (r.profiles || []).map((p: any) => ({
+      stock_code: normalizeCode(p.stock_code),
+      short_name: p.short_name || '',
+      keywords: [
+        ...(p.raw_materials || []),
+        ...(p.products || []),
+        ...(p.customers || []),
+        ...(p.overseas_peers || []),
+        ...(p.policy_domains || []),
+        ...(p.transport || []),
+        ...(p.extra_keywords || []),
+      ].join(','),
+    }))
+    // 持仓有但画像缺的，补一行空画像
+    const have = new Set(list.map((x: any) => x.stock_code))
+    for (const h of holdings.value) {
+      if (!have.has(h.stock_code)) list.push({ stock_code: h.stock_code, short_name: h.short_name || '', keywords: '' })
+    }
+    kwProfiles.value = list
+  } catch (e) { console.warn('[news] loadProfiles failed', e) }
+}
+async function saveKeywords() {
+  uni.showLoading({ title: '保存中…' })
+  try {
+    for (const pr of kwProfiles.value) {
+      const arr = String(pr.keywords || '').split(/[,，\n]/).map((s: string) => s.trim()).filter(Boolean)
+      await upsertHoldingProfile({ stock_code: pr.stock_code, extra_keywords: arr })
+    }
+    uni.hideLoading()
+    uni.showToast({ title: '已保存', icon: 'success' })
+  } catch (e: any) { uni.hideLoading(); uni.showToast({ title: e?.message || '保存失败', icon: 'none' }) }
+}
+// 跨页联动：持仓页点击某标的跳过来聚焦
+function applyFocusFromStorage() {
+  const code = uni.getStorageSync('portfolio_focus_code')
+  const name = uni.getStorageSync('portfolio_focus_name')
+  if (code) { focusCode.value = normalizeCode(code); focusName.value = name || code }
+  else { focusCode.value = ''; focusName.value = '' }
+}
+function clearFocus() { focusCode.value = ''; focusName.value = ''; uni.removeStorageSync('portfolio_focus_code') }
 
 // 用持仓代码/简称在标题/摘要里做一次轻量关键词匹配；命中后给卡片打 tag。
 function detectMatchedHoldings(item: NewsItem): string[] {
@@ -235,7 +308,18 @@ const holdingCount = computed(() => (activeScope.value === 'holding' ? items.val
 const visibleItems = computed(() => {
   if (activeScope.value === 'all') return items.value
   // 持仓相关：服务端已返回关联内容，这里直接展示（matchedHoldings 仅用于标签）
-  return items.value
+  let list = items.value
+  // 若从持仓页聚焦某标的，则只显示该标的代码命中或画像关键词命中的新闻
+  if (focusCode.value) {
+    const code = focusCode.value
+    const kwArr = (kwProfiles.value.find((p) => p.stock_code === code)?.keywords || '').split(/[,，\n]/).map((s: string) => s.trim()).filter(Boolean)
+    list = list.filter((it: any) => {
+      const text = `${it.title} ${it.summary}`
+      if (text.includes(code)) return true
+      return kwArr.some((k: string) => k && text.includes(k))
+    })
+  }
+  return list
 })
 
 onMounted(async () => {
@@ -244,6 +328,7 @@ onMounted(async () => {
 })
 
 onShow(async () => {
+  applyFocusFromStorage()
   // 切回前台：如果 holdings 变了，按当前 tab 重新拉取
   await loadHoldings()
   await fetchNews(false)
@@ -258,6 +343,7 @@ onPullDownRefresh(async () => {
 function switchScope(scope: 'all' | 'holding') {
   // 先切换 scope 再拉取，避免拿到上一个 scope 的内容
   activeScope.value = scope
+  if (scope === 'holding') applyFocusFromStorage()
   fetchNews(false, scope)
 }
 
@@ -377,6 +463,41 @@ $radius-full: 999px;
   font-size: 28rpx;
   line-height: 1.6;
 }
+
+/* 持仓标的关键词卡 */
+.news-kw-card {
+  background: $color-card-bg;
+  border: 1rpx solid $color-border;
+  border-radius: $radius-lg;
+  padding: 20rpx 20rpx 16rpx;
+  margin-bottom: 16rpx;
+}
+.news-kw-head { display: flex; flex-direction: column; }
+.news-kw-title { font-size: 28rpx; font-weight: 700; color: $color-text-primary; }
+.news-kw-sub { font-size: 22rpx; color: $color-text-secondary; margin-top: 4rpx; }
+.news-kw-focus {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 22rpx; color: $rf-amber; padding: 10rpx 0;
+}
+.news-kw-focus-code { color: $rf-amber; font-weight: 600; }
+.news-kw-focus-clear { color: $color-text-secondary; padding: 4rpx 8rpx; }
+.news-kw-item { border-top: 1rpx solid $color-border; padding: 12rpx 0 4rpx; }
+.news-kw-row { display: flex; align-items: baseline; gap: 10rpx; }
+.news-kw-name { font-size: 24rpx; color: $color-text-primary; font-weight: 600; }
+.news-kw-code { font-size: 20rpx; color: $color-text-secondary; }
+.news-kw-input {
+  width: 100%; box-sizing: border-box;
+  margin-top: 6rpx; padding: 12rpx 14rpx;
+  font-size: 22rpx; color: $color-text-primary;
+  background: rgba(0,0,0,0.25); border: 1rpx solid $color-border; border-radius: $radius-md;
+}
+.news-kw-actions { display: flex; justify-content: flex-end; margin-top: 12rpx; }
+.news-kw-btn {
+  font-size: 22rpx; color: #0d1b2a; font-weight: 600;
+  background: linear-gradient(135deg, #ffb86b 0%, #ff7a3d 100%);
+  padding: 12rpx 28rpx; border-radius: $radius-md;
+}
+.news-kw-btn--hover { opacity: 0.85; }
 
 /* 列表 */
 .news-list {

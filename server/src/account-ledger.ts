@@ -223,7 +223,8 @@ export function buildAccount(
   const allocated = allocatedFromPositions(livePositions, feeRateWan)
   const available = eng.r2(totalMargin - allocated)
   const heldCount = livePositions.filter((p) => Number(p.qty || 0) > 0).length
-  const maxHold = totalMargin > 0 ? eng.maxHoldingCount(totalMargin) : 0
+  // 可开标的上限按「可用保证金」（未开仓资金）计算，而非账户总保证金
+  const maxHold = available > 0 ? eng.maxHoldingCount(available) : 0
 
   const configured = initial > 0
   if (configured && totalMargin <= 0) {
@@ -236,7 +237,7 @@ export function buildAccount(
   }
   if (heldCount > maxHold && maxHold > 0) {
     notices.push(
-      `当前在持${heldCount}个标的，超过按总保证金${totalMargin.toFixed(2)}元计算的可开标的上限${maxHold}个：不应再开新标的，建议先了结${heldCount - maxHold}个标的。`,
+      `当前在持${heldCount}个标的，超过按可用保证金${available.toFixed(2)}元计算的可开标的上限${maxHold}个：不应再开新标的，建议先了结${heldCount - maxHold}个标的。`,
     )
   }
 

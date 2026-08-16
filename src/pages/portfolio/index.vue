@@ -14,26 +14,27 @@
       <text class="pf-pull-text">{{ pullText }}</text>
     </view>
 
-    <!-- ① 账户与保证金 -->
+    <!-- ① 账户与保证金 → 改名：可用保证金（max_hold 按可用保证金算） -->
     <view class="pf-card pf-ledger">
       <view class="pf-import-head" @tap="ledgerOpen = !ledgerOpen">
-        <text class="pf-section-title">🏦 账户与保证金</text>
+        <text class="pf-section-title">💰 可用保证金</text>
         <text class="pf-toggle">{{ ledgerOpen ? '收起' : '展开' }}</text>
       </view>
 
       <view v-if="ledgerOpen" class="pf-ledger-body">
-        <!-- 未配置：初始录入（总资金 + 佣金） -->
+        <!-- 未配置：可用保证金（持仓外剩余可交易资金）+ 手续费率 -->
         <view v-if="!ledgerSnapshot.configured" class="pf-ledger-init">
           <view class="pf-row">
             <view class="pf-col">
-              <text class="pf-label">总资金（元）</text>
-              <input class="pf-input" type="number" :value="totalCapital == null ? '' : totalCapital" @input="onCapitalInput" placeholder="请输入总资金，如 500000" />
+              <text class="pf-label">可用保证金（元）</text>
+              <input class="pf-input" type="number" :value="totalCapital == null ? '' : totalCapital" @input="onCapitalInput" :placeholder="holdings.length ? '持仓外剩余可交易资金，如 300000' : '总可交易资金，如 500000'" />
             </view>
             <view class="pf-col">
               <text class="pf-label">佣金（万分之）</text>
               <input class="pf-input" type="number" :value="feeWan == null ? '' : feeWan" @input="onFeeInput" placeholder="请输入佣金，如 1.2" />
             </view>
           </view>
+          <view v-if="holdings.length" class="pf-note">已按 {{ holdings.length }} 只持仓计入已分配资金，填入「可用保证金」即未开仓的剩余额度。</view>
           <view class="pf-btn pf-btn--primary pf-btn--block" hover-class="pf-btn--hover" @tap="onLedgerConfirmInit">
             <text>确认账户</text>
           </view>
@@ -43,16 +44,15 @@
         <!-- 已配置：状态 + 操作 -->
         <view v-else class="pf-ledger-state">
           <view class="pf-ledger-grid">
-            <view class="pf-ledger-cell"><text class="pf-ledger-k">总保证金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.total_margin) }}</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">可用保证金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.available) }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">可开标的上限</text><text class="pf-ledger-v">{{ ledgerSnapshot.max_hold }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">已分配资金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.allocated) }}</text></view>
-            <view class="pf-ledger-cell"><text class="pf-ledger-k">可分配额度</text><text class="pf-ledger-v pf-ledger-v--cyan">{{ fmtMoney(ledgerSnapshot.available) }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">手续费率</text><text class="pf-ledger-v">万分之 {{ ledgerSnapshot.fee_rate_wan }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">累计实现盈亏</text><text class="pf-ledger-v" :class="ledgerSnapshot.realized_pnl >= 0 ? 'pf-up' : 'pf-down'">{{ fmtMoney(ledgerSnapshot.realized_pnl) }}</text></view>
           </view>
 
           <view class="pf-ledger-meta">
-            可开标的 {{ ledgerSnapshot.max_hold }} 个 · 已分配 {{ fmtMoney(ledgerSnapshot.allocated) }} 元 · 可分配额度 {{ fmtMoney(ledgerSnapshot.available) }} 元
+            可用保证金 {{ fmtMoney(ledgerSnapshot.available) }} 元 · 已分配 {{ fmtMoney(ledgerSnapshot.allocated) }} 元 · 可开标的 {{ ledgerSnapshot.max_hold }} 个
           </view>
 
           <view class="pf-ledger-actions">
@@ -111,41 +111,21 @@
           <text class="pf-col pf-col--num">现价</text>
           <text class="pf-col pf-col--num">盈亏</text>
         </view>
-        <view v-for="h in holdings" :key="h.stock_code" class="pf-hold-row">
-          <text class="pf-col pf-col--code">{{ h.stock_code }}</text>
-          <text class="pf-col pf-col--name">{{ h.short_name || '—' }}</text>
-          <text class="pf-col pf-col--num">{{ fmtMoney(h.cost_basis, 2) }}</text>
-          <text class="pf-col pf-col--num">{{ h.shares }}</text>
-          <text class="pf-col pf-col--num">{{ h.current_price != null ? fmtMoney(h.current_price, 2) : '—' }}</text>
-          <text class="pf-col pf-col--num" :class="pnlClass(h)">{{ h.pnl != null ? (h.pnl >= 0 ? '+' : '') + fmtMoney(h.pnl, 0) : '—' }}</text>
-          <text class="pf-hold-del" @tap="onHoldDel(h)">✕</text>
-        </view>
-      </view>
-    </view>
-
-    <!-- ②b 持仓产业链画像（可编辑，用于间接关联新闻匹配） -->
-    <view class="pf-card pf-profiles">
-      <view class="pf-import-head" @tap="profilesOpen = !profilesOpen">
-        <text class="pf-section-title">🔗 产业链画像（关键词关联新闻）</text>
-        <text class="pf-toggle">{{ profilesOpen ? '收起' : '展开' }}</text>
-      </view>
-      <view v-if="profilesOpen" class="pf-profiles-body">
-        <view v-if="profiles.length === 0" class="pf-note">暂无画像，加载中…</view>
-        <view v-for="p in profiles" :key="p.stock_code" class="pf-profile-item">
-          <view class="pf-profile-rowhead">
-            <text class="pf-profile-name">{{ p.short_name || p.stock_code }}</text>
-            <text class="pf-profile-code">{{ p.stock_code }}</text>
+        <view v-for="h in holdings" :key="h.stock_code" class="pf-hold-item">
+          <view class="pf-hold-row">
+            <text class="pf-col pf-col--code">{{ h.stock_code }}</text>
+            <text class="pf-col pf-col--name">{{ h.short_name || '—' }}</text>
+            <text class="pf-col pf-col--num">{{ fmtMoney(h.cost_basis, 2) }}</text>
+            <text class="pf-col pf-col--num">{{ h.shares }}</text>
+            <text class="pf-col pf-col--num">{{ h.current_price != null ? fmtMoney(h.current_price, 2) : '—' }}</text>
+            <text class="pf-col pf-col--num" :class="pnlClass(h)">{{ h.pnl != null ? (h.pnl >= 0 ? '+' : '') + fmtMoney(h.pnl, 0) : '—' }}</text>
+            <text class="pf-hold-del" @tap="onHoldDel(h)">✕</text>
           </view>
-          <view v-for="field in profileFields" :key="field.key" class="pf-profile-field">
-            <text class="pf-profile-label">{{ field.label }}</text>
-            <input class="pf-input pf-input--full" v-model="p[field.key]" :placeholder="field.label + '（逗号或换行分隔）'" />
-          </view>
-          <view class="pf-profile-actions">
-            <view class="pf-btn pf-btn--xs" hover-class="pf-btn--hover" @tap="onSaveProfile(p)"><text>保存</text></view>
-            <view class="pf-btn pf-btn--xs pf-btn--ghost" hover-class="pf-btn--hover" @tap="onDeleteProfile(p)"><text>删除</text></view>
+          <view class="pf-hold-links">
+            <text class="pf-hold-link" @tap="jumpToNews(h)">相关新闻</text>
+            <text class="pf-hold-link" @tap="jumpToResearch(h)">AI 研报</text>
           </view>
         </view>
-        <view class="pf-note">填写上游原材料 / 产品 / 客户 / 海外可比 / 政策域 / 运输航道 / 自定义关键词，持仓相关新闻会据此从宏观电报与商品行情中命中。</view>
       </view>
     </view>
 
@@ -229,6 +209,10 @@
           <view v-else-if="s.plan && s.plan.too_expensive" class="pf-stock-err">价格过高 · 当前资金无法开出 4 笔完整仓位，建议更换标的</view>
           <view v-else-if="s.plan && s.plan.rows && s.plan.rows.length">
             <PlanTable :plan="s.plan" />
+            <view class="pf-track-add">
+              <view v-if="trackedCodes.has((s.code||'')+(s.name||''))" class="pf-track-added">✓ 已加入跟踪</view>
+              <view v-else class="pf-btn pf-btn--primary pf-btn--xs" hover-class="pf-btn--hover" @tap="onAddToTrack(s)">确认并加入跟踪</view>
+            </view>
           </view>
           <view v-else class="pf-stock-err">无方案</view>
         </view>
@@ -298,8 +282,7 @@ import {
   listHoldings, deleteHolding,
   importHoldings, analyzePortfolio,
   getLedger, appendLedgerEvent, previewLedgerEvent, clearLedger,
-  listPlans, deletePlan,
-  listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile,
+  listPlans, deletePlan, addPlan,
   type Holding, type AnalyzeReport,
   type LedgerSnapshot, type LedgerEvent, type PlanItem,
 } from '@/api/portfolio'
@@ -473,59 +456,20 @@ async function loadHoldings() {
 async function onHoldDel(h: Holding) {
   try { await deleteHolding(h.stock_code); await loadHoldings(); await loadLedger() } catch (e) { uni.showToast({ title: '删除失败', icon: 'none' }) }
 }
-
-// ── ②b 产业链画像（可编辑）──
-const profilesOpen = ref(false)
-const profiles = ref<any[]>([])
-const profileFields = [
-  { key: 'raw_materials', label: '上游原材料' },
-  { key: 'products', label: '主营产品' },
-  { key: 'customers', label: '主要客户' },
-  { key: 'overseas_peers', label: '海外可比' },
-  { key: 'policy_domains', label: '政策域' },
-  { key: 'transport', label: '运输航道' },
-  { key: 'extra_keywords', label: '自定义关键词' },
-]
-async function loadProfiles() {
-  try {
-    const r: any = await listHoldingProfiles()
-    profiles.value = (r.profiles || []).map((p: any) => ({
-      ...p,
-      raw_materials: (p.raw_materials || []).join(','),
-      products: (p.products || []).join(','),
-      customers: (p.customers || []).join(','),
-      overseas_peers: (p.overseas_peers || []).join(','),
-      policy_domains: (p.policy_domains || []).join(','),
-      transport: (p.transport || []).join(','),
-      extra_keywords: (p.extra_keywords || []).join(','),
-    }))
-  } catch (e) { console.warn('[profiles] load failed', e) }
-}
-async function onSaveProfile(p: any) {
-  try {
-    const toArr = (v: any) => String(v || '').split(/[,，\n]/).map((s: string) => s.trim()).filter(Boolean)
-    await upsertHoldingProfile({
-      stock_code: p.stock_code,
-      raw_materials: toArr(p.raw_materials),
-      products: toArr(p.products),
-      customers: toArr(p.customers),
-      overseas_peers: toArr(p.overseas_peers),
-      policy_domains: toArr(p.policy_domains),
-      transport: toArr(p.transport),
-      extra_keywords: toArr(p.extra_keywords),
-    })
-    uni.showToast({ title: '已保存', icon: 'success' })
-    await loadProfiles()
-  } catch (e: any) { uni.showToast({ title: e?.message || '保存失败', icon: 'none' }) }
-}
-async function onDeleteProfile(p: any) {
-  uni.showModal({ title: '删除画像', content: `确认删除 ${p.short_name || p.stock_code} 的画像？`, success: async (s) => {
-    if (s.confirm) { try { await deleteHoldingProfile(p.stock_code); await loadProfiles() } catch (e) {} }
-  } })
-}
 function pnlClass(h: Holding) {
   if (h.pnl == null) return ''
   return h.pnl >= 0 ? 'pf-pnl--up' : 'pf-pnl--down'
+}
+// 第7点：持仓 ↔ 新闻关键词 / 研报 关联跳转
+function jumpToNews(h: Holding) {
+  uni.setStorageSync('portfolio_focus_code', h.stock_code)
+  uni.setStorageSync('portfolio_focus_name', h.short_name || h.stock_code)
+  uni.switchTab({ url: '/pages/news/index' })
+}
+function jumpToResearch(h: Holding) {
+  uni.setStorageSync('portfolio_focus_code', h.stock_code)
+  uni.setStorageSync('portfolio_focus_name', h.short_name || h.stock_code)
+  uni.switchTab({ url: '/pages/research/index' })
 }
 
 // 拍照：uni.chooseImage → OCR → 富化入库
@@ -637,6 +581,7 @@ const analyzeLoading = ref(false)
 const analyzeStatus = ref('请先确认账户再开始分析')
 const analyzeReport = ref<AnalyzeReport | null>(null)
 const priceConfirmedCodes = ref<string[]>([])
+const trackedCodes = ref<Set<string>>(new Set())
 
 async function onRunAnalyze() {
   if (!ledgerSnapshot.value.configured) {
@@ -690,6 +635,38 @@ async function onRunAnalyze() {
 function onConfirmPrice(code: string) {
   if (!priceConfirmedCodes.value.includes(code)) priceConfirmedCodes.value.push(code)
   onRunAnalyze()
+}
+
+// 第5点：确认并加入「持仓方案跟踪」
+function trackKey(s: any) { return (s.code || '') + (s.name || '') }
+async function onAddToTrack(s: any) {
+  if (!s || !s.plan || !s.plan.ok) { uni.showToast({ title: '该标的无有效方案', icon: 'none' }); return }
+  uni.showLoading({ title: '加入跟踪…' })
+  try {
+    const r: any = await addPlan({
+      stock_code: s.code,
+      stock_name: s.name,
+      p0: s.p0,
+      atr: s.atr,
+      plan_json: {
+        rows: s.plan.rows,
+        tp_rows: s.plan.tp_rows,
+        total_invest: s.plan.total_invest,
+        atr_pct: s.plan.atr_pct,
+        ratio_note: s.plan.ratio_note,
+        notices: s.plan.notices,
+        stop_loss_pct: s.plan.stop_loss_pct,
+      },
+    })
+    uni.hideLoading()
+    if (r.ok) {
+      trackedCodes.value = new Set([...trackedCodes.value, trackKey(s)])
+      await loadPlans()
+      uni.showToast({ title: '已加入跟踪', icon: 'success' })
+    } else {
+      uni.showToast({ title: '加入失败', icon: 'none' })
+    }
+  } catch (e: any) { uni.hideLoading(); uni.showToast({ title: e?.message || '加入失败', icon: 'none' }) }
 }
 
 // ── ⑦ 持仓方案跟踪 ──
@@ -856,12 +833,12 @@ async function onTouchEnd() {
   setTimeout(() => { if (pullDistance.value <= PULL_THRESHOLD) { pullDistance.value = 0; pullProgress.value = 0; refreshHint() } }, 600)
 }
 async function refreshAll() {
-  await Promise.all([loadHoldings(), loadLedger(), loadPlans(), loadProfiles()])
+  await Promise.all([loadHoldings(), loadLedger(), loadPlans()])
   setTimeout(() => { pullDistance.value = 0; pullProgress.value = 0 }, 400)
 }
 
 onMounted(() => { refreshAll() })
-onShow(() => { loadHoldings(); loadLedger(); loadPlans(); loadProfiles() })
+onShow(() => { loadHoldings(); loadLedger(); loadPlans() })
 onBeforeUnmount(() => {})
 </script>
 
@@ -880,6 +857,8 @@ $color-text-primary: $rf-cream;
 $color-text-secondary: $rf-muted;
 $color-text-warm: #d3c3ad;
 $radius-lg: 20rpx;
+$radius-md: 14rpx;
+$color-text: $color-text-primary;
 
 .pf-page { min-height: 100vh; background: $color-bg; padding: 24rpx 24rpx 150rpx; overscroll-behavior-y: contain; }
 
@@ -909,7 +888,16 @@ $radius-lg: 20rpx;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   padding: 0 24rpx 24rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
 }
+/* 卡片顺序：① 已有持仓 → ② 可用保证金 → ③ 拟新买 → ④ 策略方案 → ⑤ 持仓方案跟踪 */
+.pf-import { order: 1; }
+.pf-ledger { order: 2; }
+.pf-proposed { order: 3; }
+.pf-report { order: 4; }
+.pf-track { order: 5; }
 .pf-body::-webkit-scrollbar { width: 5rpx; }
 .pf-body::-webkit-scrollbar-track { background: transparent; }
 .pf-body::-webkit-scrollbar-thumb {
@@ -927,6 +915,8 @@ $radius-lg: 20rpx;
 .pf-card { background: $color-card-bg; border: 1rpx solid $color-border; border-radius: $radius-lg; padding: 20rpx 24rpx; margin-bottom: 20rpx; }
 .pf-section-title { display: block; font-size: 30rpx; color: $rf-amber; font-weight: 600; margin-bottom: 16rpx; }
 .pf-sub-section-title { display: block; font-size: 26rpx; color: $rf-amber; font-weight: 600; margin: 16rpx 0 12rpx; }
+.pf-track-add { margin-top: 12rpx; display: flex; justify-content: flex-end; }
+.pf-track-added { font-size: 22rpx; color: $rf-green; padding: 8rpx 0; }
 .pf-empty { text-align: center; color: $color-text-secondary; font-size: 24rpx; padding: 20rpx 0; }
 .pf-label { display: block; font-size: 22rpx; color: $color-text-secondary; margin-bottom: 8rpx; }
 .pf-row { display: flex; gap: 16rpx; }
@@ -991,6 +981,12 @@ $radius-lg: 20rpx;
 
 /* ② 持仓列表：代码 名称 综合成本 股数 现价 盈亏 */
 .pf-hold-list { margin-top: 16rpx; display: flex; flex-direction: column; gap: 8rpx; }
+.pf-hold-item {
+  padding: 6rpx 4rpx;
+  background: rgba(255, 184, 107, 0.02);
+  border: 1rpx solid rgba(255, 184, 107, 0.08);
+  border-radius: 12rpx;
+}
 .pf-hold-head,
 .pf-hold-row {
   display: grid;
@@ -1017,6 +1013,16 @@ $radius-lg: 20rpx;
 .pf-pnl--up { color: $rf-green !important; }
 .pf-pnl--down { color: $rf-red !important; }
 .pf-hold-del { text-align: center; font-size: 28rpx; color: $rf-red; }
+.pf-hold-links { display: flex; gap: 16rpx; padding: 10rpx 0 4rpx; }
+.pf-hold-link {
+  flex: 1;
+  text-align: center;
+  font-size: 22rpx;
+  color: $rf-amber;
+  border: 1rpx solid $color-border;
+  border-radius: $radius-md;
+  padding: 8rpx 0;
+}
 
 /* ③ 拟买 */
 .pf-proposed-labels { display: flex; gap: 8rpx; align-items: center; margin-bottom: 8rpx; padding: 0 4rpx; font-size: 22rpx; color: $color-text-secondary; }

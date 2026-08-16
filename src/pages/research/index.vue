@@ -109,6 +109,11 @@
         <text class="rs-section-title">📊 持仓标的 AI 研报分析</text>
         <text class="rs-note rs-note--muted">对当前持仓列表中的标的，逐一点击「生成 AI 研报」即可按十二个研究模块生成完整研报，生成后可按章节阅读（当前为演示模式，后续接入真实 LLM）。</text>
 
+        <view v-if="focusCode" class="rs-held-focus">
+          <text>来自持仓页聚焦：</text><text class="rs-held-focus-code">{{ focusName }}（{{ focusCode }}）</text>
+          <text class="rs-held-focus-clear" @tap="clearFocus">✕ 取消</text>
+        </view>
+
         <view v-if="holdings.length === 0" class="rs-empty"><text>暂无持仓。请先到「持仓」页面导入或手动输入持仓。</text></view>
 
         <view v-else class="rs-held-list">
@@ -160,6 +165,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 // H5 端手动挂载自定义 tabBar（WeChat 端由 custom:true 自动挂载，此处按条件跳过）
 const isH5 = ref(typeof window !== 'undefined')
 import TabBarComp from '@/custom-tab-bar/index.vue'
@@ -188,6 +194,8 @@ const holdings = ref<Holding[]>([])
 const stockLoading = ref<string>('')
 const stockReports = ref<StockReportItem[]>([])
 const stockExpanded = ref<Set<string>>(new Set())
+const focusCode = ref<string>('')
+const focusName = ref<string>('')
 
 function toggleExpand(id: string) {
   const s = new Set(expanded.value); if (s.has(id)) s.delete(id); else s.add(id); expanded.value = s
@@ -198,6 +206,16 @@ function toggleRaw(id: string) {
 function toggleStockExpand(code: string) {
   const s = new Set(stockExpanded.value); if (s.has(code)) s.delete(code); else s.add(code); stockExpanded.value = s
 }
+
+function applyFocusFromStorage() {
+  const code = uni.getStorageSync('portfolio_focus_code')
+  const name = uni.getStorageSync('portfolio_focus_name')
+  if (code) {
+    focusCode.value = String(code).padStart(6, '0').slice(-6)
+    focusName.value = name || code
+  } else { focusCode.value = ''; focusName.value = '' }
+}
+function clearFocus() { focusCode.value = ''; focusName.value = ''; uni.removeStorageSync('portfolio_focus_code') }
 function hasStockReport(code: string) {
   return stockReports.value.some((r) => r.stock_code === code)
 }
@@ -294,6 +312,15 @@ async function loadStockReports() {
 }
 
 onMounted(() => { loadReports(); loadHoldings(); loadStockReports() })
+onShow(() => {
+  loadHoldings(); loadStockReports()
+  applyFocusFromStorage()
+  if (focusCode.value) {
+    const h = holdings.value.find((x) => (x.stock_code || '').padStart(6, '0').slice(-6) === focusCode.value)
+    if (h && !hasStockReport(focusCode.value)) onGenStock(h.stock_code)
+    else if (h) { const s = new Set(stockExpanded.value); s.add(focusCode.value); stockExpanded.value = s }
+  }
+})
 </script>
 
 <style lang="scss" scoped>
@@ -454,6 +481,9 @@ $spacing-base: 24rpx;
 
 .rs-held-list { display: flex; flex-direction: column; gap: 10rpx; margin-top: 12rpx; }
 .rs-held-row { display: flex; justify-content: space-between; align-items: center; gap: 12rpx; padding: 14rpx 18rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 12rpx; }
+.rs-held-focus { display: flex; flex-wrap: wrap; align-items: center; gap: 8rpx; font-size: 22rpx; color: $rf-amber; padding: 10rpx 4rpx; }
+.rs-held-focus-code { font-weight: 700; }
+.rs-held-focus-clear { color: $color-text-secondary; padding: 4rpx 8rpx; }
 .rs-held-info { display: flex; flex-direction: column; min-width: 0; }
 .rs-held-name { font-size: 26rpx; color: $app-text; font-weight: 600; }
 .rs-held-code { font-size: 21rpx; color: $app-text-muted; margin-top: 2rpx; }
