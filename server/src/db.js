@@ -348,7 +348,7 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
       rows.push(...r.rows);
     }
     // ② 间接关联：宏观/电报/商品新闻中命中持仓产业链画像关键词（不含英文源、不混入全量）
-    const indirectChannels = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet', 'macro_commodity', 'macro_sina_roll'];
+    const indirectChannels = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet', 'macro_commodity', 'macro_sina_roll', 'macro_bdi', 'macro_policy_csrc'];
     const tgSql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
     // 画像优先取 DB（可编辑），DB 无则用静态种子兜底
     let dbProfiles = [];
