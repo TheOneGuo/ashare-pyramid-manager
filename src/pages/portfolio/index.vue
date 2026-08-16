@@ -123,6 +123,32 @@
       </view>
     </view>
 
+    <!-- ②b 持仓产业链画像（可编辑，用于间接关联新闻匹配） -->
+    <view class="pf-card pf-profiles">
+      <view class="pf-import-head" @tap="profilesOpen = !profilesOpen">
+        <text class="pf-section-title">🔗 产业链画像（关键词关联新闻）</text>
+        <text class="pf-toggle">{{ profilesOpen ? '收起' : '展开' }}</text>
+      </view>
+      <view v-if="profilesOpen" class="pf-profiles-body">
+        <view v-if="profiles.length === 0" class="pf-note">暂无画像，加载中…</view>
+        <view v-for="p in profiles" :key="p.stock_code" class="pf-profile-item">
+          <view class="pf-profile-rowhead">
+            <text class="pf-profile-name">{{ p.short_name || p.stock_code }}</text>
+            <text class="pf-profile-code">{{ p.stock_code }}</text>
+          </view>
+          <view v-for="field in profileFields" :key="field.key" class="pf-profile-field">
+            <text class="pf-profile-label">{{ field.label }}</text>
+            <input class="pf-input pf-input--full" v-model="p[field.key]" :placeholder="field.label + '（逗号或换行分隔）'" />
+          </view>
+          <view class="pf-profile-actions">
+            <view class="pf-btn pf-btn--xs" hover-class="pf-btn--hover" @tap="onSaveProfile(p)"><text>保存</text></view>
+            <view class="pf-btn pf-btn--xs pf-btn--ghost" hover-class="pf-btn--hover" @tap="onDeleteProfile(p)"><text>删除</text></view>
+          </view>
+        </view>
+        <view class="pf-note">填写上游原材料 / 产品 / 客户 / 海外可比 / 政策域 / 运输航道 / 自定义关键词，持仓相关新闻会据此从宏观电报与商品行情中命中。</view>
+      </view>
+    </view>
+
     <!-- ③ 拟新买标的 -->
     <view class="pf-card pf-proposed">
       <view class="pf-import-head" @tap="proposedOpen = !proposedOpen">
@@ -273,6 +299,7 @@ import {
   importHoldings, analyzePortfolio,
   getLedger, appendLedgerEvent, previewLedgerEvent, clearLedger,
   listPlans, deletePlan,
+  listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile,
   type Holding, type AnalyzeReport,
   type LedgerSnapshot, type LedgerEvent, type PlanItem,
 } from '@/api/portfolio'
@@ -445,6 +472,56 @@ async function loadHoldings() {
 }
 async function onHoldDel(h: Holding) {
   try { await deleteHolding(h.stock_code); await loadHoldings(); await loadLedger() } catch (e) { uni.showToast({ title: '删除失败', icon: 'none' }) }
+}
+
+// ── ②b 产业链画像（可编辑）──
+const profilesOpen = ref(false)
+const profiles = ref<any[]>([])
+const profileFields = [
+  { key: 'raw_materials', label: '上游原材料' },
+  { key: 'products', label: '主营产品' },
+  { key: 'customers', label: '主要客户' },
+  { key: 'overseas_peers', label: '海外可比' },
+  { key: 'policy_domains', label: '政策域' },
+  { key: 'transport', label: '运输航道' },
+  { key: 'extra_keywords', label: '自定义关键词' },
+]
+async function loadProfiles() {
+  try {
+    const r: any = await listHoldingProfiles()
+    profiles.value = (r.profiles || []).map((p: any) => ({
+      ...p,
+      raw_materials: (p.raw_materials || []).join(','),
+      products: (p.products || []).join(','),
+      customers: (p.customers || []).join(','),
+      overseas_peers: (p.overseas_peers || []).join(','),
+      policy_domains: (p.policy_domains || []).join(','),
+      transport: (p.transport || []).join(','),
+      extra_keywords: (p.extra_keywords || []).join(','),
+    }))
+  } catch (e) { console.warn('[profiles] load failed', e) }
+}
+async function onSaveProfile(p: any) {
+  try {
+    const toArr = (v: any) => String(v || '').split(/[,，\n]/).map((s: string) => s.trim()).filter(Boolean)
+    await upsertHoldingProfile({
+      stock_code: p.stock_code,
+      raw_materials: toArr(p.raw_materials),
+      products: toArr(p.products),
+      customers: toArr(p.customers),
+      overseas_peers: toArr(p.overseas_peers),
+      policy_domains: toArr(p.policy_domains),
+      transport: toArr(p.transport),
+      extra_keywords: toArr(p.extra_keywords),
+    })
+    uni.showToast({ title: '已保存', icon: 'success' })
+    await loadProfiles()
+  } catch (e: any) { uni.showToast({ title: e?.message || '保存失败', icon: 'none' }) }
+}
+async function onDeleteProfile(p: any) {
+  uni.showModal({ title: '删除画像', content: `确认删除 ${p.short_name || p.stock_code} 的画像？`, success: async (s) => {
+    if (s.confirm) { try { await deleteHoldingProfile(p.stock_code); await loadProfiles() } catch (e) {} }
+  } })
 }
 function pnlClass(h: Holding) {
   if (h.pnl == null) return ''
@@ -779,12 +856,12 @@ async function onTouchEnd() {
   setTimeout(() => { if (pullDistance.value <= PULL_THRESHOLD) { pullDistance.value = 0; pullProgress.value = 0; refreshHint() } }, 600)
 }
 async function refreshAll() {
-  await Promise.all([loadHoldings(), loadLedger(), loadPlans()])
+  await Promise.all([loadHoldings(), loadLedger(), loadPlans(), loadProfiles()])
   setTimeout(() => { pullDistance.value = 0; pullProgress.value = 0 }, 400)
 }
 
 onMounted(() => { refreshAll() })
-onShow(() => { loadHoldings(); loadLedger(); loadPlans() })
+onShow(() => { loadHoldings(); loadLedger(); loadPlans(); loadProfiles() })
 onBeforeUnmount(() => {})
 </script>
 
@@ -1060,4 +1137,17 @@ $radius-lg: 20rpx;
   .pf-page { padding: 16rpx 24rpx 32rpx; }
   .pf-title { font-size: 36rpx; }
 }
+
+/* 产业链画像编辑器 */
+.pf-profiles-body { margin-top: 16rpx; }
+.pf-profile-item { border: 1rpx solid $color-border; border-radius: $radius-md; padding: 16rpx; margin-bottom: 16rpx; background: rgba(255,255,255,0.02); }
+.pf-profile-rowhead { display: flex; align-items: baseline; gap: 12rpx; margin-bottom: 12rpx; }
+.pf-profile-name { font-size: 28rpx; font-weight: 600; color: $color-text; }
+.pf-profile-code { font-size: 22rpx; color: $color-text-secondary; }
+.pf-profile-field { display: flex; align-items: center; gap: 12rpx; margin-bottom: 8rpx; }
+.pf-profile-label { flex: 0 0 150rpx; font-size: 22rpx; color: $color-text-secondary; }
+.pf-profile-field .pf-input { flex: 1; }
+.pf-profile-actions { display: flex; gap: 12rpx; margin-top: 8rpx; }
+.pf-profile-actions .pf-btn { flex: 0 0 auto; padding: 8rpx 28rpx; }
+.pf-btn--ghost { background: transparent; border: 1rpx solid $color-border; color: $color-text-secondary; }
 </style>

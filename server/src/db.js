@@ -12,7 +12,7 @@
  */
 
 import { createClient } from '@libsql/client';
-import { HOLDING_PROFILES, matchHoldingProfile } from './holding-profiles.js';
+import { matchHoldingProfile } from './holding-profiles.js';
 import 'dotenv/config';
 
 const url = process.env.TURSO_DATABASE_URL?.trim();
@@ -171,6 +171,20 @@ CREATE TABLE IF NOT EXISTS research_stock_reports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_stock_report_updated ON research_stock_reports(updated_at DESC);
+
+-- 持仓产业链画像（可编辑）：用户维护关键词，用于宏观/地缘/商品/政策新闻的间接关联匹配
+CREATE TABLE IF NOT EXISTS holding_profiles (
+  stock_code     TEXT NOT NULL,
+  raw_materials  TEXT NOT NULL DEFAULT '[]',  -- JSON 数组：上游原材料
+  products       TEXT NOT NULL DEFAULT '[]',  -- JSON 数组：主营产品
+  customers      TEXT NOT NULL DEFAULT '[]',  -- JSON 数组：主要客户
+  overseas_peers TEXT NOT NULL DEFAULT '[]',  -- JSON 数组：海外可比公司
+  policy_domains TEXT NOT NULL DEFAULT '[]',  -- JSON 数组：政策域
+  transport      TEXT NOT NULL DEFAULT '[]',  -- JSON 数组：运输/航道/产地
+  extra_keywords TEXT NOT NULL DEFAULT '[]',  -- JSON 数组：事件型自定义关键词
+  updated_at     INTEGER NOT NULL,
+  PRIMARY KEY (stock_code)
+);
 `;
 
 let initialized = false;
@@ -333,11 +347,23 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
       const r = await client.execute({ sql: holdSql, args: [since, ch, perSrc] });
       rows.push(...r.rows);
     }
-    // ② 间接关联：宏观/电报新闻中命中持仓产业链画像关键词（不含英文源、不混入全量）
-    const tgChannels = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
+    // ② 间接关联：宏观/电报/商品新闻中命中持仓产业链画像关键词（不含英文源、不混入全量）
+    const indirectChannels = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet', 'macro_commodity', 'macro_sina_roll'];
     const tgSql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
-    const profiles = HOLDING_PROFILES.filter((p) => holding_codes.includes(p.stock_code));
-    for (const ch of tgChannels) {
+    // 画像优先取 DB（可编辑），DB 无则用静态种子兜底
+    let dbProfiles = [];
+    try { dbProfiles = await listHoldingProfiles(); } catch { dbProfiles = []; }
+    const profiles = dbProfiles
+      .filter((p) => holding_codes.includes(p.stock_code))
+      .map((p) => ({
+        stock_code: p.stock_code,
+        short_name: p.short_name || p.stock_code,
+        industry: p.industry || '',
+        raw_materials: p.raw_materials, products: p.products, customers: p.customers,
+        overseas_peers: p.overseas_peers, policy_domains: p.policy_domains,
+        transport: p.transport, extra_keywords: p.extra_keywords,
+      }));
+    for (const ch of indirectChannels) {
       const r = await client.execute({ sql: tgSql, args: [since, ch, cap] });
       for (const row of r.rows) {
         const text = `${row.title || ''}\n${row.summary || ''}\n${row.content || ''}`;
@@ -387,9 +413,10 @@ export async function cleanupOldNews(cutoff_ms, keepChannels = []) {
     let sql = `DELETE FROM news_items WHERE published_at < ?`;
     const args = [cutoff_ms];
     if (keepChannels.length > 0) {
-      const clause = keepChannels.map(() => 'source_channel <> ?').join(' AND ');
+      // 用前缀匹配：持仓通道实际为 eastmoney_announcement_600519（带代码后缀）
+      const clause = keepChannels.map(() => 'source_channel NOT LIKE ?').join(' AND ');
       sql += ` AND ${clause}`;
-      args.push(...keepChannels);
+      args.push(...keepChannels.map((p) => `${p}%`));
     }
     const r = await client.execute({ sql, args });
     return r.rowsAffected || 0;
@@ -793,6 +820,84 @@ export async function listStockReports() {
 
 export async function deleteStockReport(stock_code) {
   await client.execute({ sql: `DELETE FROM research_stock_reports WHERE stock_code=?`, args: [String(stock_code).padStart(6, '0')] });
+}
+
+// =====================================================
+// 持仓产业链画像（可编辑，间接关联匹配用）
+// =====================================================
+
+function jarr(s) {
+  const a = safeJson(s);
+  return Array.isArray(a) ? a.map(String) : [];
+}
+
+// 用静态画像（holding-profiles.ts）作为种子，覆盖库里没有的持仓
+const SEED_PROFILES = new Map();
+import { HOLDING_PROFILES as _SEED } from './holding-profiles.js';
+for (const p of _SEED) SEED_PROFILES.set(p.stock_code, p);
+
+export async function upsertHoldingProfile({ stock_code, raw_materials, products, customers, overseas_peers, policy_domains, transport, extra_keywords }) {
+  const now = Date.now();
+  await client.execute({
+    sql: `INSERT INTO holding_profiles(stock_code,raw_materials,products,customers,overseas_peers,policy_domains,transport,extra_keywords,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(stock_code) DO UPDATE SET
+            raw_materials=excluded.raw_materials, products=excluded.products, customers=excluded.customers,
+            overseas_peers=excluded.overseas_peers, policy_domains=excluded.policy_domains, transport=excluded.transport,
+            extra_keywords=excluded.extra_keywords, updated_at=excluded.updated_at`,
+    args: [
+      String(stock_code).padStart(6, '0'),
+      JSON.stringify(raw_materials || []), JSON.stringify(products || []), JSON.stringify(customers || []),
+      JSON.stringify(overseas_peers || []), JSON.stringify(policy_domains || []), JSON.stringify(transport || []),
+      JSON.stringify(extra_keywords || []), now,
+    ],
+  });
+}
+
+export async function listHoldingProfiles() {
+  const r = await client.execute(`SELECT stock_code,raw_materials,products,customers,overseas_peers,policy_domains,transport,extra_keywords,updated_at FROM holding_profiles`);
+  const dbRows = r.rows.map((row) => ({
+    stock_code: row.stock_code,
+    raw_materials: jarr(row.raw_materials),
+    products: jarr(row.products),
+    customers: jarr(row.customers),
+    overseas_peers: jarr(row.overseas_peers),
+    policy_domains: jarr(row.policy_domains),
+    transport: jarr(row.transport),
+    extra_keywords: jarr(row.extra_keywords),
+    updated_at: Number(row.updated_at),
+  }));
+  const byCode = new Map(dbRows.map((p) => [p.stock_code, p]));
+  // 合并种子（库里没有的持仓用静态画像兜底，并标注 seed=true）
+  const merged = [];
+  const allCodes = new Set([...byCode.keys(), ...SEED_PROFILES.keys()]);
+  for (const code of allCodes) {
+    const seed = SEED_PROFILES.get(code);
+    const dbP = byCode.get(code);
+    if (dbP) merged.push({ ...dbP, short_name: seed?.short_name || dbP.stock_code, industry: seed?.industry || '', from_db: true });
+    else if (seed) merged.push({
+      stock_code: seed.stock_code, raw_materials: seed.raw_materials, products: seed.products, customers: seed.customers,
+      overseas_peers: seed.overseas_peers, policy_domains: seed.policy_domains, transport: seed.transport,
+      extra_keywords: seed.extra_keywords, short_name: seed.short_name, industry: seed.industry, from_db: false, updated_at: 0,
+    });
+  }
+  return merged;
+}
+
+export async function deleteHoldingProfile(stock_code) {
+  await client.execute({ sql: `DELETE FROM holding_profiles WHERE stock_code=?`, args: [String(stock_code).padStart(6, '0')] });
+}
+
+// 清理旧版采集写入的脏公告行（source_name='t' / 旧 guid 格式 ann:CODE:TS:IDX）
+export async function cleanupStaleAnnouncements() {
+  try {
+    await client.execute({ sql: `DELETE FROM news_items WHERE source_name = 't' AND source_channel LIKE 'eastmoney_announcement_%'` });
+    await client.execute({ sql: `DELETE FROM news_items WHERE source_channel LIKE 'eastmoney_announcement_%' AND id LIKE 'ann:%:%:%'` });
+    return true;
+  } catch (e) {
+    console.warn('[db] cleanupStaleAnnouncements:', e.message?.slice(0, 80));
+    return false;
+  }
 }
 
 export { client as db };

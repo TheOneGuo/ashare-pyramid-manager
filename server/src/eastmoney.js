@@ -63,20 +63,36 @@ async function fetchAnnouncements(stockList, { pageSize = 20, beginTime = null, 
   return list.map(normalizeAnnouncement).filter(Boolean);
 }
 
+// 剥离东财标题里冗余的「证券简称:」前缀（接口返回的 title 已带 证券简称:）
+function stripNamePrefix(title, shortName) {
+  if (!title) return title;
+  // 形如「贵州茅台:贵州茅台关于...」→「贵州茅台关于...」
+  const m = /^([\u4e00-\u9fa5A-Za-z0-9]+):(.+)$/.exec(title);
+  if (m && shortName && m[1] === shortName && m[2].startsWith(shortName)) {
+    return m[2]; // 首段 == 简称 且 后半也以简称开头 → 去掉整段前缀
+  }
+  if (m && m[1] === m[2].slice(0, m[1].length)) {
+    return m[2];
+  }
+  return title;
+}
+
 // 规范化公告字段
 function normalizeAnnouncement(raw) {
   if (!raw) return null;
   const code = (raw.codes && raw.codes[0]) || {};
   const art_code = raw.art_code;
-  const title = raw.title || raw.secu_name || '(无标题)';
+  const rawTitle = raw.title || raw.secu_name || '(无标题)';
+  const title = stripNamePrefix(String(rawTitle), code.short_name);
   const columns = (raw.columns || []).map((c) => c.column_name).filter(Boolean).join(' / ');
   const published_at = parseEasternTime(raw.display_time || raw.eiTime);
   return {
     source_channel: 'eastmoney_announcement',
     source_name: `东方财富·公告·${code.short_name || code.stock_code || ''}`.replace(/·$/, ''),
     guid: art_code ? `ann:${art_code}` : `ann:${code.stock_code}:${title}:${published_at}`,
-    title: String(title).slice(0, 200),
+    title: title.slice(0, 200),
     summary: columns || '',
+    content: '',
     link: art_code ? `https://data.eastmoney.com/notices/detail/${code.market_code || '1'}/${code.stock_code || ''},${art_code}.html` : '',
     published_at,
     raw: {
@@ -90,18 +106,45 @@ function normalizeAnnouncement(raw) {
   };
 }
 
-// 拉公告详情（拿 PDF 链接）
+// 拉公告详情（拿公告正文 + PDF 链接）
+// 返回 { content, pdf_url, notice_title, eitime }
 async function fetchAnnouncementDetail(artCode) {
   if (!artCode) return null;
   const url = `https://np-cnotice-stock.eastmoney.com/api/content/ann?art_code=${encodeURIComponent(artCode)}&client_source=web&page_index=1`;
   const j = await fetchJson(url, { timeoutMs: 8_000 });
   const d = (j && j.data) || {};
+  const content = d.notice_content || '';
   return {
-    art_code: d.art_code,
+    content,
     pdf_url: d.attach_url || (d.attach_list && d.attach_list[0] && d.attach_list[0].attach_url) || '',
-    title: d.notice_title || '',
+    notice_title: d.notice_title || '',
     eitime: d.eitime,
   };
+}
+
+// 给一条公告补正文 + PDF（调用详情接口），返回带 content/summary/link 的新 item
+async function enrichAnnouncement(item) {
+  const artCode = item?.raw?.art_code;
+  if (!artCode) return item;
+  try {
+    const d = await fetchAnnouncementDetail(artCode);
+    if (!d) return item;
+    const content = d.content || '';
+    return {
+      ...item,
+      content,
+      summary: (item.summary || '').trim() || (content ? content.slice(0, 200) : ''),
+      raw: {
+        ...item.raw,
+        attach_url: d.pdf_url || item.raw?.attach_url || '',
+        notice_title: d.notice_title || '',
+        eitime: d.eitime,
+      },
+      link: d.pdf_url ? d.pdf_url : item.link,
+    };
+  } catch (e) {
+    return item; // 详情失败不影响标题/摘要入库
+  }
 }
 
 // =====================================================
@@ -232,6 +275,7 @@ export {
   toEastmoneySecid,
   fetchAnnouncements,
   fetchAnnouncementDetail,
+  enrichAnnouncement,
   fetchStockNews,
   fetchF10MainFinIndicators,
 };

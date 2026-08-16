@@ -18,6 +18,7 @@
 
 import { CHANNELS, fetchOneSource } from './telegram-rss.js';
 import * as em from './eastmoney.js';
+import * as macro from './macro-news.js';
 
 const SECONDS = {
   TRADING: 15 * 60,
@@ -103,6 +104,7 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
     telegram: { refreshed: 0, fetched: 0, items: 0, errors: [] },
     holdings_news: { refreshed: 0, items: 0, errors: [] },
     announcements: { refreshed: 0, items: 0, errors: [] },
+    macro: { refreshed: 0, fetched: 0, items: 0, errors: [] },
   };
 
   // =====================================================
@@ -155,6 +157,41 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
   }
 
   // =====================================================
+  // 1.5) 宏观/产业链数据源（商品期货行情 + 新浪滚动新闻）
+  // 不按持仓过滤；商品/地缘/政策新闻通常不出现股票名，统一打标后由持仓分支经画像关键词命中
+  // =====================================================
+  try {
+    summary.macro.refreshed++;
+    if (mode === 'mock' || mode === 'hybrid') {
+      // mock 模式跳过真实拉取
+    } else {
+      const items = await macro.fetchAllMacro();
+      if (items.length > 0) {
+        // 商品期货按品种分别 upsert（每个 commodity 一个 source_channel，便于后续扩展）
+        const byCh = new Map();
+        for (const it of items) {
+          if (!byCh.has(it.source_channel)) byCh.set(it.source_channel, []);
+          byCh.get(it.source_channel).push(it);
+        }
+        for (const [ch, chItems] of byCh) {
+          await upsertNews(db, {
+            source_channel: ch,
+            source_name: chItems[0].source_name,
+            feed_url: 'https://push2.eastmoney.com/',
+            items: chItems,
+            now_ts: now,
+            last_error: '',
+          });
+        }
+        summary.macro.fetched++;
+        summary.macro.items += items.length;
+      }
+    }
+  } catch (e) {
+    summary.macro.errors.push(e.message);
+  }
+
+  // =====================================================
   // 2) 持仓标的相关 — 公告 + 个股新闻
   // =====================================================
   if (holdingCodes && holdingCodes.length > 0) {
@@ -178,7 +215,8 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
         } else {
           try {
             const list = await em.fetchAnnouncements(code, { pageSize: 10 });
-            annItems = list.map((it) => ({ ...it, source_channel: `eastmoney_announcement_${code}` }));
+            // 逐条补公告正文 + PDF（详情接口），失败不影响标题/摘要入库
+            annItems = await Promise.all(list.map((it) => em.enrichAnnouncement(it)));
           } catch (e) { annErr = e.message; }
         }
         if (annItems.length > 0) {

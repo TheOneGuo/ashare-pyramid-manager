@@ -21,7 +21,7 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, ROLE_LABELS } from './db.js';
+import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, ROLE_LABELS } from './db.js';
 import { enrichHolding, importFromText, importFromFile } from './stock-service.js';
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
@@ -510,6 +510,48 @@ app.delete('/api/portfolio/plans/:code', async (req, res) => {
 });
 
 // =====================================================
+// 持仓产业链画像（可编辑，间接关联匹配用）
+// =====================================================
+app.get('/api/portfolio/holding-profiles', async (_req, res) => {
+  try {
+    const list = await listHoldingProfiles();
+    res.json({ ok: true, profiles: list });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post('/api/portfolio/holding-profiles', async (req, res) => {
+  try {
+    const { stock_code, raw_materials, products, customers, overseas_peers, policy_domains, transport, extra_keywords } = req.body || {};
+    if (!stock_code) return res.status(400).json({ ok: false, error: 'stock_code 必填' });
+    const arr = (v) => (Array.isArray(v) ? v.map(String).filter(Boolean) : (String(v || '').split(/[,，\n]/).map((s) => s.trim()).filter(Boolean)));
+    await upsertHoldingProfile({
+      stock_code,
+      raw_materials: arr(raw_materials),
+      products: arr(products),
+      customers: arr(customers),
+      overseas_peers: arr(overseas_peers),
+      policy_domains: arr(policy_domains),
+      transport: arr(transport),
+      extra_keywords: arr(extra_keywords),
+    });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.delete('/api/portfolio/holding-profiles/:code', async (req, res) => {
+  try {
+    await deleteHoldingProfile(req.params.code);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// =====================================================
 // iFind token 健康检查（不打印 token 本体）
 // =====================================================
 app.get('/api/ifind/health', async (_req, res) => {
@@ -554,6 +596,8 @@ app.get('/', (_req, res) => {
 // =====================================================
 async function main() {
   await initDb();
+  // 清理旧版采集写入的脏公告行（source_name='t' / 旧 guid 格式 ann:CODE:TS:IDX）
+  cleanupStaleAnnouncements().then((ok) => console.log('[server] cleanup stale announcements:', ok ? 'done' : 'skipped')).catch(() => {});
   app.listen(PORT, () => {
     console.log(`[server] listening on http://localhost:${PORT}`);
     console.log(`[server] NEWS_SOURCE_MODE=${MODE}`);

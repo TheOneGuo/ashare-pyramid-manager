@@ -433,3 +433,31 @@ export async function listPlans(): Promise<{ ok: boolean; items: PlanItem[] }> {
 export async function deletePlan(code: string): Promise<{ ok: boolean }> {
   return jget(`/api/portfolio/plans/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
+
+// ---- 持仓产业链画像（可编辑，间接关联匹配用） ----
+export interface HoldingProfile {
+  stock_code: string
+  short_name?: string
+  industry?: string
+  raw_materials: string[]
+  products: string[]
+  customers: string[]
+  overseas_peers: string[]
+  policy_domains: string[]
+  transport: string[]
+  extra_keywords: string[]
+  from_db?: boolean
+  updated_at?: number
+}
+
+export async function listHoldingProfiles(): Promise<{ ok: boolean; profiles: HoldingProfile[] }> {
+  return jget('/api/portfolio/holding-profiles')
+}
+
+export async function upsertHoldingProfile(body: Partial<HoldingProfile> & { stock_code: string }): Promise<{ ok: boolean }> {
+  return jget('/api/portfolio/holding-profiles', { method: 'POST', body })
+}
+
+export async function deleteHoldingProfile(code: string): Promise<{ ok: boolean }> {
+  return jget(`/api/portfolio/holding-profiles/${encodeURIComponent(code)}`, { method: 'DELETE' })
+}
