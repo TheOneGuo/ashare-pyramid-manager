@@ -19,6 +19,7 @@
 import { CHANNELS, fetchOneSource } from './telegram-rss.js';
 import * as em from './eastmoney.js';
 import * as macro from './macro-news.js';
+import { HOLDING_NEWS_CHANNELS } from './db.js';
 
 const SECONDS = {
   TRADING: 15 * 60,
@@ -278,7 +279,7 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
   }
 
   // 清理过期（持仓相关公告/个股新闻因发布时间可能很早，不参与清理）
-  await db.cleanupOldNews(now - NEWS_RETENTION_HOURS * 3600_000, db.HOLDING_NEWS_CHANNELS);
+  await db.cleanupOldNews(now - NEWS_RETENTION_HOURS * 3600_000, HOLDING_NEWS_CHANNELS);
 
   return summary;
 }

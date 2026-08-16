@@ -301,6 +301,8 @@ onMounted(() => { loadReports(); loadHoldings(); loadStockReports() })
 $rf-amber: #ffb86b;
 $rf-orange: #ff7a3d;
 $color-bg: #0d1b2a;
+$color-text-primary: #f5ecd9;
+$color-text-secondary: #a89a82;
 $app-bg: #0d1b2a;
 $app-card-bg: linear-gradient(180deg, rgba(255, 184, 107, 0.055), rgba(114, 247, 255, 0.025));
 $app-border: rgba(255, 184, 107, 0.24);
@@ -331,7 +333,7 @@ $spacing-base: 24rpx;
 /* head 区固定，不参与滚动 */
 .rs-head {
   flex: 0 0 auto;
-  padding: $spacing-base $spacing-base 0;
+  padding: 16rpx 0 8rpx;
   background: $app-bg;
 }
 /* body 区滚动，右侧美化金色滚动条只在此处 */
@@ -350,9 +352,9 @@ $spacing-base: 24rpx;
   border-radius: 6rpx;
 }
 .rs-body { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
-.rs-header { padding: $spacing-base 0; margin-bottom: 8rpx; }
-.rs-title { display: block; font-size: 44rpx; font-weight: 600; color: $app-text; }
-.rs-meta { display: block; font-size: 24rpx; color: $app-text-muted; margin-top: 8rpx; }
+.rs-header { display: flex; flex-direction: column; padding: 16rpx 24rpx 8rpx; margin-bottom: 8rpx; }
+.rs-title { display: block; font-size: 44rpx; font-weight: 700; color: $color-text-primary; letter-spacing: 1rpx; }
+.rs-meta { display: block; font-size: 22rpx; color: $color-text-secondary; margin-top: 8rpx; letter-spacing: 1rpx; }
 
 .rs-tabbar { display: flex; gap: 12rpx; margin-bottom: $spacing-base; }
 .rs-tab {
