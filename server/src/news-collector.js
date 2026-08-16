@@ -215,12 +215,10 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
             published_at: it.published_at,
             raw: { mock: true, stock_code: code },
           }));
-        } else {
-          try {
-            const list = await em.fetchStockNews(code, { pageSize: 10 });
-            newsItems = list.map((it) => ({ ...it, source_channel: `eastmoney_stock_news_${code}` }));
-          } catch (e) { newsErr = e.message; }
         }
+        // 注：real 模式跳过英文 Yahoo 个股新闻采集（用户要求持仓相关仅中文、无英文）；
+        // 中文个股新闻接口（东财/Sina/同花顺/QQ）当前均不可用。间接关联改由持仓 tab
+        // 经产业链画像关键词命中宏观电报实现。
         if (newsItems.length > 0) {
           await upsertNews(db, {
             source_channel: `eastmoney_stock_news_${code}`,

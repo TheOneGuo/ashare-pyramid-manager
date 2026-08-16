@@ -12,6 +12,7 @@
  */
 
 import { createClient } from '@libsql/client';
+import { HOLDING_PROFILES, matchHoldingProfile } from './holding-profiles.js';
 import 'dotenv/config';
 
 const url = process.env.TURSO_DATABASE_URL?.trim();
@@ -321,21 +322,27 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
   }
 
   if (Array.isArray(holding_codes) && holding_codes.length > 0) {
-    const tgChannels = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
+    const directCh = [];
     const perSrc = Math.max(20, Math.ceil(cap / 2)); // 每个持仓源保底 20 条
     const rows = [];
-    // 宏观电报（作为持仓相关的大盘背景）
-    const tgSql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
-    for (const ch of tgChannels) {
-      const r = await client.execute({ sql: tgSql, args: [since, ch, cap] });
-      rows.push(...r.rows);
-    }
-    // 持仓专属源（公告 + 个股新闻）单独取，不与其他源抢 LIMIT
+    // ① 直接关联：每个持仓的东财公告（中文，按代码命中）单独取，不抢 LIMIT
     const holdSql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
     for (const c of holding_codes) {
-      for (const ch of [`eastmoney_stock_news_${c}`, `eastmoney_announcement_${c}`]) {
-        const r = await client.execute({ sql: holdSql, args: [since, ch, perSrc] });
-        rows.push(...r.rows);
+      const ch = `eastmoney_announcement_${c}`;
+      directCh.push(ch);
+      const r = await client.execute({ sql: holdSql, args: [since, ch, perSrc] });
+      rows.push(...r.rows);
+    }
+    // ② 间接关联：宏观/电报新闻中命中持仓产业链画像关键词（不含英文源、不混入全量）
+    const tgChannels = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
+    const tgSql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
+    const profiles = HOLDING_PROFILES.filter((p) => holding_codes.includes(p.stock_code));
+    for (const ch of tgChannels) {
+      const r = await client.execute({ sql: tgSql, args: [since, ch, cap] });
+      for (const row of r.rows) {
+        const text = `${row.title || ''}\n${row.summary || ''}\n${row.content || ''}`;
+        const matched = matchHoldingProfile(text, profiles);
+        if (matched.length > 0) rows.push(row);
       }
     }
     // 去重 + 排序 + 限顶
@@ -395,7 +402,6 @@ export async function cleanupOldNews(cutoff_ms, keepChannels = []) {
 // 持仓相关源不参与时间清理（公告/个股新闻发布时间可能很早，但对持仓监控长期有用）
 export const HOLDING_NEWS_CHANNELS = [
   'eastmoney_announcement',
-  'eastmoney_stock_news',
 ];
 
 // 判断某 source_channel 是否属于持仓相关源（前缀匹配）
