@@ -31,13 +31,17 @@
     <view class="news-body">
     <!-- 持仓标的关键词（顶部，用于筛选新闻） -->
     <view v-if="activeScope === 'holding'" class="news-kw-card">
-      <view class="news-kw-head">
-        <text class="news-kw-title">持仓标的关键词</text>
-        <text class="news-kw-sub">提炼持仓相关关键词，自动筛选新闻</text>
+      <view class="news-kw-head" @tap="kwOpen = !kwOpen">
+        <view class="news-kw-head-main">
+          <text class="news-kw-title">持仓标的关键词</text>
+          <text class="news-kw-sub">展开可调整每个持仓标的的关键词</text>
+        </view>
+        <text class="news-kw-toggle">{{ kwOpen ? '收起' : '展开' }}</text>
       </view>
+      <view v-if="kwOpen">
       <view v-if="focusCode" class="news-kw-focus">
         正在聚焦：<text class="news-kw-focus-code">{{ focusName }}（{{ focusCode }}）</text>
-        <text class="news-kw-focus-clear" @tap="clearFocus">✕ 取消聚焦</text>
+        <text class="news-kw-focus-clear" @tap.stop="clearFocus">✕ 取消聚焦</text>
       </view>
       <view v-for="pr in kwProfiles" :key="pr.stock_code" class="news-kw-item">
         <view class="news-kw-row">
@@ -47,7 +51,8 @@
         <input class="news-kw-input" v-model="pr.keywords" placeholder="上游原材料, 产品, 客户, 政策域, 自定义…" />
       </view>
       <view class="news-kw-actions">
-        <view class="news-kw-btn" hover-class="news-kw-btn--hover" @tap="saveKeywords">保存关键词</view>
+        <view class="news-kw-btn" hover-class="news-kw-btn--hover" @tap.stop="saveKeywords">保存关键词</view>
+      </view>
       </view>
     </view>
 
@@ -134,6 +139,7 @@ function toggleExpand(id: string) {
 }
 const holdings = ref<Array<{ stock_code: string; short_name?: string }>>([])
 const kwProfiles = ref<Array<{ stock_code: string; short_name?: string; keywords: string }>>([])
+const kwOpen = ref(false)
 const focusCode = ref<string>('')
 const focusName = ref<string>('')
 
@@ -169,28 +175,27 @@ async function loadHoldings() {
 
 // 持仓标的关键词画像（顶部卡片可编辑，库表 holding_profiles）
 async function loadProfiles() {
+  let stored: any[] = []
   try {
     const r: any = await listHoldingProfiles()
-    const list = (r.profiles || []).map((p: any) => ({
-      stock_code: normalizeCode(p.stock_code),
-      short_name: p.short_name || '',
-      keywords: [
-        ...(p.raw_materials || []),
-        ...(p.products || []),
-        ...(p.customers || []),
-        ...(p.overseas_peers || []),
-        ...(p.policy_domains || []),
-        ...(p.transport || []),
-        ...(p.extra_keywords || []),
-      ].join(','),
-    }))
-    // 持仓有但画像缺的，补一行空画像
-    const have = new Set(list.map((x: any) => x.stock_code))
-    for (const h of holdings.value) {
-      if (!have.has(h.stock_code)) list.push({ stock_code: h.stock_code, short_name: h.short_name || '', keywords: '' })
-    }
-    kwProfiles.value = list
+    stored = r.profiles || []
   } catch (e) { console.warn('[news] loadProfiles failed', e) }
+  // 只保留当前持仓的标的（移除已清仓/不再持有的旧画像），确保与最新持仓同步
+  const list = holdings.value.map((h) => {
+    const code = normalizeCode(h.stock_code)
+    const sp = stored.find((p: any) => normalizeCode(p.stock_code) === code)
+    const keywords = sp ? [
+      ...(sp.raw_materials || []),
+      ...(sp.products || []),
+      ...(sp.customers || []),
+      ...(sp.overseas_peers || []),
+      ...(sp.policy_domains || []),
+      ...(sp.transport || []),
+      ...(sp.extra_keywords || []),
+    ].join(',') : ''
+    return { stock_code: code, short_name: h.short_name || sp?.short_name || '', keywords }
+  })
+  kwProfiles.value = list
 }
 async function saveKeywords() {
   uni.showLoading({ title: '保存中…' })
@@ -472,9 +477,11 @@ $radius-full: 999px;
   padding: 20rpx 20rpx 16rpx;
   margin-bottom: 16rpx;
 }
-.news-kw-head { display: flex; flex-direction: column; }
+.news-kw-head { display: flex; flex-direction: row; align-items: center; justify-content: space-between; cursor: pointer; }
+.news-kw-head-main { display: flex; flex-direction: column; }
 .news-kw-title { font-size: 28rpx; font-weight: 700; color: $color-text-primary; }
 .news-kw-sub { font-size: 22rpx; color: $color-text-secondary; margin-top: 4rpx; }
+.news-kw-toggle { font-size: 22rpx; color: $rf-amber; padding: 8rpx 12rpx; }
 .news-kw-focus {
   display: flex; align-items: center; justify-content: space-between;
   font-size: 22rpx; color: $rf-amber; padding: 10rpx 0;
@@ -487,8 +494,9 @@ $radius-full: 999px;
 .news-kw-code { font-size: 20rpx; color: $color-text-secondary; }
 .news-kw-input {
   width: 100%; box-sizing: border-box;
-  margin-top: 6rpx; padding: 12rpx 14rpx;
-  font-size: 22rpx; color: $color-text-primary;
+  margin-top: 6rpx; padding: 16rpx 16rpx;
+  min-height: 72rpx;
+  font-size: 24rpx; line-height: 1.4; color: $color-text-primary;
   background: rgba(0,0,0,0.25); border: 1rpx solid $color-border; border-radius: $radius-md;
 }
 .news-kw-actions { display: flex; justify-content: flex-end; margin-top: 12rpx; }

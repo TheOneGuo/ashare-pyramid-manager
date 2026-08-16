@@ -45,9 +45,14 @@
         <view v-else class="pf-ledger-state">
           <view class="pf-ledger-grid">
             <view class="pf-ledger-cell"><text class="pf-ledger-k">可用保证金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.available) }}</text></view>
-            <view class="pf-ledger-cell"><text class="pf-ledger-k">可开标的上限</text><text class="pf-ledger-v">{{ ledgerSnapshot.max_hold }}</text></view>
-            <view class="pf-ledger-cell"><text class="pf-ledger-k">已分配资金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.allocated) }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">手续费率</text><text class="pf-ledger-v">万分之 {{ ledgerSnapshot.fee_rate_wan }}</text></view>
+          </view>
+          <view class="pf-ledger-grid">
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">可开标的</text><text class="pf-ledger-v">{{ ledgerSnapshot.max_hold }}</text></view>
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">已分配资金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.allocated) }}</text></view>
+          </view>
+          <view class="pf-ledger-grid">
+            <view class="pf-ledger-cell"><text class="pf-ledger-k">未实现盈亏</text><text class="pf-ledger-v" :class="unrealizedPnl >= 0 ? 'pf-up' : 'pf-down'">{{ fmtMoney(unrealizedPnl) }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">累计实现盈亏</text><text class="pf-ledger-v" :class="ledgerSnapshot.realized_pnl >= 0 ? 'pf-up' : 'pf-down'">{{ fmtMoney(ledgerSnapshot.realized_pnl) }}</text></view>
           </view>
 
@@ -120,10 +125,6 @@
             <text class="pf-col pf-col--num">{{ h.current_price != null ? fmtMoney(h.current_price, 2) : '—' }}</text>
             <text class="pf-col pf-col--num" :class="pnlClass(h)">{{ h.pnl != null ? (h.pnl >= 0 ? '+' : '') + fmtMoney(h.pnl, 0) : '—' }}</text>
             <text class="pf-hold-del" @tap="onHoldDel(h)">✕</text>
-          </view>
-          <view class="pf-hold-links">
-            <text class="pf-hold-link" @tap="jumpToNews(h)">相关新闻</text>
-            <text class="pf-hold-link" @tap="jumpToResearch(h)">AI 研报</text>
           </view>
         </view>
       </view>
@@ -421,6 +422,16 @@ function uniPrompt(title: string, placeholder: string): Promise<number | null> {
 const importOpen = ref(true)
 const importNote = ref('')
 const holdings = ref<Holding[]>([])
+// 未实现盈亏 = Σ(现价 - 成本) × 股数（仅当前持仓标的）
+const unrealizedPnl = computed(() => {
+  return (holdings.value || []).reduce((sum: number, h: any) => {
+    const p = (h.current_price != null ? Number(h.current_price) : null)
+    const c = (h.cost_basis != null ? Number(h.cost_basis) : null)
+    const q = (h.shares != null ? Number(h.shares) : 0)
+    if (p != null && c != null) return sum + (p - c) * q
+    return sum
+  }, 0)
+})
 const fileInput = ref<any>(null)
 
 // 手动输入
@@ -679,7 +690,22 @@ const trackSteps = ref<any[]>([])
 async function loadPlans() {
   try {
     const r = await listPlans()
-    planItems.value = r.items || []
+    // 第3点：计划项若缺代码或名称，自动用持仓列表补全（代码⇄名称互填）
+    const byCode = new Map<string, any>()
+    const byName = new Map<string, any>()
+    for (const h of holdings.value) {
+      byCode.set(String(h.stock_code).padStart(6, '0'), h)
+      if (h.short_name) byName.set(h.short_name, h)
+    }
+    planItems.value = (r.items || []).map((p: any) => {
+      const code = String(p.stock_code || '').padStart(6, '0')
+      const h = byCode.get(code) || (p.stock_name ? byName.get(p.stock_name) : null)
+      return {
+        ...p,
+        stock_code: h ? h.stock_code : code,
+        stock_name: p.stock_name || (h ? h.short_name : '') || code,
+      }
+    })
     if (planItems.value.length && !trackSelected.value) onTrackSelect(planItems.value[0].stock_code)
   } catch (e) { console.warn('[plans] load failed', e) }
 }
