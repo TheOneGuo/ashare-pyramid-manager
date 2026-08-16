@@ -352,7 +352,7 @@ $spacing-base: 24rpx;
   border-radius: 6rpx;
 }
 .rs-body { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
-.rs-header { display: flex; flex-direction: column; padding: 16rpx 24rpx 8rpx; margin-bottom: 8rpx; }
+.rs-header { display: flex; flex-direction: column; padding: 16rpx 0 8rpx; margin-bottom: 8rpx; }
 .rs-title { display: block; font-size: 44rpx; font-weight: 700; color: $color-text-primary; letter-spacing: 1rpx; }
 .rs-meta { display: block; font-size: 22rpx; color: $color-text-secondary; margin-top: 8rpx; letter-spacing: 1rpx; }
 

@@ -13,14 +13,14 @@
       <view
         class="news-source-chip"
         :class="{ active: activeScope === 'all' }"
-        @tap="onScopeChange(); activeScope = 'all'"
+        @tap="switchScope('all')"
       >
         <text>全部 · {{ allCount }}</text>
       </view>
       <view
         class="news-source-chip"
         :class="{ active: activeScope === 'holding' }"
-        @tap="onScopeChange(); activeScope = 'holding'"
+        @tap="switchScope('holding')"
       >
         <text>持仓标的相关 · {{ holdingCount }}</text>
       </view>
@@ -55,7 +55,11 @@
           <text class="news-item-tag">持仓 {{ item.matchedHoldings.join(' · ') }}</text>
         </view>
         <text class="news-item-title">{{ item.title }}</text>
-        <text v-if="item.summary" class="news-item-summary">{{ item.summary }}</text>
+        <template v-if="item.summary">
+          <text v-if="activeScope === 'holding' && (item.summary || '').length > 90 && !expandedIds.has(item.id)" class="news-item-summary news-item-summary--clamp">{{ item.summary.slice(0, 90) }}…</text>
+          <text v-else class="news-item-summary">{{ item.summary }}</text>
+          <text v-if="activeScope === 'holding' && (item.summary || '').length > 90" class="news-item-toggle" @tap="toggleExpand(item.id)">{{ expandedIds.has(item.id) ? '收起全文 ↑' : '展开全文 ↓' }}</text>
+        </template>
       </view>
     </view>
     </view>
@@ -99,6 +103,12 @@ interface NewsItem {
 const items = ref<NewsItem[]>([])
 const loading = ref(false)
 const activeScope = ref<'all' | 'holding'>('all')
+const expandedIds = ref<Set<string>>(new Set())
+function toggleExpand(id: string) {
+  const next = new Set(expandedIds.value)
+  if (next.has(id)) next.delete(id); else next.add(id)
+  expandedIds.value = next
+}
 const holdings = ref<Array<{ stock_code: string; short_name?: string }>>([])
 
 function normalizeCode(c: string) {
@@ -245,9 +255,10 @@ onPullDownRefresh(async () => {
   uni.stopPullDownRefresh()
 })
 
-function onScopeChange() {
-  // 切换全部/持仓相关：重新拉取对应数据源
-  fetchNews(false)
+function switchScope(scope: 'all' | 'holding') {
+  // 先切换 scope 再拉取，避免拿到上一个 scope 的内容
+  activeScope.value = scope
+  fetchNews(false, scope)
 }
 
 onBeforeUnmount(() => {})
@@ -292,7 +303,8 @@ $radius-full: 999px;
 /* head 区固定，不参与滚动 */
 .news-head {
   flex: 0 0 auto;
-  padding: 16rpx 24rpx 0;
+  padding: 16rpx 0 8rpx;
+  margin-bottom: 12rpx;
   background: $color-bg;
 }
 /* body 区滚动，右侧美化金色滚动条只在此处 */
@@ -315,7 +327,7 @@ $radius-full: 999px;
 .news-header {
   display: flex;
   flex-direction: column;
-  padding: 16rpx 0 8rpx;
+  padding: 0;
 }
 
 .news-title {
@@ -443,6 +455,20 @@ $radius-full: 999px;
   line-height: 1.65;
   color: $color-text-warm;
   white-space: pre-wrap;
+}
+.news-item-summary--clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+}
+.news-item-toggle {
+  display: inline-block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: $rf-amber;
+  font-weight: 600;
 }
 
 </style>
