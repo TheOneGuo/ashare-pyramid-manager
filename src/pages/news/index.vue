@@ -352,7 +352,25 @@ function switchScope(scope: 'all' | 'holding') {
   fetchNews(false, scope)
 }
 
-onBeforeUnmount(() => {})
+// 持仓标的相关/财经快讯 自动刷新（页面在前台时每 30s 拉一次，切走即停）
+const NEWS_POLL_MS = 30000
+let pollTimer: any = null
+function startNewsPoll() {
+  stopNewsPoll()
+  pollTimer = setInterval(() => { fetchNews(false) }, NEWS_POLL_MS)
+}
+function stopNewsPoll() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
+}
+// H5 端切到别的 tab 时暂停轮询，避免后台空转
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopNewsPoll()
+    else startNewsPoll()
+  })
+}
+onMounted(() => startNewsPoll())
+onBeforeUnmount(() => stopNewsPoll())
 </script>
 
 <style lang="scss" scoped>
