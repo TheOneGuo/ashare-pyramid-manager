@@ -145,7 +145,7 @@
         </view>
         <view class="pf-proposed-added">
           <view v-for="(p, i) in proposedTargets" :key="i" class="pf-proposed-row">
-            <input class="pf-input pf-input--sm" v-model="p.code" placeholder="代码" />
+            <input class="pf-input pf-input--sm" v-model="p.code" placeholder="代码" @blur="onProposedCodeBlur(p)" />
             <input class="pf-input pf-input--md" v-model="p.name" placeholder="名称" />
             <input class="pf-input pf-input--xs" type="number" v-model.number="p.price" placeholder="基准价" />
             <text class="pf-rec-del" @tap="proposedTargets.splice(i, 1)">✕</text>
@@ -283,7 +283,7 @@ import {
   listHoldings, deleteHolding,
   importHoldings, analyzePortfolio,
   getLedger, appendLedgerEvent, previewLedgerEvent, clearLedger,
-  listPlans, deletePlan, addPlan,
+  listPlans, deletePlan, addPlan, resolveStockCode,
   type Holding, type AnalyzeReport,
   type LedgerSnapshot, type LedgerEvent, type PlanItem,
 } from '@/api/portfolio'
@@ -562,6 +562,17 @@ async function fileToBase64(fp: any): Promise<string> {
 const proposedOpen = ref(true)
 const proposedTargets = ref<{ code: string; name: string; price: number | null }[]>([])
 
+// 拟新买标的输入代码后，自动补全名称（腾讯实时行情），让用户确认后再分析
+async function onProposedCodeBlur(p: { code: string; name: string; price: number | null }) {
+  const code = padCode(p.code || '')
+  if (!/^\d{6}$/.test(code)) return
+  if (p.name && p.name.trim()) return // 已手动填了名称就不覆盖
+  try {
+    const r: any = await resolveStockCode(code)
+    if (r && r.ok && r.name) p.name = r.name
+  } catch (e) { /* 静默：补全失败不影响输入 */ }
+}
+
 function onCapitalInput(e: any) {
   const v = Number(e?.detail?.value)
   totalCapital.value = Number.isNaN(v) ? null : v
@@ -601,6 +612,14 @@ async function onRunAnalyze() {
     return
   }
   if (!totalCapital.value || totalCapital.value <= 0) { uni.showToast({ title: '请输入总资金', icon: 'none' }); return }
+
+  // 拟新买标的：若只填了代码没补名称，先批量补全名称（保证方案/跟踪里显示名称而非代码）
+  for (const p of proposedTargets.value) {
+    const code = padCode(p.code || '')
+    if (/^\d{6}$/.test(code) && !p.name?.trim()) {
+      try { const r: any = await resolveStockCode(code); if (r && r.ok && r.name) p.name = r.name } catch (e) { /* ignore */ }
+    }
+  }
 
   const stocks = [
     ...holdings.value.map((h) => ({ code: h.stock_code, name: h.short_name, price: h.cost_basis, capital: 0 })),

@@ -52,9 +52,21 @@ function sync() {
 }
 
 function onTap(i: number) {
-  if (i === current.value) return
+  if (i === current.value) {
+    // 已在当前页：仍确保高亮正确（防 H5 缓存导致高亮错位）
+    sync()
+    return
+  }
+  current.value = i // 乐观更新高亮，避免「高亮变了但内容没变」的体感
   uni.switchTab({ url: '/' + routes[i] })
 }
+
+// H5 端 URL hash 变化（如 jumpToNews 切 tab）时也同步高亮，防止缓存错位
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('hashchange', sync)
+  }
+})
 
 onMounted(sync)
 onShow(sync)

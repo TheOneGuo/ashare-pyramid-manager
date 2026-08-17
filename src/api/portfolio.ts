@@ -321,6 +321,11 @@ export async function importHoldings(body: {
   return jget('/api/portfolio/holdings/import', { method: 'POST', body, timeoutMs: 40000 })
 }
 
+// 代码→名称/现价 实时补全（腾讯行情），给拟新买标的在输入后自动补名称
+export async function resolveStockCode(code: string): Promise<{ ok: boolean; name: string; price: number | null; code: string }> {
+  return jget('/api/portfolio/resolve', { method: 'POST', body: { code }, timeoutMs: 8000 })
+}
+
 // ---- Roles + Recommendations ----
 export async function listRoles(): Promise<Record<string, string>> {
   const r: any = await jget('/api/portfolio/roles')

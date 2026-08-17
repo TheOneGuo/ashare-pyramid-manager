@@ -292,6 +292,19 @@ app.post('/api/portfolio/holdings/import', async (req, res) => {
   }
 });
 
+// 代码→名称（实时行情补全，给拟新买标的用）
+app.post('/api/portfolio/resolve', async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    if (!code || !/^\d{6}$/.test(String(code).padStart(6, '0'))) return res.status(400).json({ ok: false, error: '代码格式不正确' });
+    const q = await fetchQuote(String(code).padStart(6, '0'));
+    if (!q) return res.json({ ok: false, name: '', price: null });
+    res.json({ ok: true, name: q.name, price: q.price, code: String(code).padStart(6, '0') });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.post('/api/portfolio/analyze', async (req, res) => {
   try {
     const result = await handleAnalyze(req.body || {});
