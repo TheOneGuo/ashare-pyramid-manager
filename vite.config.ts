@@ -8,7 +8,8 @@ import uni from "@dcloudio/vite-plugin-uni";
 // 生产阶段：uni-app 编译时会把相对路径保留，由各端运行时直接访问。
 export default defineConfig({
   plugins: [uni()],
-  envPrefix: ["VITE_", "TURSO_", "API_"],
+  // 注意：绝不要把 TURSO_ 列入 envPrefix，否则数据库 token 会被打进客户端 bundle 造成泄露
+  envPrefix: ["VITE_"],
   server: {
     proxy: {
       "/api": {

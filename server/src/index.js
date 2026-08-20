@@ -46,19 +46,18 @@ const app = express();
 // CORS - 开发模式允许所有 origin（H5 dev 5173 + preview file://）
 // 生产模式收窄为白名单
 // =====================================================
-const CORS_ORIGINS = (process.env.CORS_ORIGINS || '*').split(',').map(s => s.trim());
+// CORS：只允许显式白名单。默认开发期 localhost + file://；生产必须用 ALLOWED_ORIGINS 指定，禁止反射任意 Origin
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+const DEV_CORS = process.env.DEV_CORS === '1' || ALLOWED_ORIGINS.length === 0;
+const DEV_ORIGINS = ['http://localhost:5173', 'https://localhost:5173', 'http://127.0.0.1:5173', 'null'];
+const ALLOWED_ORIGIN_SET = new Set([...ALLOWED_ORIGINS, ...(DEV_CORS ? DEV_ORIGINS : [])]);
 app.use((req, res, next) => {
   const origin = req.headers.origin || '';
-  const allowed = CORS_ORIGINS.includes('*') ||
-    CORS_ORIGINS.includes(origin) ||
-    origin === 'null' ||  // file:// origin
-    /^https?:\/\/localhost(:\d+)?$/.test(origin) ||
-    /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin);
-  if (allowed) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  if (ALLOWED_ORIGIN_SET.has(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-API-Key');
     res.setHeader('Access-Control-Max-Age', '600');
   }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
@@ -66,6 +65,30 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '2mb' }));
+
+// 统一 JSON 解析错误处理：畸形 body 返回 400 JSON，而非 Express 默认 HTML 错误页
+app.use((err, _req, res, next) => {
+  if (err && err.type === 'entity.parse.failed') {
+    return res.status(400).json({ ok: false, error: 'invalid_json' });
+  }
+  next(err);
+});
+
+// API 鉴权中间件：配置 API_KEY 后，所有写操作必须带 x-api-key（或 Authorization: Bearer）
+const API_KEY = process.env.API_KEY || '';
+if (!API_KEY && process.env.NODE_ENV === 'production') {
+  console.warn('[server][security] 生产环境未设置 API_KEY，所有写接口匿名开放，存在越权风险！');
+}
+function requireAuth(req, res, next) {
+  if (!API_KEY) return next();
+  const key = req.headers['x-api-key'] || String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
+  if (key && key === API_KEY) return next();
+  return res.status(401).json({ ok: false, error: 'unauthorized' });
+}
+
+// 刷新互斥锁 + ifind 检查限速（防止并发刷新叠加打爆外部源 / token 被滥用）
+let refreshing = false;
+let lastIfindCheck = 0;
 
 let lastRefreshAt = 0;
 let lastRefreshSummary = null;
@@ -94,8 +117,10 @@ app.get('/api/health', async (_req, res) => {
 // =====================================================
 app.get('/api/news', async (req, res) => {
   try {
-    const limit = Number(req.query.limit || 30);
-    const since = Number(req.query.since || 0);
+    const limitRaw = Number(req.query.limit);
+    const sinceRaw = Number(req.query.since);
+    const limit = Number.isFinite(limitRaw) ? Math.min(200, Math.max(1, limitRaw)) : 30;
+    const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
     const holding = req.query.holding === '1' || req.query.holding === 'true';
     let items;
     if (holding) {
@@ -121,7 +146,9 @@ app.get('/api/news/sources', async (_req, res) => {
   }
 });
 
-app.post('/api/news/refresh', async (req, res) => {
+app.post('/api/news/refresh', requireAuth, async (req, res) => {
+  if (refreshing) return res.status(429).json({ ok: false, error: 'refresh_in_progress' });
+  refreshing = true;
   try {
     const holdings = await listHoldings();
     const codes = holdings.map((h) => h.stock_code);
@@ -134,7 +161,9 @@ app.post('/api/news/refresh', async (req, res) => {
     lastRefreshSummary = summary;
     res.json({ ok: true, summary });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    res.status(500).json({ ok: false, error: 'internal_error' });
+  } finally {
+    refreshing = false;
   }
 });
 
@@ -150,20 +179,32 @@ app.get('/api/holdings', async (_req, res) => {
   }
 });
 
-app.post('/api/holdings', async (req, res) => {
+app.post('/api/holdings', requireAuth, async (req, res) => {
   try {
     const { stock_code, short_name, market, shares, cost_basis } = req.body || {};
-    if (!stock_code || shares == null) {
-      return res.status(400).json({ ok: false, error: 'stock_code & shares required' });
+    const code = String(stock_code || '').trim();
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ ok: false, error: 'stock_code 必须为 6 位数字' });
     }
-    await upsertHolding({ stock_code, short_name, market, shares, cost_basis });
+    const sh = Number(shares);
+    if (!Number.isFinite(sh) || !Number.isInteger(sh) || sh <= 0) {
+      return res.status(400).json({ ok: false, error: 'shares 必须为正整数' });
+    }
+    const cost = cost_basis == null ? 0 : Number(cost_basis);
+    if (!Number.isFinite(cost) || cost < 0) {
+      return res.status(400).json({ ok: false, error: 'cost_basis 必须为非负数字' });
+    }
+    if (short_name != null && typeof short_name !== 'string') {
+      return res.status(400).json({ ok: false, error: 'short_name 必须为字符串' });
+    }
+    await upsertHolding({ stock_code: code, short_name, market, shares: sh, cost_basis: cost });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    res.status(500).json({ ok: false, error: 'internal_error' });
   }
 });
 
-app.delete('/api/holdings/:code', async (req, res) => {
+app.delete('/api/holdings/:code', requireAuth, async (req, res) => {
   try {
     await removeHolding(req.params.code);
     res.json({ ok: true });
@@ -190,7 +231,7 @@ app.get('/api/portfolio/recommendations', async (req, res) => {
   }
 });
 
-app.post('/api/portfolio/recommendations', async (req, res) => {
+app.post('/api/portfolio/recommendations', requireAuth, async (req, res) => {
   try {
     const { role, items } = req.body || {};
     if (!role || !ROLE_LABELS[role]) {
@@ -206,7 +247,7 @@ app.post('/api/portfolio/recommendations', async (req, res) => {
   }
 });
 
-app.post('/api/portfolio/recommendations/item', async (req, res) => {
+app.post('/api/portfolio/recommendations/item', requireAuth, async (req, res) => {
   try {
     const { role, stock_code, stock_name, weight, note } = req.body || {};
     if (!role || !ROLE_LABELS[role]) {
@@ -222,7 +263,7 @@ app.post('/api/portfolio/recommendations/item', async (req, res) => {
   }
 });
 
-app.delete('/api/portfolio/recommendations/:role/:code', async (req, res) => {
+app.delete('/api/portfolio/recommendations/:role/:code', requireAuth, async (req, res) => {
   try {
     await removeRecommendation({ role: req.params.role, stock_code: req.params.code });
     res.json({ ok: true });
@@ -247,7 +288,7 @@ app.get('/api/portfolio/recommendations/compare', async (req, res) => {
 // =====================================================
 // Portfolio Analyze（截图识别 + 5 步校验 + pyramid 算方案）
 // =====================================================
-app.post('/api/portfolio/extract', async (req, res) => {
+app.post('/api/portfolio/extract', requireAuth, async (req, res) => {
   try {
     const result = await handleExtract(req.body || {});
     res.json(result);
@@ -260,7 +301,7 @@ app.post('/api/portfolio/extract', async (req, res) => {
 // 持仓入库（拍照/导入文件/手动）→ 富化（代码/名称/现价/盈亏）
 // 等价替代 akshare：腾讯行情 + 新浪提示
 // =====================================================
-app.post('/api/portfolio/holdings/import', async (req, res) => {
+app.post('/api/portfolio/holdings/import', requireAuth, async (req, res) => {
   try {
     const { source, images, file_b64, file_name, text, items } = req.body || {};
     let enriched = [];
@@ -305,7 +346,7 @@ app.post('/api/portfolio/resolve', async (req, res) => {
   }
 });
 
-app.post('/api/portfolio/analyze', async (req, res) => {
+app.post('/api/portfolio/analyze', requireAuth, async (req, res) => {
   try {
     const result = await handleAnalyze(req.body || {});
     // 注意：分析仅返回方案，不再自动写入「持仓方案跟踪」。
@@ -317,7 +358,7 @@ app.post('/api/portfolio/analyze', async (req, res) => {
 });
 
 // 显式「确认并加入跟踪」：前端用户在策略方案中点确认后调用
-app.post('/api/portfolio/plans', async (req, res) => {
+app.post('/api/portfolio/plans', requireAuth, async (req, res) => {
   try {
     const items = Array.isArray(req.body) ? req.body : [req.body];
     let ok = 0;
@@ -341,7 +382,7 @@ app.post('/api/portfolio/plans', async (req, res) => {
 });
 
 // AI 研报解读（结构化 mock，后续接真 LLM）
-app.post('/api/portfolio/research', async (req, res) => {
+app.post('/api/portfolio/research', requireAuth, async (req, res) => {
   try {
     const result = await handleResearch(req.body || {});
     res.json(result);
@@ -353,7 +394,7 @@ app.post('/api/portfolio/research', async (req, res) => {
 // =====================================================
 // 研报 AI 精读（外部整篇研报入库 + 提炼）
 // =====================================================
-app.post('/api/research/ingest', async (req, res) => {
+app.post('/api/research/ingest', requireAuth, async (req, res) => {
   try {
     const { title, broker, industry, source_url, raw_text } = req.body || {};
     if (!raw_text || !String(raw_text).trim()) {
@@ -375,7 +416,7 @@ app.get('/api/research/reports', async (_req, res) => {
   }
 });
 
-app.delete('/api/research/reports/:id', async (req, res) => {
+app.delete('/api/research/reports/:id', requireAuth, async (req, res) => {
   try {
     await deleteResearchReport(req.params.id);
     res.json({ ok: true });
@@ -385,7 +426,7 @@ app.delete('/api/research/reports/:id', async (req, res) => {
 });
 
 // 已持仓标的 AI 研报（十二模块）：持久化 / 列表 / 删除
-app.post('/api/research/stock-report', async (req, res) => {
+app.post('/api/research/stock-report', requireAuth, async (req, res) => {
   try {
     const { stock_code, stock_name, report } = req.body || {};
     if (!stock_code) return res.status(400).json({ ok: false, error: '缺少 stock_code' });
@@ -404,7 +445,7 @@ app.get('/api/research/stock-reports', async (_req, res) => {
   }
 });
 
-app.delete('/api/research/stock-reports/:code', async (req, res) => {
+app.delete('/api/research/stock-reports/:code', requireAuth, async (req, res) => {
   try {
     await deleteStockReport(req.params.code);
     res.json({ ok: true });
@@ -438,7 +479,7 @@ app.get('/api/portfolio/ledger', async (_req, res) => {
 });
 
 // POST 追加一条账本事件（init/deposit/withdraw/close_position/fee_rate_change）
-app.post('/api/portfolio/ledger', async (req, res) => {
+app.post('/api/portfolio/ledger', requireAuth, async (req, res) => {
   try {
     const { type, payload } = req.body || {};
     if (!['init', 'deposit', 'withdraw', 'close_position', 'fee_rate_change'].includes(type)) {
@@ -462,7 +503,7 @@ app.post('/api/portfolio/ledger', async (req, res) => {
 });
 
 // POST 预览一次账本变更（先给结果再确认，提取可能降低可开标的上限）
-app.post('/api/portfolio/ledger/preview', async (req, res) => {
+app.post('/api/portfolio/ledger/preview', requireAuth, async (req, res) => {
   try {
     const { type, amount, fee_rate_wan } = req.body || {};
     const events = await listLedgerEvents();
@@ -482,7 +523,7 @@ app.post('/api/portfolio/ledger/preview', async (req, res) => {
 });
 
 // DELETE 清空账本（重新开始）
-app.delete('/api/portfolio/ledger', async (_req, res) => {
+app.delete('/api/portfolio/ledger', requireAuth, async (_req, res) => {
   try {
     await clearLedger();
     res.json({ ok: true });
@@ -503,19 +544,7 @@ app.get('/api/portfolio/plans', async (_req, res) => {
   }
 });
 
-app.post('/api/portfolio/plans', async (req, res) => {
-  try {
-    const items = Array.isArray(req.body) ? req.body : [req.body];
-    for (const it of items) {
-      await upsertPlan(it);
-    }
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.delete('/api/portfolio/plans/:code', async (req, res) => {
+app.delete('/api/portfolio/plans/:code', requireAuth, async (req, res) => {
   try {
     await removePlan(req.params.code);
     res.json({ ok: true });
@@ -536,7 +565,7 @@ app.get('/api/portfolio/holding-profiles', async (_req, res) => {
   }
 });
 
-app.post('/api/portfolio/holding-profiles', async (req, res) => {
+app.post('/api/portfolio/holding-profiles', requireAuth, async (req, res) => {
   try {
     const { stock_code, raw_materials, products, customers, overseas_peers, policy_domains, transport, extra_keywords } = req.body || {};
     if (!stock_code) return res.status(400).json({ ok: false, error: 'stock_code 必填' });
@@ -557,7 +586,7 @@ app.post('/api/portfolio/holding-profiles', async (req, res) => {
   }
 });
 
-app.delete('/api/portfolio/holding-profiles/:code', async (req, res) => {
+app.delete('/api/portfolio/holding-profiles/:code', requireAuth, async (req, res) => {
   try {
     await deleteHoldingProfile(req.params.code);
     res.json({ ok: true });
@@ -569,7 +598,12 @@ app.delete('/api/portfolio/holding-profiles/:code', async (req, res) => {
 // =====================================================
 // iFind token 健康检查（不打印 token 本体）
 // =====================================================
-app.get('/api/ifind/health', async (_req, res) => {
+app.get('/api/ifind/health', requireAuth, async (_req, res) => {
+  const now = Date.now();
+  if (now - lastIfindCheck < 60_000) {
+    return res.status(429).json({ ok: false, error: 'too_frequent' });
+  }
+  lastIfindCheck = now;
   const tk = process.env.IFIND_REFRESH_TOKEN;
   if (!tk) {
     return res.status(200).json({
@@ -609,6 +643,13 @@ app.get('/', (_req, res) => {
 // =====================================================
 // 启动
 // =====================================================
+// 全局兜底错误处理器：统一返回 JSON，不泄漏内部实现细节
+app.use((err, _req, res, _next) => {
+  console.error('[server] unhandled error:', err && err.message);
+  if (res.headersSent) return _next(err);
+  res.status(500).json({ ok: false, error: 'internal_error' });
+});
+
 async function main() {
   await initDb();
   // 清理旧版采集写入的脏公告行（source_name='t' / 旧 guid 格式 ann:CODE:TS:IDX）
