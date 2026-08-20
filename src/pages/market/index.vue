@@ -12,15 +12,15 @@
         <view class="mk-source-chip" :class="{ active: tab === 'lhb' }" @tap="switchTab('lhb')"><text>龙虎榜</text></view>
         <view class="mk-source-chip" :class="{ active: tab === 'f10' }" @tap="switchTab('f10')"><text>F10</text></view>
       </view>
+      <view class="mk-search mk-search--head" v-if="tab !== 'north'">
+        <input class="mk-input" v-model="queryText" :placeholder="queryPlaceholder" @confirm="onQuery" />
+        <view class="mk-btn" @tap="onQuery">查询</view>
+      </view>
     </view>
 
     <view class="mk-body">
       <!-- K线 -->
       <view v-if="tab === 'kline'" class="mk-pane">
-        <view class="mk-search">
-          <input class="mk-input" v-model="code" placeholder="输入6位代码，如 600519" @confirm="loadKline" />
-          <view class="mk-btn" @tap="loadKline">查询</view>
-        </view>
         <view v-if="klineErr" class="mk-err"><text>{{ klineErr }}</text></view>
         <view v-if="klineItems.length" class="mk-kline-card">
           <view class="mk-kline-head">
@@ -60,10 +60,6 @@
 
       <!-- 龙虎榜 -->
       <view v-else-if="tab === 'lhb'" class="mk-pane">
-        <view class="mk-search">
-          <input class="mk-input" v-model="lhbDate" placeholder="日期 YYYYMMDD" @confirm="loadLhb" />
-          <view class="mk-btn" @tap="loadLhb">查询</view>
-        </view>
         <view v-if="lhbErr" class="mk-err"><text>{{ lhbErr }}</text></view>
         <view v-for="(it, i) in lhbItems" :key="i" class="mk-lhb-card">
           <view class="mk-lhb-row"><text class="mk-lhb-name">{{ it.名称 }}</text><text class="mk-lhb-code">{{ it.代码 }}</text><text class="mk-lhb-pct" :class="it.涨跌幅 >= 0 ? 'up' : 'down'">{{ it.涨跌幅 }}%</text></view>
@@ -75,10 +71,7 @@
 
       <!-- F10 -->
       <view v-else-if="tab === 'f10'" class="mk-pane">
-        <view class="mk-search">
-          <input class="mk-input" v-model="code" placeholder="输入6位代码，如 600519" @confirm="loadF10" />
-          <view class="mk-btn" @tap="loadF10">查询</view>
-        </view>
+        <view v-if="f10Err" class="mk-err"><text>{{ f10Err }}</text></view>
         <view class="mk-f10-kinds">
           <view class="mk-f10-kind" v-for="k in f10Kinds" :key="k.val" :class="{ active: f10Kind === k.val }" @tap="switchF10(k.val)">
             <text>{{ k.label }}</text>
@@ -115,6 +108,18 @@ const tab = ref<'kline' | 'north' | 'lhb' | 'f10'>('kline')
 
 const code = ref('600519')
 const lhbDate = ref('20260819')
+// 顶部统一查询框（head 固定区），按当前 tab 绑定到对应字段
+const queryText = ref('600519')
+const queryPlaceholder = computed(() => {
+  if (tab.value === 'lhb') return '日期 YYYYMMDD'
+  return '输入6位代码，如 600519'
+})
+function onQuery() {
+  const v = queryText.value.trim()
+  if (tab.value === 'kline') { code.value = v; loadKline() }
+  else if (tab.value === 'f10') { code.value = v; loadF10() }
+  else if (tab.value === 'lhb') { lhbDate.value = v; loadLhb() }
+}
 
 // K线
 const klineItems = ref<KLine[]>([])
@@ -194,6 +199,7 @@ onShow(() => {
     const fc = uni.getStorageSync('market_focus_code')
     if (fc) {
       code.value = fc
+      queryText.value = fc
       uni.removeStorageSync('market_focus_code')
       loadKline()
       loadF10()
@@ -461,12 +467,33 @@ $radius-full: 999px;
   font-family: -apple-system, 'PingFang SC', sans-serif;
   padding-bottom: 140rpx;
 }
+
+/* H5：页面作为包含 head(固定) + body(滚动) 的容器，止于 tab 上沿 */
+.mk-page.h5-mode {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: calc(110rpx + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+/* head 区固定，不参与滚动 */
 .mk-head {
+  flex: 0 0 auto;
   position: sticky;
   top: 0;
   z-index: 10;
   background: $color-bg;
   padding: 16rpx 0 8rpx;
+}
+/* 顶部统一查询框（head 固定区，不随列表滚动） */
+.mk-search--head {
+  display: flex;
+  gap: 12rpx;
+  padding: 16rpx 24rpx 0;
 }
 .mk-header { padding: 0 24rpx; }
 .mk-title { font-size: 44rpx; font-weight: 700; color: $color-text-primary; }
@@ -492,7 +519,22 @@ $radius-full: 999px;
   border-color: transparent;
 }
 
-.mk-body { padding: 16rpx 24rpx; }
+/* body 区滚动，右侧美化金色滚动条只在此处 */
+.mk-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 16rpx 24rpx 24rpx;
+}
+.mk-body::-webkit-scrollbar { width: 5rpx; }
+.mk-body::-webkit-scrollbar-track { background: transparent; }
+.mk-body::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #fff4c0 0%, #f4c542 50%, #d89c1c 100%);
+  border-radius: 6rpx;
+}
+.mk-body { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
 .mk-pane { display: flex; flex-direction: column; gap: 16rpx; }
 
 .mk-search { display: flex; gap: 12rpx; }

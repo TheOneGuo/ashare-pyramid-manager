@@ -57,10 +57,14 @@ def _df_to_records(df: pd.DataFrame, limit: int = None):
     """DataFrame -> list[dict]，递归清洗 NaN/Inf/NaT，可选截断。"""
     if df is None or len(df) == 0:
         return []
+    # 清理列名：去首尾空白（akshare 部分列名尾部带空格导致前端取不到键）
+    df = df.rename(columns=lambda c: c.strip() if isinstance(c, str) else c)
     recs = df.to_dict(orient="records")
     recs = [_sanitize(r) for r in recs]
     if limit:
-        recs = recs[:limit]
+        # akshare 返回多为升序（最早在前），取末尾 limit 条 = 最近 N 条，
+        # 避免只截断出最早年份（如 F10 只剩 1998~2001，漏掉 2023+）
+        recs = recs[-limit:]
     return recs
 
 
@@ -127,7 +131,11 @@ def f10(
     """基础财务（利润表/资产负债表/现金流量表）。"""
     try:
         if kind == "indicator":
-            df = ak.stock_financial_analysis_indicator(symbol=code)
+            # 同花顺主要财务指标（含 2023~最新报告期，akshare 的
+            # stock_financial_analysis_indicator 数据停在 2010，已弃用）
+            df = ak.stock_financial_abstract_ths(symbol=code)
+            if df is not None and len(df.columns) > 0:
+                df = df.rename(columns={df.columns[0]: "日期"})
         else:
             # balance / cashflow / profit 三表走新浪源（东财 *_by_report_em 在
             # 当前 akshare 版本有解析 bug，返回 None），字段为「报告日 + 各科目」
