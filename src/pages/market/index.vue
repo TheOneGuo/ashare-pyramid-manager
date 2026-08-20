@@ -34,6 +34,7 @@
             class="mk-canvas"
             @touchstart="onTouchStart"
             @touchmove="onTouchMove"
+            @touchend="onTouchEnd"
           ></canvas>
           <view v-if="hoverIdx >= 0 && hoverData" class="mk-hover">
             <text>{{ hoverData.date }} 收 {{ hoverData.close }} 量 {{ hoverData.volume }}</text>
@@ -78,6 +79,11 @@
           <input class="mk-input" v-model="code" placeholder="输入6位代码，如 600519" @confirm="loadF10" />
           <view class="mk-btn" @tap="loadF10">查询</view>
         </view>
+        <view class="mk-f10-kinds">
+          <view class="mk-f10-kind" v-for="k in f10Kinds" :key="k.val" :class="{ active: f10Kind === k.val }" @tap="switchF10(k.val)">
+            <text>{{ k.label }}</text>
+          </view>
+        </view>
         <view v-if="f10Err" class="mk-err"><text>{{ f10Err }}</text></view>
         <view v-if="f10Items.length" class="mk-f10-table">
           <view class="mk-f10-row mk-f10-row--head"><text class="mk-f10-c">日期</text><text class="mk-f10-c">指标</text><text class="mk-f10-c mk-f10-c--num">值</text></view>
@@ -121,6 +127,13 @@ const lhbErr = ref('')
 // F10
 const f10Items = ref<Record<string, any>[]>([])
 const f10Err = ref('')
+const f10Kinds = [
+  { val: 'indicator', label: '主要指标' },
+  { val: 'balance', label: '资产负债表' },
+  { val: 'cashflow', label: '现金流量表' },
+  { val: 'profit', label: '利润表' },
+]
+const f10Kind = ref('indicator')
 const f10Rows = computed(() => {
   const rows: { date: string; key: string; val: string }[] = []
   for (const item of f10Items.value) {
@@ -211,12 +224,18 @@ async function loadF10() {
   f10Items.value = []
   if (!/^\d{6}$/.test(code.value)) { f10Err.value = '请输入6位数字代码'; return }
   try {
-    const r = await fetchF10(code.value, 'indicator', 40)
+    const r = await fetchF10(code.value, f10Kind.value, 40)
     if (!r.ok || !r.items) { f10Err.value = r.error || '无数据'; return }
     f10Items.value = r.items
   } catch (e: any) {
     f10Err.value = e.message || '请求失败'
   }
+}
+
+function switchF10(k: string) {
+  if (f10Kind.value === k) return
+  f10Kind.value = k
+  loadF10()
 }
 
 // ---- 手绘 K 线 ----
@@ -311,10 +330,48 @@ function renderKline() {
   ctx.setLineDash([4, 3])
   ctx.beginPath(); ctx.moveTo(padL, lastY); ctx.lineTo(padL + w, lastY); ctx.stroke()
   ctx.setLineDash([])
+
+  // 十字光标 + OHLC 浮窗（hoverIdx >= 0 时）
+  const hi = hoverIdx.value
+  if (hi >= 0 && hi < data.length) {
+    const d = data[hi]
+    const hx = padL + step * hi + step / 2
+    const hy = padT + h * (1 - (d.close - min) / range)
+    ctx.strokeStyle = 'rgba(244,197,66,0.7)'
+    ctx.lineWidth = 1
+    ctx.setLineDash([3, 3])
+    // 竖线
+    ctx.beginPath(); ctx.moveTo(hx, padT); ctx.lineTo(hx, padT + h); ctx.stroke()
+    // 横线
+    ctx.beginPath(); ctx.moveTo(padL, hy); ctx.lineTo(padL + w, hy); ctx.stroke()
+    ctx.setLineDash([])
+    // 右侧价格标签
+    const priceTxt = String(d.close)
+    ctx.font = '10px sans-serif'
+    const pw = ctx.measureText(priceTxt).width + 8
+    ctx.fillStyle = 'rgba(244,197,66,0.9)'
+    ctx.fillRect(padL + w, hy - 8, pw, 16)
+    ctx.fillStyle = '#1a1206'
+    ctx.fillText(priceTxt, padL + w + 4, hy + 4)
+    // 顶部 OHLC 文字
+    const ohlc = `开 ${d.open} 高 ${d.high} 低 ${d.low} 收 ${d.close}`
+    ctx.font = '11px sans-serif'
+    const ow = ctx.measureText(ohlc).width + 12
+    ctx.fillStyle = 'rgba(13,27,42,0.92)'
+    ctx.fillRect(padL, padT, ow, 18)
+    ctx.fillStyle = '#f5ecd9'
+    ctx.fillText(ohlc, padL + 6, padT + 13)
+  }
 }
 
 function onTouchStart(e: any) { handleTouch(e) }
 function onTouchMove(e: any) { handleTouch(e) }
+function onTouchEnd() {
+  // 松手后清除十字光标（保留顶部信息条可选择保留，这里清除更干净）
+  hoverIdx.value = -1
+  hoverData.value = null
+  renderKline()
+}
 function handleTouch(e: any) {
   const data = klineItems.value
   if (!data.length || !canvasW) return
@@ -326,6 +383,7 @@ function handleTouch(e: any) {
   if (idx >= 0 && idx < data.length) {
     hoverIdx.value = idx
     hoverData.value = data[idx]
+    renderKline()
   }
 }
 </script>
@@ -457,6 +515,27 @@ $radius-full: 999px;
 .mk-lhb-meta { font-size: 22rpx; color: $color-text-secondary; margin-top: 6rpx; }
 .mk-lhb-reason { font-size: 22rpx; color: $rf-amber; margin-top: 6rpx; }
 
+.mk-f10-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-bottom: 4rpx;
+}
+.mk-f10-kind {
+  padding: 8rpx 22rpx;
+  border-radius: $radius-full;
+  background: $color-card-bg;
+  border: 1rpx solid $color-border;
+  color: $color-text-secondary;
+  font-size: 24rpx;
+  font-weight: 600;
+  transition: all 0.18s ease;
+}
+.mk-f10-kind.active {
+  background: linear-gradient(180deg, #f4c542, #d89c1c);
+  color: #1a1206;
+  border-color: transparent;
+}
 .mk-f10-table {
   background: $color-card-bg;
   border: 1rpx solid $color-border;

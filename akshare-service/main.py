@@ -128,14 +128,21 @@ def f10(
     try:
         if kind == "indicator":
             df = ak.stock_financial_analysis_indicator(symbol=code)
-        elif kind == "balance":
-            df = ak.stock_balance_sheet_by_report_em(symbol=code)
-        elif kind == "cashflow":
-            df = ak.stock_cash_flow_sheet_by_report_em(symbol=code)
-        elif kind == "profit":
-            df = ak.stock_profit_sheet_by_report_em(symbol=code)
         else:
-            raise HTTPException(status_code=400, detail="unknown kind")
+            # balance / cashflow / profit 三表走新浪源（东财 *_by_report_em 在
+            # 当前 akshare 版本有解析 bug，返回 None），字段为「报告日 + 各科目」
+            sina_symbol = ("sh" if code.startswith("6") else "sz") + code
+            sina_map = {
+                "balance": "资产负债表",
+                "cashflow": "现金流量表",
+                "profit": "利润表",
+            }
+            if kind not in sina_map:
+                raise HTTPException(status_code=400, detail="unknown kind")
+            df = ak.stock_financial_report_sina(stock=sina_symbol, symbol=sina_map[kind])
+            # 统一首列为「日期」便于前端复用
+            if df is not None and len(df.columns) > 0:
+                df = df.rename(columns={df.columns[0]: "日期"})
         return {"ok": True, "code": code, "kind": kind, "count": len(df), "items": _df_to_records(df, limit)}
     except HTTPException:
         raise
