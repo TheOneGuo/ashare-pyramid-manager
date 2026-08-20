@@ -679,7 +679,9 @@ async function main() {
   }, 800);
 
   // 定时刷新（按当前时段间隔）
-  setInterval(async () => {
+  // 定时刷新：自调度 setTimeout，每次执行后按当前时段重新算间隔，避免启动后永久不变
+  let refreshTimer = null;
+  async function scheduledRefresh() {
     try {
       const holdings = await listHoldings();
       const codes = holdings.map((h) => h.stock_code);
@@ -694,8 +696,12 @@ async function main() {
       console.log(`[server] refresh done: telegram=${summary.telegram.items}, ann=${summary.announcements.items}, news=${summary.holdings_news.items}  next=${labelForInterval(intervalSec)}`);
     } catch (e) {
       console.warn(`[server] scheduled refresh failed: ${e.message}`);
+    } finally {
+      const intervalSec = Math.max(60, refreshIntervalSeconds());
+      refreshTimer = setTimeout(scheduledRefresh, intervalSec * 1000);
     }
-  }, Math.max(60, refreshIntervalSeconds()) * 1000);
+  }
+  refreshTimer = setTimeout(scheduledRefresh, Math.max(60, refreshIntervalSeconds()) * 1000);
 
   // 持仓方案跟踪轮询（实时价 → 自动执行 → 写回持仓）
   setInterval(runTrackOnce, TRACK_POLL_MS);

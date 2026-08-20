@@ -29,6 +29,8 @@ const SECONDS = {
 };
 
 const NEWS_RETENTION_HOURS = 24;
+
+function mockGuid(channel, title, i){let h=0;const s=channel+":"+title;for(let k=0;k<s.length;k++){h=(h*31+s.charCodeAt(k))>>>0;}return channel+":mock:"+h+":"+i;}
 const HOLIDAY_CHECK_URL = 'https://www.sse.com.cn/disclosure/dealinstruc/closed/list/';
 
 // 简化版：判定 A 股是否交易日（不调 SSE，先按 weekday）
@@ -121,7 +123,7 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
         // mock 模式用 mock
         const m = mockNewsForChannel(channelMeta);
         items = m.map((it, i) => ({
-          guid: `${channelMeta.channel}:mock:${now}:${i}`,
+          guid: mockGuid(channelMeta.channel, it.title, i),
           title: it.title,
           summary: it.summary,
           content: it.summary,
@@ -206,7 +208,7 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
           annItems = mockAnnouncementsForCode(code).map((it, i) => ({
             source_channel: `eastmoney_announcement_${code}`,
             source_name: `东方财富·公告·${code}`,
-            guid: `ann:${code}:${now}:${i}`,
+            guid: `ann:${code}:mock:${i}`,
             title: it.title,
             summary: it.summary,
             link: it.link,
@@ -247,7 +249,7 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
           newsItems = mockAnnouncementsForCode(code).map((it, i) => ({
             source_channel: `eastmoney_stock_news_${code}`,
             source_name: `东方财富·新闻·${code}`,
-            guid: `news:${code}:${now}:${i}`,
+            guid: `news:${code}:mock:${i}`,
             title: `[新闻] ${it.title}`,
             summary: it.summary,
             link: it.link,
