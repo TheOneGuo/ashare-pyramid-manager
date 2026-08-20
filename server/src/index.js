@@ -23,6 +23,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, ROLE_LABELS } from './db.js';
 import { enrichHolding, importFromText, importFromFile, fetchQuote } from './stock-service.js';
+import { registerCorsAndParse, requireAuth, ifindRateLimit } from './middleware.js';
 import { computeTrackState } from './track-executor.js';
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
@@ -42,53 +43,11 @@ const TELEGRAM_CHANNELS = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
 
 const app = express();
 
-// =====================================================
-// CORS - 开发模式允许所有 origin（H5 dev 5173 + preview file://）
-// 生产模式收窄为白名单
-// =====================================================
-// CORS：只允许显式白名单。默认开发期 localhost + file://；生产必须用 ALLOWED_ORIGINS 指定，禁止反射任意 Origin
-const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
-const DEV_CORS = process.env.DEV_CORS === '1' || ALLOWED_ORIGINS.length === 0;
-const DEV_ORIGINS = ['http://localhost:5173', 'https://localhost:5173', 'http://127.0.0.1:5173', 'null'];
-const ALLOWED_ORIGIN_SET = new Set([...ALLOWED_ORIGINS, ...(DEV_CORS ? DEV_ORIGINS : [])]);
-app.use((req, res, next) => {
-  const origin = req.headers.origin || '';
-  if (ALLOWED_ORIGIN_SET.has(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Vary', 'Origin');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-API-Key');
-    res.setHeader('Access-Control-Max-Age', '600');
-  }
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
-  next();
-});
+// CORS / JSON 解析错误 / 鉴权 中间件抽到 middleware.js 统一管理
+registerCorsAndParse(app);
 
-app.use(express.json({ limit: '2mb' }));
-
-// 统一 JSON 解析错误处理：畸形 body 返回 400 JSON，而非 Express 默认 HTML 错误页
-app.use((err, _req, res, next) => {
-  if (err && err.type === 'entity.parse.failed') {
-    return res.status(400).json({ ok: false, error: 'invalid_json' });
-  }
-  next(err);
-});
-
-// API 鉴权中间件：配置 API_KEY 后，所有写操作必须带 x-api-key（或 Authorization: Bearer）
-const API_KEY = process.env.API_KEY || '';
-if (!API_KEY && process.env.NODE_ENV === 'production') {
-  console.warn('[server][security] 生产环境未设置 API_KEY，所有写接口匿名开放，存在越权风险！');
-}
-function requireAuth(req, res, next) {
-  if (!API_KEY) return next();
-  const key = req.headers['x-api-key'] || String(req.headers['authorization'] || '').replace(/^Bearer\s+/i, '');
-  if (key && key === API_KEY) return next();
-  return res.status(401).json({ ok: false, error: 'unauthorized' });
-}
-
-// 刷新互斥锁 + ifind 检查限速（防止并发刷新叠加打爆外部源 / token 被滥用）
+// 刷新互斥锁（防止并发刷新叠加打爆外部源）
 let refreshing = false;
-let lastIfindCheck = 0;
 
 let lastRefreshAt = 0;
 let lastRefreshSummary = null;
@@ -599,11 +558,9 @@ app.delete('/api/portfolio/holding-profiles/:code', requireAuth, async (req, res
 // iFind token 健康检查（不打印 token 本体）
 // =====================================================
 app.get('/api/ifind/health', requireAuth, async (_req, res) => {
-  const now = Date.now();
-  if (now - lastIfindCheck < 60_000) {
+  if (!ifindRateLimit()) {
     return res.status(429).json({ ok: false, error: 'too_frequent' });
   }
-  lastIfindCheck = now;
   const tk = process.env.IFIND_REFRESH_TOKEN;
   if (!tk) {
     return res.status(200).json({
