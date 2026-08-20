@@ -1,0 +1,12 @@
+# Python venv / 缓存 / 日志
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.log
+boot.err
+boot.log
+install.log
+hk.err
+hk.log
+_probe_hist.py

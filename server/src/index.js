@@ -24,6 +24,7 @@ import { fileURLToPath } from 'url';
 import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, ROLE_LABELS } from './db.js';
 import { enrichHolding, importFromText, importFromFile, fetchQuote } from './stock-service.js';
 import { registerCorsAndParse, requireAuth, ifindRateLimit } from './middleware.js';
+import { getProvider } from './providers/index.js';
 import { computeTrackState } from './track-executor.js';
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
@@ -596,6 +597,33 @@ app.use('/preview', express.static(PREVIEW_DIR, { maxAge: 0, etag: false }));
 app.get('/', (_req, res) => {
   res.sendFile(path.join(PREVIEW_DIR, 'index.html'));
 });
+
+// =====================================================
+// 行情数据（akshare provider 抽象层，开发期走 akshare-service）
+// 这些为只读查询，不写库、不鉴权；失败自动降级为 503，前端可回退现有直连源
+// =====================================================
+function marketHandler(fn) {
+  return async (req, res) => {
+    try {
+      const data = await fn(req);
+      res.json(data);
+    } catch (e) {
+      res.status(502).json({ ok: false, error: e.message });
+    }
+  };
+}
+
+app.get('/api/market/hist', marketHandler((req) =>
+  getProvider().getHist(String(req.query.code || ''), {
+    period: req.query.period, start: req.query.start, end: req.query.end,
+    adjust: req.query.adjust, limit: req.query.limit ? Number(req.query.limit) : undefined,
+  })));
+app.get('/api/market/north', marketHandler((req) =>
+  getProvider().getNorth(req.query.limit ? Number(req.query.limit) : 60)));
+app.get('/api/market/lhb', marketHandler((req) =>
+  getProvider().getLhb(String(req.query.date || ''), req.query.limit ? Number(req.query.limit) : 50)));
+app.get('/api/market/f10', marketHandler((req) =>
+  getProvider().getF10(String(req.query.code || ''), req.query.kind || 'indicator', req.query.limit ? Number(req.query.limit) : 40)));
 
 // =====================================================
 // 启动
