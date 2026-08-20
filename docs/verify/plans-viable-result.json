@@ -1,4 +1,0 @@
-analyze ok= true
-  stock 600036 plan.ok= true rows= 4 tp_rows= 4 total_invest= 506885.89 too_expensive= 
-plans count= 1 codes= 600036/招商银行
-  first plan_json rows= 4 tp_rows= 4 p0= 38 atr= 0.95

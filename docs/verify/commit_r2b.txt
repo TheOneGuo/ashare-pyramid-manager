@@ -1,5 +1,0 @@
-fix(robustness): 持仓写入与跟踪引擎的 NaN/脏数据防御
-
-- db.js upsertHolding: shares/cost_basis 原用 Number(x)||0 会静默把 "abc"/undefined 转成 0 入库。改为显式校验：shares 必须为正整数、cost_basis 必须为非负有限数，否则抛错（由 importHoldings 的 try/catch 跳过，不污染 DB）
-- track-executor.ts computeTrackState: 新增 cur 非有限数时的提前返回（空结果），避免 NaN 穿透到持仓写入造成错误清仓/错误成本
-- 保留 stock-service 已有的解析层 NaN 过滤（cnNum + continue）

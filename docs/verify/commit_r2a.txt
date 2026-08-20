@@ -1,5 +1,0 @@
-fix(correctness): 主刷新自调度 + mock guid 稳定化（防 DB 无限增长）
-
-- index.js: 主刷新循环从固定 setInterval 改为自调度 setTimeout，每次执行后按当前时段（refreshIntervalSeconds）重算间隔，避免启动后间隔永久不变（原 #17：交易时段启动卡死 15min、休市启动卡死 8h）
-- news-collector.js: mock 数据 guid 原用 Date.now() 每次刷新都不同 → upsert 永不冲突 → DB 无限增长。改为基于 channel+title 的稳定哈希（mockGuid），相同 mock 内容 upsert 到同一行
-- 同步修正 ann/news mock guid 的 now 时间戳为固定 :mock: 后缀
