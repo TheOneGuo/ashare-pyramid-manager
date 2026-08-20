@@ -84,10 +84,15 @@
             <text>{{ k.label }}</text>
           </view>
         </view>
+        <view class="mk-f10-years" v-if="f10Years.length > 1">
+          <view class="mk-f10-year" :class="{ active: f10Year === y }" v-for="y in f10Years" :key="y" @tap="f10Year = y">
+            <text>{{ y === 'all' ? '全部' : y }}</text>
+          </view>
+        </view>
         <view v-if="f10Err" class="mk-err"><text>{{ f10Err }}</text></view>
-        <view v-if="f10Items.length" class="mk-f10-table">
+        <view v-if="f10FilteredRows.length" class="mk-f10-table">
           <view class="mk-f10-row mk-f10-row--head"><text class="mk-f10-c">日期</text><text class="mk-f10-c">指标</text><text class="mk-f10-c mk-f10-c--num">值</text></view>
-          <view v-for="(r, i) in f10Rows" :key="i" class="mk-f10-row">
+          <view v-for="(r, i) in f10FilteredRows" :key="i" class="mk-f10-row">
             <text class="mk-f10-c">{{ r.date }}</text>
             <text class="mk-f10-c">{{ r.key }}</text>
             <text class="mk-f10-c mk-f10-c--num">{{ r.val }}</text>
@@ -134,6 +139,18 @@ const f10Kinds = [
   { val: 'profit', label: '利润表' },
 ]
 const f10Kind = ref('indicator')
+const f10Year = ref('all')
+// 报告期年份选项（由已加载日期的前 4 位年份去重倒序 + 全部）
+const f10Years = computed(() => {
+  const set = new Set<string>()
+  for (const it of f10Items.value) {
+    const d = it['日期'] || ''
+    const y = d.slice(0, 4)
+    if (/^\d{4}$/.test(y)) set.add(y)
+  }
+  const arr = [...set].sort((a, b) => (b > a ? 1 : -1))
+  return ['all', ...arr]
+})
 const f10Rows = computed(() => {
   const rows: { date: string; key: string; val: string }[] = []
   for (const item of f10Items.value) {
@@ -144,7 +161,15 @@ const f10Rows = computed(() => {
       rows.push({ date, key: k, val: v === null || v === undefined ? '—' : String(v) })
     }
   }
-  return rows.slice(0, 60)
+  return rows
+})
+// 按报告期年份过滤（默认全部），最多展示 200 行
+const f10FilteredRows = computed(() => {
+  const all = f10Rows.value
+  const filtered = f10Year.value === 'all'
+    ? all
+    : all.filter((r) => r.date.startsWith(f10Year.value))
+  return filtered.slice(0, 200)
 })
 
 // canvas 交互
@@ -235,6 +260,7 @@ async function loadF10() {
 function switchF10(k: string) {
   if (f10Kind.value === k) return
   f10Kind.value = k
+  f10Year.value = 'all'
   loadF10()
 }
 
@@ -287,12 +313,20 @@ function renderKline() {
   const data = klineItems.value
   if (!data.length) return
   const padL = 8, padR = 8, padT = 10, padB = 18
+  const volH = Math.min(60, Math.max(36, canvasH * 0.22)) // 成交量副图高度
+  const gap = 10
   const w = canvasW - padL - padR
-  const h = canvasH - padT - padB
+  const priceH = canvasH - padT - padB - volH - gap
+  const h = priceH
   ctx.clearRect(0, 0, canvasW, canvasH)
 
   let min = Infinity, max = -Infinity
-  for (const d of data) { min = Math.min(min, d.low); max = Math.max(max, d.high) }
+  let vMax = 0
+  for (const d of data) {
+    min = Math.min(min, d.low); max = Math.max(max, d.high)
+    const v = Number(d.volume) || 0
+    if (v > vMax) vMax = v
+  }
   const range = max - min || 1
   const step = w / data.length
 
@@ -330,6 +364,20 @@ function renderKline() {
   ctx.setLineDash([4, 3])
   ctx.beginPath(); ctx.moveTo(padL, lastY); ctx.lineTo(padL + w, lastY); ctx.stroke()
   ctx.setLineDash([])
+
+  // 成交量副图
+  const volTop = padT + h + gap
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'
+  ctx.beginPath(); ctx.moveTo(padL, volTop); ctx.lineTo(padL + w, volTop); ctx.stroke()
+  for (let i = 0; i < data.length; i++) {
+    const d = data[i]
+    const x = padL + step * i + step / 2
+    const v = Number(d.volume) || 0
+    const vh = vMax ? (v / vMax) * volH : 0
+    const up = d.close >= d.open
+    ctx.fillStyle = up ? 'rgba(226,85,59,0.55)' : 'rgba(38,168,107,0.55)'
+    ctx.fillRect(x - bw / 2, volTop + (volH - vh), bw, Math.max(1, vh))
+  }
 
   // 十字光标 + OHLC 浮窗（hoverIdx >= 0 时）
   const hi = hoverIdx.value
@@ -535,6 +583,26 @@ $radius-full: 999px;
   background: linear-gradient(180deg, #f4c542, #d89c1c);
   color: #1a1206;
   border-color: transparent;
+}
+.mk-f10-years {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-bottom: 4rpx;
+}
+.mk-f10-year {
+  padding: 6rpx 18rpx;
+  border-radius: $radius-full;
+  background: transparent;
+  border: 1rpx solid $color-border;
+  color: $color-text-secondary;
+  font-size: 22rpx;
+  font-weight: 500;
+}
+.mk-f10-year.active {
+  background: $color-match-bg;
+  color: $color-text-primary;
+  border-color: $color-match-border;
 }
 .mk-f10-table {
   background: $color-card-bg;
