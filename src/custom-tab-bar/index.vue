@@ -35,6 +35,11 @@ const list = [
     text: '持仓',
     icon: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v9h9A9 9 0 1 0 3 12c0 5 4 9 9 9z"/><path d="M12 3a9 9 0 0 1 9 9h-9z"/></svg>',
   },
+  {
+    pagePath: 'pages/market/index',
+    text: '行情',
+    icon: '<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 4 8-8"/><path d="M21 8v5h-5"/></svg>',
+  },
 ]
 
 const routes = list.map((l) => l.pagePath)

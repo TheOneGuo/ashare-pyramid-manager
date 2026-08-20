@@ -18,6 +18,13 @@
       "style": {
         "navigationBarTitleText": "持仓分析"
       }
+    },
+    {
+      "path": "pages/market/index",
+      "style": {
+        "navigationBarTitleText": "行情中心",
+        "enablePullDownRefresh": true
+      }
     }
   ],
   "tabBar": {
@@ -37,6 +44,10 @@
       {
         "pagePath": "pages/portfolio/index",
         "text": "持仓"
+      },
+      {
+        "pagePath": "pages/market/index",
+        "text": "行情"
       }
     ]
   },

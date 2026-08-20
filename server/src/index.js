@@ -25,6 +25,7 @@ import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSo
 import { enrichHolding, importFromText, importFromFile, fetchQuote } from './stock-service.js';
 import { registerCorsAndParse, requireAuth, ifindRateLimit } from './middleware.js';
 import { getProvider } from './providers/index.js';
+import { getCached, setCached } from './cache.js';
 import { computeTrackState } from './track-executor.js';
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
@@ -602,27 +603,33 @@ app.get('/', (_req, res) => {
 // 行情数据（akshare provider 抽象层，开发期走 akshare-service）
 // 这些为只读查询，不写库、不鉴权；失败自动降级为 503，前端可回退现有直连源
 // =====================================================
-function marketHandler(fn) {
+function marketHandler(kind, fn) {
   return async (req, res) => {
     try {
+      const hit = getCached(kind, req);
+      if (hit !== undefined) {
+        res.json({ ...hit, cached: true });
+        return;
+      }
       const data = await fn(req);
-      res.json(data);
+      setCached(kind, req, data);
+      res.json({ ...data, cached: false });
     } catch (e) {
       res.status(502).json({ ok: false, error: e.message });
     }
   };
 }
 
-app.get('/api/market/hist', marketHandler((req) =>
+app.get('/api/market/hist', marketHandler('hist', (req) =>
   getProvider().getHist(String(req.query.code || ''), {
     period: req.query.period, start: req.query.start, end: req.query.end,
     adjust: req.query.adjust, limit: req.query.limit ? Number(req.query.limit) : undefined,
   })));
-app.get('/api/market/north', marketHandler((req) =>
+app.get('/api/market/north', marketHandler('north', (req) =>
   getProvider().getNorth(req.query.limit ? Number(req.query.limit) : 60)));
-app.get('/api/market/lhb', marketHandler((req) =>
+app.get('/api/market/lhb', marketHandler('lhb', (req) =>
   getProvider().getLhb(String(req.query.date || ''), req.query.limit ? Number(req.query.limit) : 50)));
-app.get('/api/market/f10', marketHandler((req) =>
+app.get('/api/market/f10', marketHandler('f10', (req) =>
   getProvider().getF10(String(req.query.code || ''), req.query.kind || 'indicator', req.query.limit ? Number(req.query.limit) : 40)));
 
 // =====================================================
