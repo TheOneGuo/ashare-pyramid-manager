@@ -96,6 +96,10 @@ export interface TrackResult {
  * - 末档止盈（全平）触发则清仓
  */
 export function computeTrackState(plan: TrackPlan, cur: number): TrackResult {
+  // 防御：实时价为非有限数时不计算（避免 NaN 穿透到持仓写入）
+  if (!Number.isFinite(cur)) {
+    return { executed_indices: [], shares: 0, avg_cost: 0, opened: false, cleared: false, steps: [] };
+  }
   const steps = buildTrackSteps(plan);
   // 关键：止损步骤只有在「它之前的所有非止损步骤都已执行」后才可能触发，
   // 否则会出现「价格尚在开仓价、末档止盈后的动态止损却已触发」的错误清空。

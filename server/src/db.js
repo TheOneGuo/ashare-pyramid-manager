@@ -441,8 +441,10 @@ export async function upsertHolding({ stock_code, short_name, market, shares, co
       String(stock_code).padStart(6, '0'),
       String(short_name || '').slice(0, 40),
       String(market || '').slice(0, 10),
-      Number(shares) || 0,
-      Number(cost_basis) || 0,
+      // 防御：shares 必须为正有限整数，否则抛错（由 importHoldings 的 try/catch 跳过，不污染 DB）
+      (() => { const n = Number(shares); if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) throw new Error('shares 必须为正整数'); return n; })(),
+      // cost_basis 允许为 0，但必须是有限数字
+      (() => { const n = Number(cost_basis); if (!Number.isFinite(n) || n < 0) throw new Error('cost_basis 必须为非负数字'); return n; })(),
       current_price === undefined ? null : Number(current_price),
       pnl === undefined ? null : Number(pnl),
       pnl_pct === undefined ? null : Number(pnl_pct),
