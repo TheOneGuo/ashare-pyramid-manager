@@ -553,3 +553,43 @@ export async function autoSearchFxbaogaoForHoldings(params: {
 export async function getFxbaogaoStatus(): Promise<{ ok: boolean; fxbaogao: { available: boolean; keyTail: string } }> {
   return jget('/api/research/fxbaogao/status')
 }
+
+// ============================================================================
+// 统一列表（Tab 1 主源）+ 深度多维度搜索（Tab 3 升级）
+// ============================================================================
+export interface HoldingReportItem {
+  source: 'fxbaogao'
+  key: string
+  reportId: number
+  title: string
+  orgName: string
+  pubDate: string
+  pageNum: number
+  viewUrl: string
+  recommended: boolean
+  categories: string[]
+  holdingCode: string
+  holdingName: string
+  broker: string
+}
+export async function listHoldingReports(params: {
+  holdings: { stock_code: string; short_name?: string }[]
+  timeRange?: string
+  maxPerHolding?: number
+}): Promise<{ ok: boolean; items: HoldingReportItem[]; count: number; timeRange: string }> {
+  return jget('/api/research/reports/by-holdings', { method: 'POST', body: params, timeoutMs: 90000 })
+}
+
+export interface DeepSearchByTopic {
+  code: string
+  name: string
+  byTopic: Record<string, HoldingReportItem[]>
+  error?: string
+}
+export async function deepSearchForHoldings(params: {
+  holdings: { stock_code: string; short_name?: string }[]
+  topics?: ('industry' | 'supplier' | 'buyer' | 'regulation')[]
+  timeRange?: string
+}): Promise<{ ok: boolean; results: DeepSearchByTopic[]; timeRange: string; topics: string[] }> {
+  return jget('/api/research/fxbaogao/auto-search-holdings-deep', { method: 'POST', body: params, timeoutMs: 120000 })
+}

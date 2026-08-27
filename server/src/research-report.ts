@@ -25,6 +25,114 @@ const DISCLAIMER =
   '本研报由本地结构化模板生成（演示模式，未接入真实 LLM）。' +
   '所有内容仅用于研究复盘与基本面跟踪参考，不构成任何买卖建议；实际决策请自行研判并控制风险。'
 
+// ============================================================================
+// 先进生产力行业识别：半导体 / 生物制药 / 新能源 / 航空航天 / 关键原材料
+// 用户要求：与这些行业相关的研报打"推荐"评级
+// ============================================================================
+export const ADVANCED_PRODUCTIVITY_KEYWORDS: { category: string; keywords: string[] }[] = [
+  { category: '半导体', keywords: ['半导体', '芯片', '集成电路', 'IC设计', '晶圆', 'wafer', 'semiconductor', 'chip', 'fab', '光刻机', 'ASML', 'TSMC', '台积电', '中芯国际', 'GPU', 'AI芯片', '存储芯片', 'DRAM', 'NAND', '设备厂', '封测', 'EDA', 'IP授权'] },
+  { category: '生物制药', keywords: ['生物制药', '创新药', '生物药', '抗体', 'ADC', 'PD-1', 'PD-L1', 'CAR-T', '基因', 'mRNA', '疫苗', '单抗', '双抗', 'GLP-1', '减肥药', '肿瘤', '靶向', 'biotech', 'pharma', 'biopharma', 'CRO', 'CDMO', '创新医疗器械'] },
+  { category: '新能源', keywords: ['新能源', '锂电', '锂电池', '动力电池', '储能', '光伏', '太阳能', '风电', '氢能', '氢燃料', '固态电池', '钠离子', '碳酸锂', '正极材料', '负极材料', '电解液', '隔膜', 'EV', 'electric vehicle', 'battery', 'solar', 'wind', 'hydrogen'] },
+  { category: '航空航天', keywords: ['航空航天', '航空发动机', '大飞机', 'C919', '卫星', '火箭', '商业航天', '低空经济', '无人机', 'eVTOL', '载人航天', '北斗', 'spaceX', 'aerospace', 'satellite', 'rocket', 'drone', 'aviation'] },
+  { category: '关键原材料', keywords: ['稀土', '永磁', '锂矿', '钴矿', '镍矿', '半导体材料', '光刻胶', '电子特气', '硅片', '靶材', '关键矿产', '战略物资', '稀土永磁', '永磁电机', '镨钕', '铟', '锗', '钨', '钼', 'rare earth', 'lithium', 'cobalt', 'nickel', 'silicon wafer', 'photoresist'] },
+]
+
+export interface ProductivityMatch {
+  isRecommended: boolean
+  categories: string[]
+}
+
+export function detectAdvancedProductivity(text: string): ProductivityMatch {
+  if (!text) return { isRecommended: false, categories: [] }
+  const t = text.toLowerCase()
+  const cats: string[] = []
+  for (const { category, keywords } of ADVANCED_PRODUCTIVITY_KEYWORDS) {
+    if (keywords.some((k) => t.includes(k.toLowerCase()))) {
+      cats.push(category)
+    }
+  }
+  return { isRecommended: cats.length > 0, categories: cats }
+}
+
+// ============================================================================
+// 标题翻译 + 代码标记：英文标题 → 中文，外资研报里同时出现美股+ A 股代码时标出
+// 调用 LLM（chatJson），失败时返回原标题
+// ============================================================================
+import { chatJson, isLlmAvailable } from './llm.js'
+
+const TRANSLATE_SYSTEM = `你是研报标题翻译助手。任务：
+1. 如果标题是英文，翻译成简洁中文（保留公司名/股票代码/关键术语如 Buy/Sell/Overweight）
+2. 如果原文中同时出现美股代码（如 TSLA、AAPL、NVO）和 A 股代码（如 600519、300750），在中文标题后用方括号标出：[美:TSLA / A:600519]
+3. 只输出最终的中文标题，不要解释。`
+
+export interface TranslatedTitle {
+  titleZh: string
+  usCodes: string[]
+  aCodes: string[]
+}
+
+export async function translateReportTitle(origTitle: string, hint?: string): Promise<TranslatedTitle> {
+  const fallback: TranslatedTitle = { titleZh: origTitle, usCodes: [], aCodes: [] }
+  if (!isLlmAvailable() || !origTitle || !/[a-zA-Z]/.test(origTitle)) return fallback
+  const user = `原标题：${origTitle}\n${hint ? '上下文：' + hint : ''}\n输出格式（严格 JSON）：{"title_zh": "...", "us_codes": ["..."], "a_codes": ["..."]}`
+  const r = await chatJson<{ title_zh?: string; us_codes?: string[]; a_codes?: string[] }>({
+    system: TRANSLATE_SYSTEM, user, jsonHint: true, maxTokens: 200, temperature: 0.2,
+  })
+  if (!r || typeof r !== 'object') return fallback
+  const titleZh = String(r.title_zh || origTitle).trim().slice(0, 200)
+  const usCodes = Array.isArray(r.us_codes) ? r.us_codes.map((x) => String(x).toUpperCase()).filter(Boolean).slice(0, 5) : []
+  const aCodes = Array.isArray(r.a_codes) ? r.a_codes.map((x) => String(x).toLowerCase()).filter(Boolean).slice(0, 5) : []
+  return { titleZh, usCodes, aCodes }
+}
+
+// ============================================================================
+// Txt 原文 → JSON-Markdown 渲染：把上游 LLM 提炼的 tldr/key_points/...
+// 转成可读 Markdown（用于"查看原文"按钮在 txt 时的展示）
+// ============================================================================
+export function refinedToMarkdown(r: {
+  title?: string
+  broker?: string
+  industry?: string
+  tldr?: string
+  key_points?: string[]
+  opportunities?: string[]
+  risks?: string[]
+  status?: string
+  created_at?: number
+}): string {
+  const lines: string[] = []
+  lines.push(`# ${r.title || '研报精读'}`)
+  if (r.broker || r.industry) {
+    const meta = [r.broker && `**来源**：${r.broker}`, r.industry && `**行业**：${r.industry}`].filter(Boolean).join('  ·  ')
+    if (meta) lines.push(meta)
+  }
+  if (r.status) lines.push(`**状态**：${r.status}${r.created_at ? '  ·  **时间**：' + new Date(r.created_at).toISOString() : ''}`)
+  lines.push('')
+  if (r.tldr) {
+    lines.push('## 一句话精读')
+    lines.push(r.tldr)
+    lines.push('')
+  }
+  if (r.key_points?.length) {
+    lines.push('## 核心观点')
+    r.key_points.forEach((p, i) => lines.push(`${i + 1}. ${p}`))
+    lines.push('')
+  }
+  if (r.opportunities?.length) {
+    lines.push('## 新机会')
+    r.opportunities.forEach((p) => lines.push(`- ${p}`))
+    lines.push('')
+  }
+  if (r.risks?.length) {
+    lines.push('## 风险点')
+    r.risks.forEach((p) => lines.push(`- ${p}`))
+    lines.push('')
+  }
+  lines.push('---')
+  lines.push('*本内容由 AI 自动提炼，仅供参考，不构成投资建议。*')
+  return lines.join('\n')
+}
+
 export interface ResearchModuleBlock {
   title: string
   summary: string

@@ -30,7 +30,7 @@ import { computeTrackState } from './track-executor.js';
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
 import { handleExtract } from './portfolio-extract.js';
-import { handleResearch, refineExternalReport, refineWithLlm, buildRefinedReport } from './research-report.js';
+import { handleResearch, refineExternalReport, refineWithLlm, buildRefinedReport, detectAdvancedProductivity } from './research-report.js';
 import {
   isFxbaogaoAvailable, fxbaogaoKeyTail,
   searchFxbaogaoReports, getFxbaogaoParagraphs, getFxbaogaoPdfUrl,
@@ -568,6 +568,116 @@ app.post('/api/research/fxbaogao/auto-search-holdings', requireAuth, async (req,
   } catch (e) {
     console.warn('[fxbaogao auto-search]', e?.message || e)
     res.status(500).json({ ok: false, error: e?.message || 'auto search failed' })
+  }
+})
+
+// 6) 深度为持仓搜（行业 / 供应商 / 购买方 / 法律法规）
+// 用于 Tab 3 拉"持仓标的相关行业/上下游/政策"研报，作为 Tab 1 列表的来源
+const HOLDING_TOPIC_TEMPLATES = {
+  industry: ['行业研究', '产业链', '行业景气'],
+  supplier: ['上游', '供应商', '原材料', '供应链', '产业链上游', '供应商集中度'],
+  buyer: ['下游', '客户', '订单', '客户集中度', '大客户', '产业链下游'],
+  regulation: ['监管', '政策', '法律法规', '征求意见', '产业政策', '十四五', '十五五', '国资委', '工信部', '发改委', '证监会', '央行'],
+}
+
+app.post('/api/research/fxbaogao/auto-search-holdings-deep', requireAuth, async (req, res) => {
+  try {
+    if (!isFxbaogaoAvailable()) return res.status(503).json({ ok: false, error: 'FXBAOGAO_API_KEY 未配置' })
+    const { holdings, topics, timeRange } = req.body || {}
+    if (!Array.isArray(holdings) || holdings.length === 0) {
+      return res.status(400).json({ ok: false, error: 'holdings 必填' })
+    }
+    const wantedTopics = Array.isArray(topics) && topics.length ? topics : Object.keys(HOLDING_TOPIC_TEMPLATES)
+    const startTime = String(timeRange || 'last1mon')
+    const results = []
+    for (const h of holdings) {
+      const code = String(h.stock_code || h.code || '').padStart(6, '0').slice(-6)
+      const name = String(h.short_name || h.name || '').trim()
+      if (!code && !name) continue
+      const byTopic = {}
+      const base = [code, name].filter(Boolean).join(' ')
+      for (const topic of wantedTopics) {
+        const templates = HOLDING_TOPIC_TEMPLATES[topic] || [topic]
+        const seen = new Set()
+        byTopic[topic] = []
+        for (const t of templates) {
+          try {
+            const kw = `${base} ${t}`
+            const items = await searchFxbaogaoReports({ keywords: kw, startTime, pageNum: 1 })
+            for (const it of items) {
+              if (!seen.has(it.reportId)) { seen.add(it.reportId); byTopic[topic].push(it) }
+            }
+            if (byTopic[topic].length >= 5) break
+          } catch {}
+        }
+        byTopic[topic] = byTopic[topic].slice(0, 5)
+      }
+      results.push({ code, name, byTopic })
+    }
+    res.json({ ok: true, results, timeRange: startTime, topics: wantedTopics })
+  } catch (e) {
+    console.warn('[fxbaogao auto-search-deep]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || 'auto-search-deep failed' })
+  }
+})
+
+// 7) 聚合：为持仓列表返回相关研报（research_reports 库里已有 + fxbaogao 增量搜索）
+// 用于 Tab 1 统一列表源
+// 返回每条：标准化字段（title / title_zh / orgName / pubDate / recommended / categories / source: 'db' | 'fxbaogao'）
+app.post('/api/research/reports/by-holdings', requireAuth, async (req, res) => {
+  try {
+    const { holdings, timeRange, maxPerHolding } = req.body || {}
+    if (!Array.isArray(holdings) || holdings.length === 0) {
+      return res.status(400).json({ ok: false, error: 'holdings 必填' })
+    }
+    const startTime = String(timeRange || 'last1mon')
+    const limit = Math.min(Math.max(Number(maxPerHolding) || 3, 1), 10)
+    const items = []
+    const seen = new Set()
+
+    for (const h of holdings) {
+      const code = String(h.stock_code || h.code || '').padStart(6, '0').slice(-6)
+      const name = String(h.short_name || h.name || '').trim()
+      if (!code && !name) continue
+      try {
+        // 1) fxbaogao 搜索：code + name + 评级 目标价
+        const kw = [code, name, '评级 目标价'].filter(Boolean).join(' ')
+        const list = await searchFxbaogaoReports({ keywords: kw, startTime, pageNum: 1 })
+        // 2) 卖方过滤
+        const BROKERS = ['高盛', '摩根士丹利', '摩根大通', '瑞银', '美银', '花旗', '汇丰', '中金', '中信建投', '中信证券', '华泰', '国泰君安', '海通', '广发', '招商', '申万宏源', '浙商', '国信', '东方', '国金', '兴业', '东吴', '开源', '天风', '中泰', '国海', '西部', '平安', '安信', '长城', '长江', '光大']
+        const buySide = list.filter((it) => BROKERS.some((b) => it.orgName.includes(b)))
+        for (const r of buySide.slice(0, limit)) {
+          const key = `fx:${r.reportId}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          const match = detectAdvancedProductivity(r.title + ' ' + r.orgName)
+          items.push({
+            source: 'fxbaogao',
+            key,
+            reportId: r.reportId,
+            title: r.title,
+            orgName: r.orgName,
+            pubDate: r.pubTimeStr,
+            pageNum: r.pageNum,
+            viewUrl: r.viewUrl,
+            recommended: match.isRecommended,
+            categories: match.categories,
+            holdingCode: code,
+            holdingName: name,
+            broker: r.orgName,
+          })
+        }
+      } catch {}
+    }
+    // 按推荐优先 + 日期倒序
+    items.sort((a, b) => {
+      if (a.recommended !== b.recommended) return a.recommended ? -1 : 1
+      return (b.pubDate || '').localeCompare(a.pubDate || '')
+    })
+    res.json({ ok: true, items, count: items.length, timeRange: startTime })
+  } catch (e) {
+    console.warn('[by-holdings]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || 'by-holdings failed' })
   }
 })
 
