@@ -24,10 +24,36 @@
       <!-- Tab 1：全部研报 AI 精读 -->
       <!-- ============================================================ -->
       <view v-if="tab === 'all'" class="rs-pane">
-        <view v-if="allLoading && allItems.length === 0" class="rs-empty"><text>正在加载研报列表…</text></view>
-        <view v-else-if="allItems.length === 0" class="rs-empty"><text>暂无研报</text></view>
+        <!-- 顶部筛选条：日期 + 机构 + 只看推荐（同一行，缩小字号） -->
+        <view class="rs-filter-bar">
+          <view class="rs-filter-row">
+            <view class="rs-filter-item" @tap="openAllDateMenu">
+              <text class="rs-filter-label">日期</text>
+              <view class="rs-filter-pill">
+                <text class="rs-filter-pill-text">{{ ALL_DATE_RANGE_LABELS[allDateIdx] || '1周' }}</text>
+                <text class="rs-filter-pill-caret">▾</text>
+              </view>
+            </view>
+            <view class="rs-filter-item" @tap="openAllBrokerMenu">
+              <text class="rs-filter-label">机构</text>
+              <view class="rs-filter-pill">
+                <text class="rs-filter-pill-text">{{ allBrokerLabels[allBrokerIdx] || '全部' }}</text>
+                <text class="rs-filter-pill-caret">▾</text>
+              </view>
+            </view>
+            <view class="rs-filter-item rs-filter-item--switch" @tap="onAllOnlyRecToggle">
+              <view class="rs-checkbox" :class="{ 'rs-checkbox--on': allOnlyRecommended }">
+                <view v-if="allOnlyRecommended" class="rs-checkbox-tick">✓</view>
+              </view>
+              <text class="rs-filter-switch-label">只看推荐</text>
+            </view>
+          </view>
+        </view>
 
-        <view v-for="r in allItems" :key="r.reportId" class="rs-card rs-report-card" @tap="onAllClickRow(r)">
+        <view v-if="allLoading && allDisplay.length === 0" class="rs-empty"><text>正在加载研报列表…</text></view>
+        <view v-else-if="allDisplay.length === 0" class="rs-empty"><text>暂无研报</text></view>
+
+        <view v-for="r in allDisplay" :key="r.reportId" class="rs-card rs-report-card" @tap="onAllClickRow(r)">
           <view class="rs-report-head">
             <view class="rs-report-head-main">
               <view class="rs-report-title-row">
@@ -42,49 +68,6 @@
               </view>
             </view>
             <text class="rs-report-chevron">▸</text>
-          </view>
-        </view>
-
-        <!-- 底部筛选条：日期 + 机构（一行展示） -->
-        <view class="rs-filter-bar">
-          <view class="rs-filter-row">
-            <text class="rs-filter-label">筛选日期</text>
-            <scroll-view scroll-x class="rs-filter-scroll" show-scrollbar="false">
-              <view class="rs-filter-pills">
-                <view
-                  v-for="t in ALL_DATE_RANGES"
-                  :key="t.value"
-                  class="rs-fx-time-pill"
-                  :class="{ active: allDateRange === t.value }"
-                  @tap="onAllDateChange(t.value)"
-                >
-                  <text>{{ t.label }} ({{ allCounts.byDate[t.value] || 0 }})</text>
-                </view>
-              </view>
-            </scroll-view>
-          </view>
-          <view class="rs-filter-row">
-            <text class="rs-filter-label">筛选机构</text>
-            <scroll-view scroll-x class="rs-filter-scroll" show-scrollbar="false">
-              <view class="rs-filter-pills">
-                <view
-                  class="rs-fx-time-pill"
-                  :class="{ active: !allBroker }"
-                  @tap="onAllBrokerChange('')"
-                >
-                  <text>全部 ({{ allCounts.total }})</text>
-                </view>
-                <view
-                  v-for="b in allBrokers"
-                  :key="b"
-                  class="rs-fx-time-pill"
-                  :class="{ active: allBroker === b }"
-                  @tap="onAllBrokerChange(b)"
-                >
-                  <text>{{ b }} ({{ allCounts.byBroker[b] || 0 }})</text>
-                </view>
-              </view>
-            </scroll-view>
           </view>
         </view>
       </view>
@@ -158,7 +141,7 @@
           </view>
         </view>
 
-        <!-- 底部一行：搜索 + 日期 + 搜索按钮 -->
+        <!-- 底部一行：搜索 + 日期按钮 + 搜索按钮 -->
         <view class="rs-mine-bottom-bar">
           <input
             class="rs-mine-search-input"
@@ -167,23 +150,42 @@
             :disabled="mineLoading"
             @confirm="onMineSearch"
           />
-          <scroll-view scroll-x class="rs-mine-date-scroll" show-scrollbar="false">
-            <view class="rs-mine-date-pills">
-              <view
-                v-for="t in ALL_DATE_RANGES"
-                :key="t.value"
-                class="rs-fx-time-pill"
-                :class="{ active: mineTimeRange === t.value }"
-                @tap="onMineTimeChange(t.value)"
-              >
-                <text>{{ t.label }}</text>
-              </view>
-            </view>
-          </scroll-view>
+          <view class="rs-filter-pill rs-mine-date-btn" @tap="openMineDateMenu">
+            <text class="rs-filter-pill-text">{{ currentMineDateLabel }}</text>
+            <text class="rs-filter-pill-caret">▾</text>
+          </view>
           <view class="rs-btn rs-btn--primary rs-mine-search-btn" hover-class="rs-btn--hover" @tap="onMineSearch" :class="{ 'rs-btn--loading': mineLoading }">
             <text>搜索</text>
           </view>
         </view>
+      </view>
+    </view>
+
+    <!-- ============================================================ -->
+    <!-- 统一底部菜单 sheet（两个 tab 共用） -->
+    <!-- ============================================================ -->
+    <view v-if="menuOpen" class="rs-menu-mask" @tap="closeMenu">
+      <view class="rs-menu-sheet" @tap.stop>
+        <view class="rs-menu-handle" />
+        <view class="rs-menu-header">
+          <text class="rs-menu-title">{{ menuTitle }}</text>
+          <view class="rs-menu-close" @tap="closeMenu">
+            <text>×</text>
+          </view>
+        </view>
+        <scroll-view scroll-y class="rs-menu-scroll" :show-scrollbar="false">
+          <view
+            v-for="opt in menuOptions"
+            :key="String(opt.value)"
+            class="rs-menu-item"
+            :class="{ 'rs-menu-item--active': opt.value === menuValue }"
+            @tap="onMenuSelect(opt)"
+          >
+            <text class="rs-menu-item-label">{{ opt.label }}</text>
+            <text class="rs-menu-item-count" :class="{ 'rs-menu-item-count--active': opt.value === menuValue }">{{ opt.count }}</text>
+            <view v-if="opt.value === menuValue" class="rs-menu-item-tick">✓</view>
+          </view>
+        </scroll-view>
       </view>
     </view>
   </view>
@@ -218,6 +220,76 @@ function clientDetect(text: string): { recommended: boolean; categories: string[
   return { recommended: cats.length > 0, categories: cats }
 }
 
+// ============= 通用 =============
+import { listHoldings, type Holding } from '@/api/portfolio'
+const holdings = ref<Holding[]>([])
+
+// ============= 底部菜单 sheet（统一两个 tab） =============
+interface MenuOption { value: string | number; label: string; count?: number }
+interface MenuConfig { title: string; options: MenuOption[]; value: string | number; onSelect: (opt: MenuOption) => void }
+const menuOpen = ref(false)
+const menuTitle = ref('')
+const menuOptions = ref<MenuOption[]>([])
+const menuValue = ref<string | number>('')
+
+function openMenu(cfg: MenuConfig) {
+  menuTitle.value = cfg.title
+  menuOptions.value = cfg.options
+  menuValue.value = cfg.value
+  // 用 ref 暂存回调（避免 menu 关闭时丢失）
+  ;(menuSelectHandler as any).value = cfg.onSelect
+  menuOpen.value = true
+}
+const menuSelectHandler = ref<((opt: MenuOption) => void) | null>(null)
+
+function closeMenu() {
+  menuOpen.value = false
+  menuSelectHandler.value = null
+}
+function onMenuSelect(opt: MenuOption) {
+  if (menuSelectHandler.value) menuSelectHandler.value(opt)
+  closeMenu()
+}
+
+// Tab 1 打开日期菜单
+function openAllDateMenu() {
+  const opts: MenuOption[] = ALL_DATE_RANGES.map((t) => ({
+    value: ALL_DATE_RANGES.indexOf(t),
+    label: t.label,
+    count: allCounts.value.byDate[t.value] || 0,
+  }))
+  openMenu({
+    title: '选择日期范围',
+    options: opts,
+    value: allDateIdx.value,
+    onSelect: (opt) => {
+      const idx = Number(opt.value)
+      allDateIdx.value = idx
+      const v = ALL_DATE_RANGES[idx]?.value || 'last7day'
+      allDateRange.value = v
+      allItems.value = allItemsWithDate.value.filter((r) => r._dateRange === v)
+    },
+  })
+}
+// Tab 1 打开机构菜单
+function openAllBrokerMenu() {
+  const opts: MenuOption[] = allBrokerLabels.value.map((label, i) => ({
+    value: i,
+    label,
+    count: i === 0 ? allCounts.value.total : (allCounts.value.byBroker[allBrokers.value[i - 1]] || 0),
+  }))
+  openMenu({
+    title: '选择研报机构',
+    options: opts,
+    value: allBrokerIdx.value,
+    onSelect: (opt) => {
+      const idx = Number(opt.value)
+      allBrokerIdx.value = idx
+      allBroker.value = idx <= 0 ? '' : (allBrokers.value[idx - 1] || '')
+    },
+  })
+}
+
 // ============= Tab 状态 =============
 const tab = ref<'all' | 'mine'>('all')
 
@@ -229,11 +301,17 @@ const ALL_DATE_RANGES = [
   { value: 'last3mon', label: '3月' },
   { value: 'last1year', label: '全部' },
 ]
+const ALL_DATE_RANGE_LABELS = ALL_DATE_RANGES.map((t) => t.label)
 // 注意：fxbaogao 不支持 last1day，1天/1周 都用 last7day（最近 7 天数据做近似）
-const allDateRange = ref('last7day')
+// 1天/1周用同一个 value 但显示不同的 label；通过 allDateRange.value（fxbaogao 参数）+ allDateIdx（picker 选中 index）分离
+const allDateRange = ref('last7day') // 实际传给 fxbaogao 的 startTime
+const allDateIdx = ref(1) // 默认 1周（即 5 个 label 中的第 2 个）
 const allBroker = ref<string>('')
+const allBrokerIdx = ref(0) // 0 = '全部'，>0 = 某个 broker
+const allOnlyRecommended = ref(false)
 interface AllItemWithDate extends AllReportItem {
   _dateRange: string
+  _isIndividual?: boolean // 是否是个股研究（标题含 A 股代码或名称）
 }
 const allItems = ref<AllItemWithDate[]>([])
 const allLoading = ref(false)
@@ -248,11 +326,33 @@ const allBrokers = computed(() => {
   return Array.from(set).sort()
 })
 
+const allBrokerLabels = computed(() => ['全部', ...allBrokers.value])
+
+// Tab 1 数据过滤：客户端排除 A 股个股研报 / 公司公告 / 财报
+// 只保留：行业研究 / 宏观 / 策略 / 产业 / 专题 类研报
+function isIndividualReport(title: string, orgName: string): boolean {
+  if (!title && !orgName) return false
+  // 1) 财报类（fxbaogao 用 orgName=财报 表示公司公告）
+  if (orgName === '财报' || orgName === '公告' || orgName?.includes('公告')) return true
+  // 2) 标题含财报 / 业绩公告关键词
+  if (/(半年|年度|季度|一季|三季)报告|业绩快报|业绩预告|首次覆盖|年报点评|公司公告|关于/.test(title)) return true
+  // 3) 6 位 A 股代码
+  if (/\b\d{6}\b/.test(title)) return true
+  if (/[(（【\s]\d{6}[)）】\s.,，]/.test(title)) return true
+  // 4) 持仓标的名称出现在标题里（说明是个股研报 / 个股公告）
+  for (const h of holdings.value) {
+    const name = (h.short_name || '').trim()
+    if (name && name.length >= 2 && title.includes(name)) return true
+  }
+  return false
+}
+
 const allCounts = computed(() => {
   const byDate: Record<string, number> = {}
   const byBroker: Record<string, number> = {}
   let total = 0
   for (const r of allItems.value) {
+    if (r._isIndividual) continue // 不计入筛选统计
     byDate[r._dateRange] = (byDate[r._dateRange] || 0) + 1
     const b = r.broker || r.orgName
     if (b) byBroker[b] = (byBroker[b] || 0) + 1
@@ -276,8 +376,16 @@ async function loadAllList() {
       try {
         const r = await listAllReports({ startTime: t.value, pageNum: 1 })
         const enriched = (r.items || []).map((it) => {
-          const det = clientDetect((it.title || '') + ' ' + (it.orgName || ''))
-          return { ...it, _dateRange: t.value, broker: it.broker || it.orgName, recommended: det.recommended, categories: det.categories }
+          const title = it.title || ''
+          const det = clientDetect(title + ' ' + (it.orgName || ''))
+          return {
+            ...it,
+            _dateRange: t.value,
+            _isIndividual: isIndividualReport(title, it.orgName || ''),
+            broker: it.broker || it.orgName,
+            recommended: det.recommended,
+            categories: det.categories,
+          }
         })
         return enriched
       } catch {
@@ -285,11 +393,9 @@ async function loadAllList() {
       }
     })
     const results = await Promise.all(tasks)
-    // 用最近 1 周的结果作为默认显示
     allItemsWithDate.value = results.flat()
-    // 默认 allItems = 当前选定日期范围的项目
+    // 默认 allItems = 当前选定日期范围的项目（按 broker 过滤待用户在菜单里选）
     allItems.value = allItemsWithDate.value.filter((r) => r._dateRange === allDateRange.value)
-    // 默认所有 broker 都显示（已 selected ''）
   } catch (e: any) {
     allError.value = e?.message || '加载失败'
     allItems.value = []
@@ -298,18 +404,15 @@ async function loadAllList() {
   }
 }
 
-function onAllDateChange(v: string) {
-  allDateRange.value = v
-  allItems.value = allItemsWithDate.value.filter((r) => r._dateRange === v)
-}
-function onAllBrokerChange(b: string) {
-  allBroker.value = b
+function onAllOnlyRecToggle() {
+  allOnlyRecommended.value = !allOnlyRecommended.value
 }
 
-// 列表显示 = 选中的日期 + 选中的机构
+// 列表显示 = 选中的日期 + 选中的机构 + 只看推荐 + 排除个股
 const allDisplay = computed(() => {
-  let arr = allItems.value
+  let arr = allItems.value.filter((r) => !r._isIndividual)
   if (allBroker.value) arr = arr.filter((r) => (r.broker || r.orgName) === allBroker.value)
+  if (allOnlyRecommended.value) arr = arr.filter((r) => r.recommended)
   return arr
 })
 
@@ -415,6 +518,24 @@ const mineExpanded = ref<Set<string>>(new Set())
 const mineIngesting = ref<string>('')
 const mineIngestedMap = ref<Record<string, any>>({})
 
+const currentMineDateLabel = computed(() => {
+  const m = ALL_DATE_RANGES.find((t) => t.value === mineTimeRange.value)
+  return m?.label || '1月'
+})
+
+function openMineDateMenu() {
+  const opts: MenuOption[] = ALL_DATE_RANGES.map((t) => ({ value: t.value, label: t.label }))
+  openMenu({
+    title: '选择日期范围',
+    options: opts,
+    value: mineTimeRange.value,
+    onSelect: (opt) => {
+      mineTimeRange.value = String(opt.value)
+      loadMineList()
+    },
+  })
+}
+
 async function loadMineList(timeRange?: string) {
   if (mineLoading.value) return
   if (!holdings.value.length) return
@@ -438,10 +559,6 @@ async function loadMineList(timeRange?: string) {
 
 function onMineLoad(force = false) {
   if (force || !mineLoaded.value) loadMineList()
-}
-function onMineTimeChange(v: string) {
-  mineTimeRange.value = v
-  loadMineList(v)
 }
 function onMineSearch() {
   const code = mineSearchInput.value.trim()
@@ -535,8 +652,6 @@ async function onMineViewOriginal(r: HoldingReportItem) {
 }
 
 // ============= 通用 =============
-import { listHoldings, type Holding } from '@/api/portfolio'
-const holdings = ref<Holding[]>([])
 
 function onSwitchTab(t: 'all' | 'mine') {
   tab.value = t
@@ -551,8 +666,13 @@ function onSwitchTab(t: 'all' | 'mine') {
 onMounted(() => {
   // 默认 Tab 1
   loadAllList()
-  listHoldings().then((h) => { holdings.value = h || [] }).then(() => {
-    // holdings 拿到后再触发 mine 加载（即便当前 Tab 不是 mine，下次切到时会自动 load）
+  listHoldings().then((h) => {
+    holdings.value = h || []
+    // holdings 拿到后重过滤 Tab 1（让 isIndividualReport 生效）
+    if (allItemsWithDate.value.length) {
+      allItemsWithDate.value = allItemsWithDate.value.map((r) => ({ ...r, _isIndividual: isIndividualReport(r.title || '', r.orgName || '') }))
+      allItems.value = allItemsWithDate.value.filter((r) => r._dateRange === allDateRange.value)
+    }
   })
 })
 
@@ -637,18 +757,57 @@ $spacing-base: 24rpx;
 .rs-report-title-row { display: flex; align-items: center; gap: 12rpx; flex-wrap: wrap; }
 .rs-rec-badge { font-size: 22rpx; font-weight: 600; color: #0d1b2a; background: linear-gradient(135deg, #ffb86b 0%, #ff7a3d 100%); padding: 4rpx 14rpx; border-radius: 8rpx; flex: 0 0 auto; }
 
-// 底部筛选条（Tab 1）
-.rs-filter-bar { margin-top: $spacing-base; padding: 16rpx; background: rgba(255, 255, 255, 0.03); border: 1rpx solid $app-border; border-radius: $radius-lg; }
-.rs-filter-row { display: flex; align-items: center; gap: 12rpx; margin-bottom: 12rpx; }
-.rs-filter-row:last-child { margin-bottom: 0; }
-.rs-filter-label { font-size: 24rpx; color: $app-text-muted; flex: 0 0 auto; }
-.rs-filter-scroll { flex: 1; overflow: hidden; white-space: nowrap; }
-.rs-filter-pills { display: inline-flex; gap: 8rpx; flex-wrap: nowrap; }
+// 顶部筛选条（Tab 1）—— 一行：日期 pill + 机构 pill + 只看推荐 复选框（窄屏自动换行）
+.rs-filter-bar { margin: 0 0 $spacing-base; padding: 10rpx 12rpx; background: rgba(255, 255, 255, 0.03); border: 1rpx solid $app-border; border-radius: $radius-md; overflow: visible; }
+.rs-filter-row { display: flex; align-items: center; gap: 10rpx 10rpx; flex-wrap: wrap; }
+.rs-filter-item { display: flex; align-items: center; gap: 6rpx; flex: 0 0 auto; min-width: 0; }
+.rs-filter-item--switch { flex: 1 1 100%; min-width: 0; justify-content: flex-end; align-items: center; gap: 10rpx; padding: 4rpx 0; }
+.rs-filter-item--switch .rs-filter-switch-label { flex: 0 0 auto; }
+.rs-filter-label { font-size: 20rpx; color: $app-text-muted; flex: 0 0 auto; }
+// 触发底部菜单的 pill 按钮：和现有 card 配色融合
+.rs-filter-pill { display: inline-flex; align-items: center; gap: 4rpx; padding: 8rpx 12rpx; min-height: 48rpx; background: linear-gradient(180deg, rgba(255, 184, 107, 0.10), rgba(255, 184, 107, 0.04)); border: 1rpx solid rgba(255, 184, 107, 0.28); border-radius: 8rpx; box-sizing: border-box; box-shadow: inset 0 -1rpx 0 rgba(0, 0, 0, 0.18), 0 1rpx 2rpx rgba(0, 0, 0, 0.15); transition: all 0.15s; }
+.rs-filter-pill:active { transform: translateY(1rpx); box-shadow: inset 0 1rpx 2rpx rgba(0, 0, 0, 0.22); }
+.rs-filter-pill-text { font-size: 22rpx; color: $app-text; font-weight: 500; white-space: nowrap; }
+.rs-filter-pill-caret { font-size: 16rpx; color: $rf-amber; }
+
+// 复选框（替代 switch）：未选中时灰色阴影、选中时橙金渐变 + 立体感
+.rs-checkbox { width: 36rpx; height: 36rpx; min-width: 36rpx; border-radius: 8rpx; background: linear-gradient(180deg, #2a3a4a, #1a2532); border: 1rpx solid rgba(255, 255, 255, 0.12); box-shadow: inset 0 1rpx 2rpx rgba(0, 0, 0, 0.5), 0 1rpx 2rpx rgba(0, 0, 0, 0.3); display: flex; align-items: center; justify-content: center; flex: 0 0 auto; transition: all 0.2s; }
+.rs-checkbox--on { background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%); border-color: transparent; box-shadow: 0 2rpx 8rpx rgba(255, 122, 61, 0.45), inset 0 1rpx 0 rgba(255, 255, 255, 0.35); }
+.rs-checkbox-tick { color: $color-bg; font-size: 24rpx; font-weight: 800; line-height: 1; }
+.rs-filter-switch-label { font-size: 22rpx; color: $app-text; flex: 0 0 auto; white-space: nowrap; }
+
+// 折叠屏 (>= 600px) 强制单行
+@media (min-width: 600px) {
+  .rs-filter-row { flex-wrap: nowrap; }
+  .rs-filter-item--switch { flex: 0 0 auto; margin-left: auto; justify-content: flex-start; }
+}
 
 // 底部搜索条（Tab 2 我的持仓研报）
 .rs-mine-bottom-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10rpx; padding: 14rpx 12rpx; margin-top: $spacing-base; background: $app-bg; border: 1rpx solid $app-border; border-radius: $radius-lg; z-index: 10; }
-.rs-mine-search-input { flex: 0 0 200rpx; min-height: 60rpx; padding: 8rpx 12rpx; background: $color-bg; border: 1rpx solid $app-border; border-radius: $radius-md; color: $app-text; font-size: 24rpx; }
-.rs-mine-date-scroll { flex: 1; overflow: hidden; white-space: nowrap; }
-.rs-mine-date-pills { display: inline-flex; gap: 6rpx; flex-wrap: nowrap; }
-.rs-mine-search-btn { flex: 0 0 120rpx; padding: 14rpx 8rpx; font-size: 26rpx; }
+.rs-mine-search-input { flex: 1 1 0; min-width: 0; min-height: 60rpx; padding: 8rpx 12rpx; background: $color-bg; border: 1rpx solid $app-border; border-radius: $radius-md; color: $app-text; font-size: 24rpx; box-sizing: border-box; }
+.rs-mine-date-btn { flex: 0 0 auto; }
+.rs-mine-search-btn { flex: 0 0 110rpx; padding: 14rpx 8rpx; font-size: 26rpx; }
+
+// ============================================================
+// 底部菜单 sheet（统一两个 tab 用）
+// ============================================================
+.rs-menu-mask { position: fixed; left: 0; right: 0; top: 0; bottom: 0; background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px); z-index: 100; display: flex; align-items: flex-end; justify-content: center; animation: rsMenuFade 0.18s ease-out; }
+@keyframes rsMenuFade { from { opacity: 0; } to { opacity: 1; } }
+.rs-menu-sheet { width: 100%; max-width: 720rpx; max-height: 70vh; background: linear-gradient(180deg, #142233 0%, #0d1b2a 100%); border-top: 1rpx solid rgba(255, 184, 107, 0.3); border-radius: 24rpx 24rpx 0 0; box-shadow: 0 -8rpx 32rpx rgba(0, 0, 0, 0.55); padding: 0 0 env(safe-area-inset-bottom, 0); display: flex; flex-direction: column; animation: rsMenuSlide 0.22s cubic-bezier(0.2, 0.9, 0.3, 1); }
+@keyframes rsMenuSlide { from { transform: translateY(40rpx); opacity: 0.5; } to { transform: translateY(0); opacity: 1; } }
+.rs-menu-handle { width: 60rpx; height: 6rpx; background: rgba(255, 184, 107, 0.35); border-radius: 4rpx; margin: 12rpx auto 0; }
+.rs-menu-header { display: flex; align-items: center; justify-content: space-between; padding: 18rpx 24rpx 12rpx; border-bottom: 1rpx dashed rgba(255, 184, 107, 0.18); }
+.rs-menu-title { font-size: 28rpx; font-weight: 600; color: $app-text; letter-spacing: 1rpx; }
+.rs-menu-close { width: 56rpx; height: 56rpx; min-width: 56rpx; border-radius: 50%; background: rgba(255, 184, 107, 0.08); border: 1rpx solid rgba(255, 184, 107, 0.25); display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+.rs-menu-close:active { transform: scale(0.92); background: rgba(255, 184, 107, 0.2); }
+.rs-menu-close text { font-size: 36rpx; color: $rf-amber; line-height: 1; font-weight: 300; }
+.rs-menu-scroll { flex: 1 1 auto; min-height: 0; padding: 8rpx 16rpx 16rpx; }
+.rs-menu-item { display: flex; align-items: center; gap: 12rpx; padding: 20rpx 18rpx; min-height: 72rpx; border-radius: 12rpx; margin: 4rpx 0; background: transparent; border: 1rpx solid transparent; transition: all 0.15s; }
+.rs-menu-item:active { background: rgba(255, 184, 107, 0.06); }
+.rs-menu-item--active { background: linear-gradient(135deg, rgba(255, 184, 107, 0.18) 0%, rgba(255, 122, 61, 0.12) 100%); border-color: rgba(255, 184, 107, 0.45); box-shadow: 0 2rpx 8rpx rgba(255, 122, 61, 0.18); }
+.rs-menu-item-label { flex: 1; min-width: 0; font-size: 26rpx; color: $app-text; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rs-menu-item--active .rs-menu-item-label { color: #fff4c0; font-weight: 600; }
+.rs-menu-item-count { font-size: 22rpx; color: $app-text-muted; background: rgba(255, 184, 107, 0.08); padding: 4rpx 14rpx; border-radius: 999rpx; min-width: 56rpx; text-align: center; font-weight: 600; }
+.rs-menu-item-count--active { background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%); color: $color-bg; }
+.rs-menu-item-tick { font-size: 32rpx; color: $rf-amber; font-weight: 800; flex: 0 0 auto; }
 </style>

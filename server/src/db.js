@@ -825,6 +825,69 @@ export async function listResearchReports() {
   }));
 }
 
+// 带过滤的研报列表（按 created_at 距今的天数 + broker 匹配）
+// dateRange: '1d' | '1w' | '1m' | '3m' | 'all'
+// institution: 精确匹配 broker 列（空字符串=不过滤）
+export async function listResearchReportsFiltered(opts = {}) {
+  const { dateRange = 'all', institution = '', limit = 200 } = opts
+  const wheres = []
+  const args = []
+  const now = Date.now()
+  if (dateRange !== 'all') {
+    const days = { '1d': 1, '1w': 7, '1m': 30, '3m': 90 }[dateRange] || 0
+    if (days > 0) {
+      wheres.push('created_at >= ?')
+      args.push(now - days * 86400_000)
+    }
+  }
+  if (institution && institution.trim()) {
+    wheres.push('broker = ?')
+    args.push(institution.trim())
+  }
+  const whereSql = wheres.length ? 'WHERE ' + wheres.join(' AND ') : ''
+  const sql = `SELECT id,title,broker,industry,source_url,raw_text,tldr,key_points,opportunities,risks,status,created_at,updated_at FROM research_reports ${whereSql} ORDER BY created_at DESC LIMIT ?`
+  args.push(limit)
+  const r = await client.execute({ sql, args })
+  return r.rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    broker: row.broker,
+    industry: row.industry,
+    source_url: row.source_url,
+    raw_text: row.raw_text,
+    tldr: row.tldr,
+    key_points: safeJson(row.key_points),
+    opportunities: safeJson(row.opportunities),
+    risks: safeJson(row.risks),
+    status: row.status,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  }))
+}
+
+// 各时间窗 + 每个 broker 的计数（前端底部筛选条用）
+export async function countResearchReportsGrouped() {
+  const r = await client.execute('SELECT broker, created_at FROM research_reports')
+  const now = Date.now()
+  const byDateRange = { '1d': 0, '1w': 0, '1m': 0, '3m': 0, 'all': 0 }
+  const byBroker = {}
+  for (const row of r.rows) {
+    const age = now - Number(row.created_at)
+    byDateRange['all']++
+    if (age <= 86400_000) byDateRange['1d']++
+    if (age <= 7 * 86400_000) byDateRange['1w']++
+    if (age <= 30 * 86400_000) byDateRange['1m']++
+    if (age <= 90 * 86400_000) byDateRange['3m']++
+    const b = String(row.broker || '未知')
+    byBroker[b] = (byBroker[b] || 0) + 1
+  }
+  return {
+    byDateRange,
+    byBroker: Object.entries(byBroker).sort((a, b) => b[1] - a[1]).map(([broker, n]) => ({ broker, n })),
+    total: r.rows.length,
+  }
+}
+
 export async function deleteResearchReport(id) {
   await client.execute({ sql: `DELETE FROM research_reports WHERE id=?`, args: [String(id)] });
 }
