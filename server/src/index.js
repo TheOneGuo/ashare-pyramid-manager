@@ -38,7 +38,7 @@ import {
 } from './fxbaogao.js';
 import { buildAccount, previewChange, checkWithdraw, TERMS, EVENT_DEPOSIT, EVENT_WITHDRAW, EVENT_FEE_RATE } from './account-ledger.js';
 import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans, removePlan,
-  upsertResearchReport, listResearchReports, deleteResearchReport,
+  upsertResearchReport, listResearchReports, listResearchReportsFiltered, countResearchReportsGrouped, deleteResearchReport,
   upsertStockReport, listStockReports, deleteStockReport } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -382,6 +382,69 @@ app.get('/api/research/reports', async (_req, res) => {
   }
 });
 
+// 带日期 / 机构 过滤的研报列表（用于 Tab 1）
+app.get('/api/research/reports/filtered', async (req, res) => {
+  try {
+    const dateRange = String(req.query.dateRange || 'all')
+    const institution = String(req.query.institution || '')
+    const items = await listResearchReportsFiltered({ dateRange, institution })
+    res.json({ ok: true, items, count: items.length, dateRange, institution })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// 各时间窗 + 各机构 计数（前端底部筛选条显示数量）
+app.get('/api/research/reports/groups', async (_req, res) => {
+  try {
+    const g = await countResearchReportsGrouped()
+    res.json({ ok: true, ...g })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
+// 单条研报：返回 MD 渲染（txt 源）或 PDF 直链（PDF 源）
+// 用于"查看原文"按钮
+app.get('/api/research/reports/:id/view', async (req, res) => {
+  try {
+    const id = String(req.params.id)
+    const all = await listResearchReports()
+    const r = all.find((x) => x.id === id)
+    if (!r) return res.status(404).json({ ok: false, error: 'not found' })
+    // 如果是 fxbaogao 报告（标题含 #ID 或是 status: refined-llm）但没 raw_text，尝试拿 PDF
+    if ((!r.raw_text || r.raw_text.length < 200) && r.source_url && /fxbaogao\.com\/view\?id=(\d+)/.test(r.source_url)) {
+      const m = r.source_url.match(/fxbaogao\.com\/view\?id=(\d+)/)
+      if (m) {
+        try {
+          const url = await getFxbaogaoPdfUrl({ reportId: Number(m[1]) })
+          return res.json({ ok: true, type: 'pdf', pdfUrl: url, viewUrl: r.source_url })
+        } catch {}
+      }
+    }
+    if (r.raw_text && r.raw_text.length > 200) {
+      // txt 源 → 转 MD
+      const md = [
+        `# ${r.title || '研报'}`,
+        r.broker ? `**来源**：${r.broker}  ·  ` : '',
+        r.industry ? `**行业**：${r.industry}  ·  ` : '',
+        `**时间**：${new Date(r.created_at).toISOString().slice(0, 10)}  ·  **状态**：${r.status || 'refined'}`,
+        '',
+        r.tldr ? `## 一句话精读\n${r.tldr}\n` : '',
+        r.key_points?.length ? `## 核心观点\n${r.key_points.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n` : '',
+        r.opportunities?.length ? `## 新机会\n${r.opportunities.map((p) => `- ${p}`).join('\n')}\n` : '',
+        r.risks?.length ? `## 风险点\n${r.risks.map((p) => `- ${p}`).join('\n')}\n` : '',
+        '---',
+        '*本内容由 AI 自动提炼整理，仅供研究参考。*',
+      ].filter(Boolean).join('\n')
+      return res.json({ ok: true, type: 'markdown', markdown: md, title: r.title, broker: r.broker })
+    }
+    return res.status(404).json({ ok: false, error: 'no content' })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message })
+  }
+})
+
 app.delete('/api/research/reports/:id', requireAuth, async (req, res) => {
   try {
     await deleteResearchReport(req.params.id);
@@ -631,7 +694,7 @@ app.post('/api/research/reports/by-holdings', requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'holdings 必填' })
     }
     const startTime = String(timeRange || 'last1mon')
-    const limit = Math.min(Math.max(Number(maxPerHolding) || 3, 1), 10)
+    const limit = Math.min(Math.max(Number(maxPerHolding) || 20, 1), 30)
     const items = []
     const seen = new Set()
 

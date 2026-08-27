@@ -572,6 +572,37 @@ export interface HoldingReportItem {
   holdingName: string
   broker: string
 }
+// 全部研报 Tab 1：通用列表项
+export interface AllReportItem {
+  reportId: number
+  title: string
+  orgName: string
+  pubDate: string
+  pageNum: number
+  viewUrl: string
+  recommended: boolean
+  categories: string[]
+  broker: string
+}
+export interface AllReportsResult {
+  ok: boolean
+  items: AllReportItem[]
+  count: number
+  pageNum: number
+  startTime: string
+  keywords: string
+}
+export async function listAllReports(params: {
+  keywords?: string
+  startTime?: string
+  pageNum?: number
+}): Promise<AllReportsResult> {
+  const q = new URLSearchParams()
+  if (params.keywords) q.set('keywords', params.keywords)
+  if (params.startTime) q.set('startTime', params.startTime)
+  if (params.pageNum) q.set('pageNum', String(params.pageNum))
+  return jget(`/api/research/fxbaogao/search?${q.toString()}`, { timeoutMs: 30000 })
+}
 export async function listHoldingReports(params: {
   holdings: { stock_code: string; short_name?: string }[]
   timeRange?: string
@@ -592,4 +623,37 @@ export async function deepSearchForHoldings(params: {
   timeRange?: string
 }): Promise<{ ok: boolean; results: DeepSearchByTopic[]; timeRange: string; topics: string[] }> {
   return jget('/api/research/fxbaogao/auto-search-holdings-deep', { method: 'POST', body: params, timeoutMs: 120000 })
+}
+
+// 全部研报列表（带日期/机构筛选）
+export async function getResearchReportsFiltered(params: { dateRange?: string; institution?: string }): Promise<{
+  ok: boolean
+  items: any[]
+  count: number
+  dateRange: string
+  institution: string
+}> {
+  const q = new URLSearchParams()
+  if (params.dateRange) q.set('dateRange', params.dateRange)
+  if (params.institution) q.set('institution', params.institution)
+  return jget(`/api/research/reports/filtered?${q.toString()}`)
+}
+export async function getResearchReportsGroups(): Promise<{
+  ok: boolean
+  byDateRange: Record<string, number>
+  byBroker: { broker: string; n: number }[]
+  total: number
+}> {
+  return jget('/api/research/reports/groups')
+}
+export async function getResearchReportView(id: string): Promise<{
+  ok: boolean
+  type: 'pdf' | 'markdown'
+  pdfUrl?: string
+  markdown?: string
+  title?: string
+  broker?: string
+  error?: string
+}> {
+  return jget(`/api/research/reports/${encodeURIComponent(id)}/view`, { timeoutMs: 30000 })
 }
