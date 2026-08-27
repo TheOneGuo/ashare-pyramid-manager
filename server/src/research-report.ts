@@ -298,3 +298,87 @@ export async function handleResearch(body: {
   // 后续接真 LLM：在此根据 env 中的 AI 配置切换 buildMockReport / buildLlmReport
   return buildMockReport(body)
 }
+
+// ============================================================================
+// 真 LLM 精读：fxbaogao 研报 PDF 文本 → 结构化字段
+// 没有 LLM key 时返回 null（让上层走 mock 兜底）
+// ============================================================================
+import { chatJson, isLlmAvailable } from './llm.js'
+
+const REFINED_SYSTEM = `你是「节节高」研报精读助手，把卖方/外资研报正文提炼成结构化要点。要求：
+- 中文输出，简洁专业，不要客套
+- tldr: 一句话总评（含评级/目标价/方向，如无则省略）
+- key_points: 核心观点 3-6 条
+- opportunities: 新机会/正面催化 3-6 条
+- risks: 风险点 3-6 条
+- 严格按 JSON 输出，不要加任何额外字段或解释`
+
+export async function refineWithLlm(input: {
+  raw_text: string
+  title?: string
+  broker?: string
+  industry?: string
+}): Promise<{ tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; mode: 'llm' | 'fallback' } | null> {
+  if (!isLlmAvailable()) return null
+  const raw = (input.raw_text || '').trim().slice(0, 18000) // 控制 token
+  if (raw.length < 200) return null
+  const meta = [
+    input.title ? `标题：${input.title}` : '',
+    input.broker ? `机构：${input.broker}` : '',
+    input.industry ? `行业：${input.industry}` : '',
+  ].filter(Boolean).join('\n')
+  const user = `${meta}\n\n研报正文（截取前 18000 字）：\n${raw}\n\n请按以下 JSON 结构输出：\n{"tldr":"...", "key_points":["...","..."], "opportunities":["...","..."], "risks":["...","..."]}`
+  const result = await chatJson<{ tldr?: string; key_points?: string[]; opportunities?: string[]; risks?: string[] }>({
+    system: REFINED_SYSTEM,
+    user,
+    jsonHint: true,
+    maxTokens: 1800,
+    temperature: 0.2,
+  })
+  if (!result || typeof result !== 'object') return null
+  const pickStr = (v: any) => String(v || '').trim()
+  const pickList = (v: any): string[] => Array.isArray(v) ? v.map((x) => String(x || '').trim()).filter((x) => x.length > 0).slice(0, 8) : []
+  return {
+    tldr: pickStr(result.tldr).slice(0, 800),
+    key_points: pickList(result.key_points),
+    opportunities: pickList(result.opportunities),
+    risks: pickList(result.risks),
+    mode: 'llm',
+  }
+}
+
+// 把 LLM 提炼结果（或者 mock 兜底结果）合并成完整的 RefinedReport 入库形态
+export function buildRefinedReport(input: {
+  id?: string
+  title: string
+  broker: string
+  industry: string
+  source_url: string
+  raw_text: string
+  llmResult: { tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; mode: 'llm' | 'fallback' } | null
+}): RefinedReport {
+  const fallback = refineExternalReport({
+    title: input.title,
+    broker: input.broker,
+    industry: input.industry,
+    source_url: input.source_url,
+    raw_text: input.raw_text,
+  })
+  const use = input.llmResult
+  const now = Date.now()
+  return {
+    ...fallback,
+    title: (input.title || fallback.title).slice(0, 200),
+    broker: (input.broker || fallback.broker).slice(0, 80),
+    industry: (input.industry || fallback.industry).slice(0, 80),
+    source_url: (input.source_url || fallback.source_url).slice(0, 500),
+    raw_text: input.raw_text.slice(0, 60000),
+    tldr: (use?.tldr || fallback.tldr).slice(0, 2000),
+    key_points: (use?.key_points?.length ? use.key_points : fallback.key_points).slice(0, 8),
+    opportunities: (use?.opportunities?.length ? use.opportunities : fallback.opportunities).slice(0, 8),
+    risks: (use?.risks?.length ? use.risks : fallback.risks).slice(0, 8),
+    status: use?.mode === 'llm' ? 'refined-llm' : 'refined-mock',
+    id: input.id || fallback.id,
+    created_at: fallback.created_at || now,
+  }
+}

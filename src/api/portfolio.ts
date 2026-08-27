@@ -477,3 +477,79 @@ export async function upsertHoldingProfile(body: Partial<HoldingProfile> & { sto
 export async function deleteHoldingProfile(code: string): Promise<{ ok: boolean }> {
   return jget(`/api/portfolio/holding-profiles/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
+
+// ============================================================================
+// 发现报告 (fxbaogao.com) 搜索 + 精读 + 下载
+// ============================================================================
+export interface FxbaogaoReport {
+  reportId: number
+  title: string
+  orgName: string
+  pageNum: number
+  pubTime: number
+  pubTimeStr: string
+  paragraphs: any[]
+  viewUrl: string
+}
+export interface FxbaogaoSearchResult {
+  ok: boolean
+  items: FxbaogaoReport[]
+  count: number
+  pageNum: number
+  startTime: string
+  keywords: string
+}
+export async function searchFxbaogao(params: {
+  keywords?: string
+  startTime?: string
+  pageNum?: number
+  orgNames?: string[]
+}): Promise<FxbaogaoSearchResult> {
+  const q = new URLSearchParams()
+  if (params.keywords) q.set('keywords', params.keywords)
+  if (params.startTime) q.set('startTime', params.startTime)
+  if (params.pageNum) q.set('pageNum', String(params.pageNum))
+  if (params.orgNames?.length) q.set('orgNames', params.orgNames.join(','))
+  return jget(`/api/research/fxbaogao/search?${q.toString()}`, { timeoutMs: 30000 })
+}
+export interface FxbaogaoParagraphsResp {
+  ok: boolean
+  summary: string
+  toc: any[]
+  hits: any[]
+  raw: string
+}
+export async function getFxbaogaoParagraphs(params: { reportId: number; keyword?: string }): Promise<FxbaogaoParagraphsResp> {
+  const q = new URLSearchParams({ reportId: String(params.reportId) })
+  if (params.keyword) q.set('keyword', params.keyword)
+  return jget(`/api/research/fxbaogao/paragraphs?${q.toString()}`, { timeoutMs: 20000 })
+}
+export async function getFxbaogaoPdfUrl(reportId: number): Promise<{ ok: boolean; reportId: number; url: string; viewUrl: string }> {
+  return jget(`/api/research/fxbaogao/pdf-url?reportId=${reportId}`, { timeoutMs: 20000 })
+}
+export async function ingestFxbaogaoReport(params: { reportId: number; industry?: string }): Promise<{
+  ok: boolean
+  report?: any
+  pdf_status?: string
+  llm_used?: boolean
+  raw_text_chars?: number
+  error?: string
+}> {
+  return jget('/api/research/fxbaogao/ingest', { method: 'POST', body: params, timeoutMs: 120000 })
+}
+export interface FxbaogaoAutoSearchItem {
+  code: string
+  name: string
+  count: number
+  items: FxbaogaoReport[]
+  error?: string
+}
+export async function autoSearchFxbaogaoForHoldings(params: {
+  holdings: { stock_code: string; short_name?: string }[]
+  timeRange?: string
+}): Promise<{ ok: boolean; results: FxbaogaoAutoSearchItem[]; timeRange: string }> {
+  return jget('/api/research/fxbaogao/auto-search-holdings', { method: 'POST', body: params, timeoutMs: 90000 })
+}
+export async function getFxbaogaoStatus(): Promise<{ ok: boolean; fxbaogao: { available: boolean; keyTail: string } }> {
+  return jget('/api/research/fxbaogao/status')
+}

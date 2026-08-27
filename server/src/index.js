@@ -30,7 +30,12 @@ import { computeTrackState } from './track-executor.js';
 import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
 import { handleExtract } from './portfolio-extract.js';
-import { handleResearch, refineExternalReport } from './research-report.js';
+import { handleResearch, refineExternalReport, refineWithLlm, buildRefinedReport } from './research-report.js';
+import {
+  isFxbaogaoAvailable, fxbaogaoKeyTail,
+  searchFxbaogaoReports, getFxbaogaoParagraphs, getFxbaogaoPdfUrl,
+  downloadFxbaogaoPdf, extractPdfText,
+} from './fxbaogao.js';
 import { buildAccount, previewChange, checkWithdraw, TERMS, EVENT_DEPOSIT, EVENT_WITHDRAW, EVENT_FEE_RATE } from './account-ledger.js';
 import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans, removePlan,
   upsertResearchReport, listResearchReports, deleteResearchReport,
@@ -414,6 +419,157 @@ app.delete('/api/research/stock-reports/:code', requireAuth, async (req, res) =>
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+// =====================================================
+// 发现报告 (fxbaogao.com) 搜索 + 段落 + PDF + AI 精读
+// 凭证：FXBAOGAO_API_KEY 走 server/.env
+// =====================================================
+
+// 探针：前端可用来判断 fxbaogao 是否可用 + LLM 是否可用
+app.get('/api/research/fxbaogao/status', async (_req, res) => {
+  res.json({
+    ok: true,
+    fxbaogao: { available: isFxbaogaoAvailable(), keyTail: fxbaogaoKeyTail() },
+  });
+});
+
+// 1) 搜索（按关键词 / 时间范围 / 机构）
+app.get('/api/research/fxbaogao/search', async (req, res) => {
+  try {
+    if (!isFxbaogaoAvailable()) return res.status(503).json({ ok: false, error: 'FXBAOGAO_API_KEY 未配置' })
+    const keywords = String(req.query.keywords || '').trim()
+    const startTime = String(req.query.startTime || req.query.timeRange || 'last1mon')
+    const endTime = req.query.endTime ? String(req.query.endTime) : undefined
+    const pageNum = Math.min(Math.max(Number(req.query.pageNum) || 1, 1), 10)
+    const orgNames = req.query.orgNames ? String(req.query.orgNames).split(',').map((s) => s.trim()).filter(Boolean) : undefined
+    const items = await searchFxbaogaoReports({ keywords, startTime, endTime, pageNum, orgNames })
+    res.json({ ok: true, items, count: items.length, pageNum, startTime, keywords })
+  } catch (e) {
+    console.warn('[fxbaogao search]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || '搜索失败' })
+  }
+})
+
+// 2) 摘要/目录/命中段（结构化正文）
+app.get('/api/research/fxbaogao/paragraphs', async (req, res) => {
+  try {
+    if (!isFxbaogaoAvailable()) return res.status(503).json({ ok: false, error: 'FXBAOGAO_API_KEY 未配置' })
+    const reportId = Number(req.query.reportId)
+    const keyword = String(req.query.keyword || '').trim()
+    if (!reportId) return res.status(400).json({ ok: false, error: 'reportId 必填' })
+    const data = await getFxbaogaoParagraphs({ reportId, keyword })
+    res.json({ ok: true, ...data })
+  } catch (e) {
+    console.warn('[fxbaogao paragraphs]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || '获取段落失败' })
+  }
+})
+
+// 3) 拿 PDF 直链（前端用这个去浏览器原生下载）
+app.get('/api/research/fxbaogao/pdf-url', async (req, res) => {
+  try {
+    if (!isFxbaogaoAvailable()) return res.status(503).json({ ok: false, error: 'FXBAOGAO_API_KEY 未配置' })
+    const reportId = Number(req.query.reportId)
+    if (!reportId) return res.status(400).json({ ok: false, error: 'reportId 必填' })
+    const url = await getFxbaogaoPdfUrl({ reportId })
+    res.json({ ok: true, reportId, url, viewUrl: `https://www.fxbaogao.com/view?id=${reportId}` })
+  } catch (e) {
+    console.warn('[fxbaogao pdf-url]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || '获取 PDF 链接失败' })
+  }
+})
+
+// 4) 一键 AI 精读入研报库：下载 PDF → 抽文本 → LLM 提炼 → 入 research_reports
+app.post('/api/research/fxbaogao/ingest', requireAuth, async (req, res) => {
+  try {
+    if (!isFxbaogaoAvailable()) return res.status(503).json({ ok: false, error: 'FXBAOGAO_API_KEY 未配置' })
+    const { reportId, industry, forceReDownload } = req.body || {}
+    if (!reportId) return res.status(400).json({ ok: false, error: 'reportId 必填' })
+    // 拿元信息（从搜索缓存或重新搜一次以拿到 title/broker）
+    const id = Number(reportId)
+    const viewUrl = `https://www.fxbaogao.com/view?id=${id}`
+    // 先在最近 1mon 搜索里找
+    let meta = null
+    try {
+      // 多关键词兜底：last3mon + 空关键词 + last1mon + 高频关键词
+      for (const q of ['', '评级 目标价', '公司研究', '行业研究']) {
+        const list = await searchFxbaogaoReports({ keywords: q, startTime: 'last3mon', pageNum: 1 })
+        meta = list.find((r) => r.reportId === id)
+        if (meta) break
+      }
+    } catch {}
+    const title = meta?.title || `发现报告 #${id}`
+    const broker = meta?.orgName || '外部研报'
+    // 1) PDF → 文本
+    let rawText = ''
+    let pdfStatus = ''
+    try {
+      const buf = await downloadFxbaogaoPdf({ reportId: id })
+      rawText = await extractPdfText(buf, 24000)
+      pdfStatus = rawText.length > 200 ? 'ok' : 'too_short'
+    } catch (e) {
+      pdfStatus = 'pdf_failed:' + (e?.message || '').slice(0, 80)
+    }
+    // 2) LLM 提炼（有 key 才调；失败走 mock 兜底）
+    let llmResult = null
+    if (rawText.length > 200) {
+      try { llmResult = await refineWithLlm({ raw_text: rawText, title, broker, industry }) }
+      catch (e) { console.warn('[fxbaogao ingest] llm failed', e?.message || e) }
+    }
+    // 3) 入库
+    const refined = buildRefinedReport({
+      title, broker,
+      industry: industry || '',
+      source_url: viewUrl,
+      raw_text: rawText || `[fxbaogao reportId=${id}，PDF 解析失败：${pdfStatus}]`,
+      llmResult,
+    })
+    await upsertResearchReport(refined)
+    res.json({
+      ok: true,
+      report: refined,
+      pdf_status: pdfStatus,
+      llm_used: llmResult?.mode === 'llm',
+      raw_text_chars: rawText.length,
+    })
+  } catch (e) {
+    console.warn('[fxbaogao ingest]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || '精读失败' })
+  }
+})
+
+// 5) 为持仓批量搜最近卖方研报
+app.post('/api/research/fxbaogao/auto-search-holdings', requireAuth, async (req, res) => {
+  try {
+    if (!isFxbaogaoAvailable()) return res.status(503).json({ ok: false, error: 'FXBAOGAO_API_KEY 未配置' })
+    const { holdings, timeRange } = req.body || {}
+    if (!Array.isArray(holdings) || holdings.length === 0) {
+      return res.status(400).json({ ok: false, error: 'holdings 必填' })
+    }
+    const startTime = String(timeRange || 'last1mon')
+    const results = []
+    for (const h of holdings) {
+      const code = String(h.stock_code || h.code || '').padStart(6, '0').slice(-6)
+      const name = String(h.short_name || h.name || '').trim()
+      if (!code && !name) continue
+      // 关键词策略：代码 + 名称 + "评级 目标价" 提质
+      const keywords = [code, name, '评级 目标价'].filter(Boolean).join(' ')
+      try {
+        const items = await searchFxbaogaoReports({ keywords, startTime, pageNum: 1 })
+        // 过滤：机构在常用卖方名单里
+        const BROKERS = ['高盛', '摩根士丹利', '摩根大通', '瑞银', '美银', '花旗', '汇丰', '中金', '中信建投', '中信证券', '华泰', '国泰君安', '海通', '广发', '招商', '申万宏源', '浙商', '国信', '东方', '国金', '兴业', '东吴', '开源', '天风', '中泰', '国海', '西部', '平安', '安信', '长城', '长江', '光大']
+        const buySide = items.filter((it) => BROKERS.some((b) => it.orgName.includes(b)))
+        results.push({ code, name, count: buySide.length, items: buySide.slice(0, 5) })
+      } catch (e) {
+        results.push({ code, name, count: 0, items: [], error: e?.message || 'search failed' })
+      }
+    }
+    res.json({ ok: true, results, timeRange: startTime })
+  } catch (e) {
+    console.warn('[fxbaogao auto-search]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || 'auto search failed' })
+  }
+})
 
 // =====================================================
 // 账户与保证金账本（事件流，忠实移植 position_account.py）

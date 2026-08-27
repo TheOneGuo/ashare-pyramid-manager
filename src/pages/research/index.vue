@@ -8,13 +8,16 @@
       <text class="rs-meta">引入外部研报 · AI 精读提炼 · 已持仓标的逐标分析</text>
     </view>
 
-    <!-- 两个子 tab -->
+    <!-- 三个子 tab -->
     <view class="rs-tabbar">
       <view class="rs-tab" :class="{ 'rs-tab--active': tab === 'refine' }" @tap="tab = 'refine'">
         <text>研报 AI 精读提炼</text>
       </view>
       <view class="rs-tab" :class="{ 'rs-tab--active': tab === 'held' }" @tap="tab = 'held'">
         <text>持仓标的 AI 研报分析</text>
+      </view>
+      <view class="rs-tab" :class="{ 'rs-tab--active': tab === 'fxbaogao' }" @tap="onSwitchFxbaogao">
+        <text>🔍 发现报告</text>
       </view>
     </view>
     </view>
@@ -104,7 +107,7 @@
     </view>
 
     <!-- Tab 2：持仓标的 AI 研报分析 -->
-    <view v-else class="rs-pane">
+    <view v-else-if="tab === 'held'" class="rs-pane">
       <view class="rs-card">
         <text class="rs-section-title">📊 持仓标的 AI 研报分析</text>
         <text class="rs-note rs-note--muted">对当前持仓列表中的标的，逐一点击「生成 AI 研报」即可按十二个研究模块生成完整研报，生成后可按章节阅读（当前为演示模式，后续接入真实 LLM）。</text>
@@ -157,8 +160,150 @@
     </view>
 
     <view class="rs-disclaimer-bar">
-      <text>AI 生成内容不构成投资建议；当前为演示模式，研报数据未接入真实 LLM。</text>
+      <text>AI 生成内容不构成投资建议；研报数据来自发现报告（fxbaogao.com），仅供参考。</text>
     </view>
+    </view>
+
+    <!-- Tab 3：发现报告 (fxbaogao) 搜索 + AI 精读 + 下载 -->
+    <view v-if="tab === 'fxbaogao'" class="rs-pane">
+      <view class="rs-card">
+        <text class="rs-section-title">🔍 发现报告（fxbaogao.com）</text>
+        <text class="rs-note rs-note--muted">覆盖外资行（高盛 / 摩根 / 瑞银 / 美银 / 花旗 / 汇丰）、内资卖方（华泰 / 中金 / 招商 等）的行业研究、公司点评与宏观策略，每日更新。{{ fxbaogaoStatus ? '当前 API：' + fxbaogaoStatus : '' }}</text>
+
+        <view class="rs-row">
+          <input class="rs-input rs-input--sm" v-model="fxKeywords" placeholder="关键词（代码 / 名称 / 行业）" :disabled="fxLoading" />
+          <view class="rs-fx-time">
+            <view
+              v-for="t in FX_TIME_RANGES"
+              :key="t.value"
+              class="rs-fx-time-pill"
+              :class="{ active: fxTimeRange === t.value }"
+              @tap="fxTimeRange = t.value"
+            >
+              <text>{{ t.label }}</text>
+            </view>
+          </view>
+        </view>
+
+        <view class="rs-actions">
+          <view class="rs-btn rs-btn--primary" hover-class="rs-btn--hover" @tap="onFxSearch" :class="{ 'rs-btn--loading': fxLoading }">
+            <text>{{ fxLoading ? '搜索中…' : '✦ 搜索' }}</text>
+          </view>
+          <view class="rs-btn rs-btn--ghost" hover-class="rs-btn--hover" @tap="onFxAutoSearch" :class="{ 'rs-btn--loading': fxAutoLoading }">
+            <text>{{ fxAutoLoading ? '为持仓搜索中…' : '📊 为持仓搜卖方' }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 为持仓搜的结果 -->
+      <view v-if="fxAutoResults.length" class="rs-card">
+        <text class="rs-section-title">📊 持仓卖方研报速览</text>
+        <view v-for="g in fxAutoResults" :key="g.code" class="rs-fx-group">
+          <view class="rs-fx-group-head">
+            <text class="rs-fx-group-name">{{ g.name || g.code }} · {{ g.code }}</text>
+            <text class="rs-fx-group-count">找到 {{ g.count }} 篇</text>
+          </view>
+          <view v-if="g.error" class="rs-note rs-note--warn">⚠️ {{ g.error }}</view>
+          <view v-else-if="g.count === 0" class="rs-empty"><text>最近 {{ fxTimeRange }} 未发现卖方研报</text></view>
+          <view v-else class="rs-fx-group-list">
+            <view v-for="it in g.items.slice(0, 3)" :key="it.reportId" class="rs-fx-row-mini" @tap="openFxDetail(it)">
+              <text class="rs-fx-row-mini-title">{{ it.title }}</text>
+              <view class="rs-fx-row-mini-meta">
+                <text class="rs-fx-org">{{ it.orgName }}</text>
+                <text class="rs-fx-date">{{ it.pubTimeStr }}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 搜索结果 -->
+      <view v-if="fxLoading" class="rs-empty"><text>正在搜索发现报告…</text></view>
+      <view v-else-if="fxError" class="rs-empty">
+        <text>⚠️ {{ fxError }}</text>
+        <text class="rs-note rs-note--muted">请确认 server/.env 里的 FXBAOGAO_API_KEY 已配置且有高级 VIP 权限。</text>
+      </view>
+      <view v-else-if="fxItems.length === 0 && fxSearched" class="rs-empty"><text>没有匹配的研报，换个关键词试试</text></view>
+      <view v-else-if="!fxItems.length" class="rs-empty"><text>在搜索框输入关键词，或点「为持仓搜卖方」</text></view>
+
+      <view v-for="r in fxItems" :key="r.reportId" class="rs-card rs-report-card">
+        <view class="rs-report-head" @tap="toggleFxExpand(r.reportId)">
+          <view class="rs-report-head-main">
+            <text class="rs-report-title">{{ r.title }}</text>
+            <view class="rs-fx-row-meta">
+              <text class="rs-fx-org">{{ r.orgName || '未知机构' }}</text>
+              <text class="rs-fx-date">{{ r.pubTimeStr }}</text>
+              <text class="rs-fx-pages">{{ r.pageNum }} 页</text>
+            </view>
+          </view>
+          <text class="rs-report-chevron">{{ fxExpanded.has(r.reportId) ? '▾' : '▸' }}</text>
+        </view>
+
+        <view v-if="fxExpanded.has(r.reportId)" class="rs-report-body">
+          <!-- 详情摘要 -->
+          <view v-if="fxDetailLoading === r.reportId" class="rs-empty"><text>加载摘要…</text></view>
+          <view v-else-if="fxDetailMap[r.reportId]?.summary" class="rs-tldr">
+            <text class="rs-tldr-label">✦ 摘要（发现报告直供）</text>
+            <text class="rs-tldr-body">{{ fxDetailMap[r.reportId].summary }}</text>
+          </view>
+          <view v-else class="rs-tldr">
+            <text class="rs-tldr-label">✦ 摘要</text>
+            <text class="rs-tldr-body" style="opacity:0.7">该报告未建立段落索引；点「AI 精读」下载 PDF 抽全文分析。</text>
+          </view>
+
+          <!-- 命中段 -->
+          <view v-if="fxDetailMap[r.reportId]?.hits?.length" class="rs-block">
+            <text class="rs-block-label">📌 命中段落</text>
+            <view v-for="(h, i) in fxDetailMap[r.reportId].hits.slice(0, 3)" :key="i" class="rs-li">
+              <text class="rs-dot">·</text>
+              <text class="rs-li-text">{{ (h?.content || h?.text || JSON.stringify(h)).slice(0, 280) }}{{ (h?.content || h?.text || '').length > 280 ? '…' : '' }}</text>
+            </view>
+          </view>
+
+          <!-- 操作按钮区 -->
+          <view class="rs-actions">
+            <view
+              class="rs-btn rs-btn--primary"
+              hover-class="rs-btn--hover"
+              :class="{ 'rs-btn--loading': fxIngesting === r.reportId }"
+              @tap="onFxIngest(r)"
+            >
+              <text>{{ fxIngesting === r.reportId ? 'AI 精读中…' : '✦ AI 精读入库' }}</text>
+            </view>
+            <view class="rs-btn rs-btn--ghost" hover-class="rs-btn--hover" @tap="onFxView(r)">
+              <text>↗ 查看原文</text>
+            </view>
+          </view>
+
+          <view class="rs-fx-download">
+            <text class="rs-fx-download-label">📥 下载到本地</text>
+            <view v-if="fxPdfMap[r.reportId]?.loading" class="rs-fx-download-loading"><text>正在生成直链…</text></view>
+            <view v-else-if="fxPdfMap[r.reportId]?.url" class="rs-fx-download-link" @tap="onFxCopy(fxPdfMap[r.reportId].url)">
+              <text class="rs-fx-download-url">{{ fxPdfMap[r.reportId].url.slice(0, 72) }}…</text>
+              <text class="rs-fx-download-hint">点击复制 · 可粘贴到浏览器下载</text>
+            </view>
+            <view v-else class="rs-btn rs-btn--ghost" hover-class="rs-btn--hover" @tap="onFxGetPdf(r)">
+              <text>获取 PDF 直链</text>
+            </view>
+          </view>
+
+          <!-- 入库后的状态 -->
+          <view v-if="fxIngestedMap[r.reportId]" class="rs-block">
+            <text class="rs-block-label">✅ 已入库（status: {{ fxIngestedMap[r.reportId].status }}）</text>
+            <text class="rs-tldr-body">{{ fxIngestedMap[r.reportId].tldr }}</text>
+            <view v-if="fxIngestedMap[r.reportId].key_points?.length" class="rs-block">
+              <text class="rs-block-label">核心观点</text>
+              <view v-for="(p, i) in fxIngestedMap[r.reportId].key_points" :key="i" class="rs-li"><text class="rs-dot">·</text><text class="rs-li-text">{{ p }}</text></view>
+            </view>
+            <view v-if="fxIngestedMap[r.reportId].risks?.length" class="rs-block">
+              <text class="rs-block-label rs-block-label--risk">⚠️ 风险</text>
+              <view v-for="(p, i) in fxIngestedMap[r.reportId].risks" :key="i" class="rs-li rs-li--risk"><text class="rs-dot">·</text><text class="rs-li-text">{{ p }}</text></view>
+            </view>
+            <view v-if="!fxIngestedMap[r.reportId].llm_used" class="rs-note rs-note--muted">本结果由本地 mock 兜底生成（未配 LLM_API_KEY 或 LLM 调用失败）。配 LLM 后会自动切换 DeepSeek 精读。</view>
+            <view v-else class="rs-note rs-note--muted">由 LLM (DeepSeek) 精读生成</view>
+          </view>
+        </view>
+      </view>
     </view>
   </view>
 </template>
@@ -172,10 +317,13 @@ import TabBarComp from '@/custom-tab-bar/index.vue'
 import {
   ingestReport, listReports, deleteReport,
   listHoldings, researchReport, saveStockReport, listStockReports, deleteStockReport,
+  searchFxbaogao, getFxbaogaoParagraphs, getFxbaogaoPdfUrl, ingestFxbaogaoReport,
+  autoSearchFxbaogaoForHoldings, getFxbaogaoStatus,
   type RefinedReport, type Holding, type StockReportItem, type ResearchReport,
+  type FxbaogaoReport, type FxbaogaoAutoSearchItem,
 } from '@/api/portfolio'
 
-const tab = ref<'refine' | 'held'>('refine')
+const tab = ref<'refine' | 'held' | 'fxbaogao'>('refine')
 
 // Tab1 输入
 const inTitle = ref('')
@@ -309,6 +457,159 @@ async function loadHoldings() {
 }
 async function loadStockReports() {
   try { const r = await listStockReports(); stockReports.value = r.items || [] } catch (e) { /* ignore */ }
+}
+
+// ── Tab 3：发现报告 fxbaogao ──
+const FX_TIME_RANGES = [
+  { value: 'last7day', label: '7天' },
+  { value: 'last1mon', label: '1月' },
+  { value: 'last3mon', label: '3月' },
+  { value: 'last1year', label: '1年' },
+]
+const fxKeywords = ref('')
+const fxTimeRange = ref('last1mon')
+const fxLoading = ref(false)
+const fxSearched = ref(false)
+const fxItems = ref<FxbaogaoReport[]>([])
+const fxError = ref('')
+const fxExpanded = ref<Set<number>>(new Set())
+const fxDetailMap = ref<Record<number, { summary: string; hits: any[]; toc: any[]; raw: string }>>({})
+const fxDetailLoading = ref<number>(0)
+const fxPdfMap = ref<Record<number, { url: string; loading?: boolean }>>({})
+const fxIngesting = ref<number>(0)
+const fxIngestedMap = ref<Record<number, any>>({})
+const fxAutoLoading = ref(false)
+const fxAutoResults = ref<FxbaogaoAutoSearchItem[]>([])
+const fxbaogaoStatus = ref('')
+
+async function onSwitchFxbaogao() {
+  tab.value = 'fxbaogao'
+  if (!fxbaogaoStatus.value) {
+    try {
+      const s = await getFxbaogaoStatus()
+      fxbaogaoStatus.value = s?.fxbaogao?.available ? `在线 (key: ${s.fxbaogao.keyTail})` : '未配置 API key'
+    } catch (e: any) { fxbaogaoStatus.value = '探针失败' }
+  }
+}
+
+async function onFxSearch() {
+  if (fxLoading.value) return
+  fxLoading.value = true
+  fxError.value = ''
+  fxSearched.value = true
+  try {
+    const r = await searchFxbaogao({ keywords: fxKeywords.value.trim(), startTime: fxTimeRange.value, pageNum: 1 })
+    fxItems.value = r.items || []
+  } catch (e: any) {
+    fxError.value = e?.message || '搜索失败'
+    fxItems.value = []
+  } finally { fxLoading.value = false }
+}
+
+async function onFxAutoSearch() {
+  if (fxAutoLoading.value) return
+  if (!holdings.value.length) {
+    uni.showToast({ title: '暂无持仓，请先到持仓页导入', icon: 'none' }); return
+  }
+  fxAutoLoading.value = true
+  try {
+    const r = await autoSearchFxbaogaoForHoldings({
+      holdings: holdings.value.map((h) => ({ stock_code: h.stock_code, short_name: h.short_name })),
+      timeRange: fxTimeRange.value,
+    })
+    fxAutoResults.value = r.results || []
+  } catch (e: any) {
+    uni.showToast({ title: e?.message || '搜索失败', icon: 'none' })
+  } finally { fxAutoLoading.value = false }
+}
+
+function toggleFxExpand(id: number) {
+  const s = new Set(fxExpanded.value)
+  if (s.has(id)) { s.delete(id) } else {
+    s.add(id)
+    // 第一次展开时拉详情 + PDF 直链
+    if (!fxDetailMap.value[id] && fxDetailLoading.value !== id) {
+      void loadFxDetail(id)
+    }
+    if (!fxPdfMap.value[id]) {
+      void loadFxPdf(id)
+    }
+  }
+  fxExpanded.value = s
+}
+
+async function loadFxDetail(id: number) {
+  fxDetailLoading.value = id
+  try {
+    const r = await getFxbaogaoParagraphs({ reportId: id })
+    fxDetailMap.value = { ...fxDetailMap.value, [id]: { summary: r.summary, hits: r.hits, toc: r.toc, raw: r.raw } }
+  } catch (e) {
+    fxDetailMap.value = { ...fxDetailMap.value, [id]: { summary: '（摘要获取失败）', hits: [], toc: [], raw: '' } }
+  } finally { fxDetailLoading.value = 0 }
+}
+
+async function loadFxPdf(id: number) {
+  fxPdfMap.value = { ...fxPdfMap.value, [id]: { url: '', loading: true } }
+  try {
+    const r = await getFxbaogaoPdfUrl(id)
+    if (r?.url) fxPdfMap.value = { ...fxPdfMap.value, [id]: { url: r.url, loading: false } }
+  } catch {
+    fxPdfMap.value = { ...fxPdfMap.value, [id]: { url: '', loading: false } }
+  }
+}
+
+async function onFxGetPdf(r: FxbaogaoReport) {
+  if (fxPdfMap.value[r.reportId]?.url) return
+  await loadFxPdf(r.reportId)
+}
+
+function onFxView(r: FxbaogaoReport) {
+  // #ifdef H5
+  if (typeof window !== 'undefined') window.open(r.viewUrl, '_blank')
+  // #endif
+  // #ifdef MP-WEIXIN
+  uni.setClipboardData({ data: r.viewUrl, success: () => uni.showToast({ title: '链接已复制', icon: 'none' }) })
+  // #endif
+  // 兜底：复制链接
+  uni.setClipboardData({ data: r.viewUrl, success: () => uni.showToast({ title: '原文链接已复制', icon: 'none' }) })
+}
+
+function onFxCopy(text: string) {
+  uni.setClipboardData({ data: text, success: () => uni.showToast({ title: 'PDF 直链已复制', icon: 'success' }) })
+}
+
+function openFxDetail(r: FxbaogaoReport) {
+  // 从「为持仓搜」列表点进来：填入搜索框 + 切到 search tab + 展开
+  fxKeywords.value = r.title.split(/[：:]/)[0] || ''
+  onFxSearch().then(() => {
+    setTimeout(() => {
+      const s = new Set(fxExpanded.value)
+      s.add(r.reportId)
+      fxExpanded.value = s
+      if (!fxDetailMap.value[r.reportId]) void loadFxDetail(r.reportId)
+      if (!fxPdfMap.value[r.reportId]) void loadFxPdf(r.reportId)
+    }, 400)
+  })
+}
+
+async function onFxIngest(r: FxbaogaoReport) {
+  if (fxIngesting.value) return
+  fxIngesting.value = r.reportId
+  uni.showLoading({ title: '下载 PDF + AI 精读' })
+  try {
+    const res = await ingestFxbaogaoReport({ reportId: r.reportId, industry: r.orgName || '' })
+    if (res?.ok && res.report) {
+      fxIngestedMap.value = { ...fxIngestedMap.value, [r.reportId]: res.report }
+      uni.showToast({ title: res.llm_used ? '已精读入库（LLM）' : '已入库（mock 兜底）', icon: 'success' })
+    } else {
+      uni.showToast({ title: res?.error || '精读失败', icon: 'none' })
+    }
+  } catch (e: any) {
+    uni.showToast({ title: e?.message || '精读失败', icon: 'none' })
+  } finally {
+    fxIngesting.value = 0
+    uni.hideLoading()
+  }
 }
 
 onMounted(() => { loadReports(); loadHoldings(); loadStockReports() })
@@ -499,4 +800,57 @@ $spacing-base: 24rpx;
 
 .rs-disclaimer { display: block; font-size: 22rpx; color: $app-text-muted; margin-top: 16rpx; line-height: 1.5; }
 .rs-disclaimer-bar { margin-top: $spacing-base; padding: $spacing-base; text-align: center; font-size: 22rpx; color: $app-text-muted; border-top: 1rpx solid $app-border; }
+
+// ---- Tab 3: fxbaogao ----
+.rs-fx-time { display: flex; gap: 8rpx; flex-wrap: wrap; }
+.rs-fx-time-pill {
+  padding: 10rpx 16rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 184, 107, 0.06);
+  border: 1rpx solid rgba(255, 184, 107, 0.18);
+  color: $app-text-muted;
+  font-size: 22rpx;
+}
+.rs-fx-time-pill.active {
+  background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%);
+  color: $color-bg;
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.rs-fx-row-meta { display: flex; gap: 12rpx; align-items: center; margin-top: 6rpx; flex-wrap: wrap; }
+.rs-fx-org {
+  font-size: 22rpx;
+  color: $rf-amber;
+  background: rgba(212, 175, 55, 0.12);
+  padding: 2rpx 12rpx;
+  border-radius: 6rpx;
+}
+.rs-fx-date { font-size: 22rpx; color: $app-text-muted; }
+.rs-fx-pages { font-size: 22rpx; color: $app-text-muted; }
+
+.rs-fx-group { margin-top: 16rpx; }
+.rs-fx-group-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8rpx; }
+.rs-fx-group-name { font-size: 28rpx; font-weight: 600; color: $app-text; }
+.rs-fx-group-count { font-size: 22rpx; color: $rf-amber; }
+.rs-fx-group-list { display: flex; flex-direction: column; gap: 6rpx; }
+.rs-fx-row-mini {
+  padding: 12rpx 16rpx;
+  background: rgba(255, 184, 107, 0.04);
+  border: 1rpx solid rgba(255, 184, 107, 0.1);
+  border-radius: 10rpx;
+}
+.rs-fx-row-mini-title { display: block; font-size: 26rpx; line-height: 1.5; color: $app-text; }
+.rs-fx-row-mini-meta { display: flex; gap: 10rpx; align-items: center; margin-top: 4rpx; }
+
+.rs-note--warn { color: #ff9a8a; }
+.rs-li-text { flex: 1; min-width: 0; word-break: break-word; }
+.rs-block-label--risk { color: #ff9a8a; }
+
+.rs-fx-download { margin-top: 14rpx; padding: 14rpx; background: rgba(114, 247, 255, 0.05); border: 1rpx solid rgba(114, 247, 255, 0.2); border-radius: 10rpx; }
+.rs-fx-download-label { display: block; font-size: 24rpx; color: #72f7ff; margin-bottom: 6rpx; font-weight: 500; }
+.rs-fx-download-link { padding: 8rpx 0; }
+.rs-fx-download-url { display: block; font-size: 22rpx; color: $app-text; font-family: monospace; word-break: break-all; line-height: 1.4; }
+.rs-fx-download-hint { display: block; font-size: 20rpx; color: $app-text-muted; margin-top: 4rpx; }
+.rs-fx-download-loading { padding: 8rpx 0; color: $app-text-muted; font-size: 24rpx; }
 </style>
