@@ -27,7 +27,7 @@ import { registerCorsAndParse, requireAuth, ifindRateLimit } from './middleware.
 import { getProvider } from './providers/index.js';
 import { getCached, setCached } from './cache.js';
 import { computeTrackState } from './track-executor.js';
-import { refreshAll, refreshIntervalSeconds, labelForInterval, CHANNELS } from './news-collector.js';
+import { refreshAll, refreshIntervalSeconds, refreshLabel, labelForInterval, CHANNELS } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
 import { handleExtract } from './portfolio-extract.js';
 import { handleResearch, refineExternalReport, refineWithLlm, buildRefinedReport, detectAdvancedProductivity } from './research-report.js';
@@ -50,7 +50,8 @@ const PORT = Number(process.env.PORT || 9999);
 const MODE = (process.env.NEWS_SOURCE_MODE || 'real').toLowerCase();
 const PREVIEW_DIR = path.resolve(__dirname, '../../preview');
 
-const TELEGRAM_CHANNELS = ['FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
+// 「全部」快讯源：新浪 7×24（国内直连主源）+ 电报三源（代理可用时补充）
+const TELEGRAM_CHANNELS = ['sina_724', 'FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
 
 const app = express();
 
@@ -151,7 +152,7 @@ app.get('/api/health', async (_req, res) => {
     mode: MODE,
     version: '0.2.0',
     interval_seconds: intervalSec,
-    mode_label: labelForInterval(intervalSec),
+    mode_label: refreshLabel(),
     last_refresh_at: lastRefreshAt,
     ifind_token_loaded: !!process.env.IFIND_REFRESH_TOKEN,
     uptime: process.uptime(),
@@ -168,14 +169,22 @@ app.get('/api/news', async (req, res) => {
     const limit = Number.isFinite(limitRaw) ? Math.min(200, Math.max(1, limitRaw)) : 30;
     const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
     const holding = req.query.holding === '1' || req.query.holding === 'true';
+    // Turso 海外直连偶发抖动：读路径重试一次（400ms 退避）
+    const load = async () => {
+      if (holding) {
+        const holdings = await listHoldings();
+        const codes = holdings.map((h) => h.stock_code);
+        return fetchNews({ limit, since, holding_codes: codes });
+      }
+      // 全部：新浪 7×24 主源 + 电报三源（代理可用时补充）
+      return fetchNews({ limit, since, channels: TELEGRAM_CHANNELS });
+    };
     let items;
-    if (holding) {
-      const holdings = await listHoldings();
-      const codes = holdings.map((h) => h.stock_code);
-      items = await fetchNews({ limit, since, holding_codes: codes });
-    } else {
-      // 全部：仅电报三源（用户要求固定为这三个内容源，不加其他）
-      items = await fetchNews({ limit, since, channels: TELEGRAM_CHANNELS });
+    try {
+      items = await load();
+    } catch (e1) {
+      await new Promise((r) => setTimeout(r, 400));
+      items = await load();
     }
     res.json({ ok: true, count: items.length, items });
   } catch (e) {
@@ -1148,7 +1157,7 @@ async function main() {
   app.listen(PORT, () => {
     console.log(`[server] listening on http://localhost:${PORT}`);
     console.log(`[server] NEWS_SOURCE_MODE=${MODE}`);
-    console.log(`[server] refresh interval: ${labelForInterval(refreshIntervalSeconds())} (${refreshIntervalSeconds()}s)`);
+    console.log(`[server] refresh interval: ${refreshLabel()} (${refreshIntervalSeconds()}s)`);
   });
 
   // 首次启动触发一次采集（异步，不阻塞）
@@ -1184,7 +1193,7 @@ async function main() {
       lastRefreshAt = Date.now();
       lastRefreshSummary = summary;
       const intervalSec = refreshIntervalSeconds();
-      console.log(`[server] refresh done: telegram=${summary.telegram.items}, ann=${summary.announcements.items}, news=${summary.holdings_news.items}  next=${labelForInterval(intervalSec)}`);
+      console.log(`[server] refresh done: telegram=${summary.telegram.items}, ann=${summary.announcements.items}, news=${summary.holdings_news.items}  next=${refreshLabel()}`);
     } catch (e) {
       console.warn(`[server] scheduled refresh failed: ${e.message}`);
     } finally {

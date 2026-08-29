@@ -11,12 +11,32 @@
 
 import { XMLParser } from 'fast-xml-parser';
 import crypto from 'node:crypto';
+// 代理支持：Node 全局 fetch 不读 http_proxy 环境变量，t.me/rsshub 需走本地代理才能通。
+// 用 undici 的 fetch + ProxyAgent（NEWS_PROXY_URL 显式指定，缺省回落到 https_proxy 环境变量）。
+import { fetch as undiciFetch, ProxyAgent } from 'undici';
 
 const CHANNELS = [
   { channel: 'FinanceNewsDaily', name: '财经Daily' },
   { channel: 'jin10data', name: '金十数据' },
   { channel: 'cnwallstreet', name: '华尔街见闻' },
 ];
+
+// 懒创建代理 dispatcher（无代理环境保持直连，行为不变）
+let proxyDispatcher = undefined; // undefined = 未初始化; null = 不用代理
+function getProxyDispatcher() {
+  if (proxyDispatcher !== undefined) return proxyDispatcher;
+  const proxyUrl = (process.env.NEWS_PROXY_URL || process.env.https_proxy || process.env.HTTPS_PROXY || '').trim();
+  if (!proxyUrl) { proxyDispatcher = null; return null; }
+  try {
+    proxyDispatcher = new ProxyAgent(proxyUrl);
+    console.log(`[telegram-rss] using proxy for t.me/rsshub: ${proxyUrl}`);
+    return proxyDispatcher;
+  } catch (e) {
+    console.warn('[telegram-rss] ProxyAgent init failed, fallback direct:', e.message);
+    proxyDispatcher = null;
+    return null;
+  }
+}
 
 // RSSHub 基础域名，可通过环境变量覆盖（多 base 备援）
 function rssBaseUrls() {
@@ -180,12 +200,14 @@ function parseTelegramPage(html, sourceChannel) {
   return out;
 }
 
-// fetch 工具（带超时 + 编码）
+// fetch 工具（带超时 + 编码 + 可选代理）
 async function fetchText(url, accept) {
   const ctl = AbortSignal.timeout ? AbortSignal.timeout(20_000) : undefined;
-  const r = await fetch(url, {
+  const dispatcher = getProxyDispatcher();
+  const r = await undiciFetch(url, {
     headers: { ...REQUEST_HEADERS, Accept: accept },
     signal: ctl,
+    ...(dispatcher ? { dispatcher } : {}),
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   // Telegram RSS 多为 UTF-8，但 rssHub 部分页面可能是 GBK——按 charset 决定

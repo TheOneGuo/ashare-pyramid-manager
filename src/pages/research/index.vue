@@ -59,7 +59,7 @@
         <view v-if="allLoading && allDisplay.length === 0" class="rs-empty"><text>正在加载研报列表…</text></view>
         <view v-else-if="allDisplay.length === 0" class="rs-empty">
           <text>暂无研报</text>
-          <text v-if="!allLoading" class="rs-empty-hint">线上每日自动同步最新研报，稍后再来看看</text>
+          <text v-if="!allLoading" class="rs-empty-hint">{{ syncingHint }}</text>
         </view>
 
         <view v-for="r in allDisplay" :key="r.reportId" class="rs-card rs-report-card" @tap="onAllClickRow(r)">
@@ -71,6 +71,7 @@
               </view>
               <view class="rs-fx-row-meta">
                 <text class="rs-fx-org">{{ r.broker || r.orgName }}</text>
+                <text v-if="r.aiStatus === 2" class="rs-ai-badge">✦ 已精读</text>
                 <text class="rs-fx-date">{{ r.pubDate }}</text>
                 <text v-if="r.pageNum" class="rs-fx-pages">· {{ r.pageNum }} 页</text>
                 <text v-if="r.categories && r.categories.length" class="rs-fx-pages">· {{ r.categories.join(' / ') }}</text>
@@ -211,7 +212,7 @@ const isH5 = ref(typeof window !== 'undefined')
 import TabBarComp from '@/custom-tab-bar/index.vue'
 import {
   listHoldingReports, ingestFxbaogaoReport, getFxbaogaoPdfUrl,
-  listFxbaogaoDbReports,
+  listFxbaogaoDbReports, syncFxbaogaoAll, triggerFxbaogaoRefine,
   type HoldingReportItem,
 } from '@/api/portfolio'
 
@@ -333,6 +334,7 @@ interface AllItemWithDate {
   recommended: boolean
   categories: string[]
   pdfUrl?: string // PDF 直链缓存（详情秒开用）
+  aiStatus?: number // 0=未精读 1=精读中 2=已精读
   _isIndividual?: boolean // 是否是个股研究（标题含 A 股代码或名称）
 }
 const allItems = ref<AllItemWithDate[]>([])
@@ -417,6 +419,7 @@ function toAllItem(it: any): AllItemWithDate {
     categories: det.categories,
     _isIndividual: isIndividualReport(title, it.orgName || ''),
     pdfUrl: String(it.pdfUrl || ''),
+    aiStatus: Number(it.aiStatus || 0),
   }
 }
 
@@ -763,9 +766,26 @@ function onSwitchTab(t: 'all' | 'mine') {
   }
 }
 
+// 「打开页面即拉当日研报」：触发当日分片同步 + 后台精读（fire-and-forget，服务端有互斥）
+// 5 分钟内不重复触发；同步是异步的，稍后静默刷新列表把新研报带出来
+let lastEnsureSyncAt = ref(0)
+const syncingHint = computed(() =>
+  Date.now() - lastEnsureSyncAt.value < 3 * 60_000
+    ? '正在从线上同步当日研报，稍等片刻自动刷新…'
+    : '线上每 15 分钟自动同步 + AI 精读，稍后再来看看')
+async function ensureTodaySynced() {
+  const now = Date.now()
+  if (now - lastEnsureSyncAt.value < 5 * 60_000) return
+  lastEnsureSyncAt.value = now
+  syncFxbaogaoAll(1).then(() => triggerFxbaogaoRefine(10)).catch(() => {})
+  setTimeout(() => { if (tab.value === 'all') loadAllListFromDb() }, 15_000)
+  setTimeout(() => { if (tab.value === 'all' && !allDisplay.value.length) loadAllListFromDb() }, 45_000)
+}
+
 onMounted(() => {
   // 默认 Tab 1
   loadAllListFromDb()
+  ensureTodaySynced()
   bindAllScrollListener()
   listHoldings().then((h) => {
     holdings.value = h || []
@@ -776,8 +796,16 @@ onMounted(() => {
   })
 })
 
+// 首次 onShow 与 onMounted 重复，跳过一次
+let firstShow = true
 onShow(() => {
-  if (tab.value === 'mine' && !mineLoaded.value) loadMineList()
+  if (firstShow) { firstShow = false; return }
+  if (tab.value === 'all') {
+    loadAllListFromDb()
+    ensureTodaySynced()
+  } else if (tab.value === 'mine' && !mineLoaded.value) {
+    loadMineList()
+  }
 })
 </script>
 
@@ -850,6 +878,7 @@ $spacing-base: 24rpx;
 
 .rs-fx-row-meta { display: flex; gap: 12rpx; align-items: center; margin-top: 6rpx; flex-wrap: wrap; }
 .rs-fx-org { font-size: 22rpx; color: $rf-amber; background: rgba(212, 175, 55, 0.12); padding: 2rpx 12rpx; border-radius: 6rpx; }
+.rs-ai-badge { font-size: 20rpx; color: #7ef2c4; background: rgba(126, 242, 196, 0.12); padding: 2rpx 10rpx; border-radius: 6rpx; }
 .rs-fx-date { font-size: 22rpx; color: $app-text-muted; }
 .rs-fx-pages { font-size: 22rpx; color: $app-text-muted; }
 

@@ -581,6 +581,10 @@ export async function syncFxbaogaoAll(windowDays?: number): Promise<FxbaogaoSync
   const q = windowDays ? `?windowDays=${windowDays}` : ''
   return jget(`/api/research/fxbaogao/sync${q}`, { method: 'POST', timeoutMs: 15000 })
 }
+// 触发后台 AI 精读批次（fire-and-forget：服务端有 already_running 互斥）
+export async function triggerFxbaogaoRefine(limit = 10): Promise<{ ok: boolean; started?: boolean; reason?: string }> {
+  return jget(`/api/research/fxbaogao/refine-batch?limit=${limit}`, { method: 'POST', body: {}, timeoutMs: 10000 })
+}
 // 同步进度 + 库存量
 export async function getFxbaogaoSyncStatus(): Promise<FxbaogaoSyncResult> {
   return jget('/api/research/fxbaogao/sync', { timeoutMs: 10000 })

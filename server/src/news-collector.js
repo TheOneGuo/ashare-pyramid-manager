@@ -17,6 +17,7 @@
 //   MODE=hybrid → 真实源 + 持仓过滤（推荐）
 
 import { CHANNELS, fetchOneSource } from './telegram-rss.js';
+import { fetchSinaLive, CHANNEL_META as SINA_META } from './sina-live.js';
 import * as em from './eastmoney.js';
 import * as macro from './macro-news.js';
 import { HOLDING_NEWS_CHANNELS } from './db.js';
@@ -51,14 +52,19 @@ function inTradingSessionShanghai(now = new Date()) {
 }
 
 // 判断当前时段类别，返回对应刷新间隔
+// 说明：新浪 7×24 为轻量直连请求，采集成本低；为让快讯接近实时，
+// 非交易时段的上限压到 15 分钟（原 1h/4h/8h 过慢）。
 function refreshIntervalSeconds(now = new Date()) {
-  if (!isTradeDayShanghai(now)) return SECONDS.HOLIDAY;
-  if (inTradingSessionShanghai(now)) return SECONDS.TRADING;
-  // 日间 vs 夜间按小时判断
-  const sh = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
-  const m = sh.getHours() * 60 + sh.getMinutes();
-  if (m >= 8 * 60 && m < 22 * 60) return SECONDS.DAYTIME;
-  return SECONDS.NIGHT;
+  const policy = (() => {
+    if (!isTradeDayShanghai(now)) return SECONDS.HOLIDAY;
+    if (inTradingSessionShanghai(now)) return SECONDS.TRADING;
+    // 日间 vs 夜间按小时判断
+    const sh = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+    const m = sh.getHours() * 60 + sh.getMinutes();
+    if (m >= 8 * 60 && m < 22 * 60) return SECONDS.DAYTIME;
+    return SECONDS.NIGHT;
+  })();
+  return Math.min(policy, SECONDS.TRADING);
 }
 
 // =====================================================
@@ -111,7 +117,36 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
   };
 
   // =====================================================
-  // 1) 电报 3 源
+  // 0) 新浪 7×24（国内直连，不依赖代理；电报被墙时的主快讯源）
+  // =====================================================
+  try {
+    summary.telegram.refreshed++; // 复用 telegram 桶展示
+    if (mode === 'mock' || mode === 'hybrid') {
+      // mock 模式跳过
+    } else {
+      const r = await fetchSinaLive({ pageSize: 60, log });
+      if (r.items.length > 0) {
+        await upsertNews(db, {
+          source_channel: SINA_META.channel,
+          source_name: SINA_META.name,
+          feed_url: r.usedUrl,
+          items: r.items,
+          now_ts: now,
+          last_error: '',
+        });
+        summary.telegram.fetched++;
+        summary.telegram.items += r.items.length;
+      }
+    }
+  } catch (e) {
+    summary.telegram.errors.push(`sina_724: ${e.message}`);
+    try {
+      await recordSourceError(db, SINA_META, 'https://zhibo.sina.com.cn/api/zhibo/feed', e.message, now);
+    } catch {}
+  }
+
+  // =====================================================
+  // 1) 电报 3 源（需代理 NEWS_PROXY_URL；失败不影响 sina 主源）
   // =====================================================
   for (const channelMeta of CHANNELS) {
     summary.telegram.refreshed++;
@@ -293,6 +328,16 @@ function labelForInterval(sec) {
   return '休市日 · 8小时';
 }
 
+// 策略标签（反映 15 分钟上限压缩后的实际节奏）
+function refreshLabel(now = new Date()) {
+  if (!isTradeDayShanghai(now)) return '休市日 · 上限15分钟';
+  if (inTradingSessionShanghai(now)) return '交易时段 · 15分钟';
+  const sh = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  const m = sh.getHours() * 60 + sh.getMinutes();
+  if (m >= 8 * 60 && m < 22 * 60) return '交易日日间 · 上限15分钟';
+  return '交易日夜间 · 上限15分钟';
+}
+
 // =====================================================
 // DB 写入辅助（调用 db.js 提供的接口）
 // =====================================================
@@ -317,6 +362,7 @@ async function recordSourceError(db, channelMeta, feed_url, error, now_ts) {
 export {
   refreshAll,
   refreshIntervalSeconds,
+  refreshLabel,
   inTradingSessionShanghai,
   isTradeDayShanghai,
   labelForInterval,

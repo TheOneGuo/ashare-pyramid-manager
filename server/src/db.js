@@ -566,6 +566,14 @@ export async function migrateFxbaogaoColumns() {
       // 列已存在则忽略
     }
   }
+  // 存量清理：财报/公告类不是研报（披露季会刷屏 200 条配额），级联删精读结果（幂等）
+  try {
+    await client.execute({ sql: `DELETE FROM fxbaogao_ai WHERE report_id IN (SELECT report_id FROM fxbaogao_reports WHERE org_name='财报' OR org_name='公告' OR org_name LIKE '%公告%')` });
+    const r = await client.execute({ sql: `DELETE FROM fxbaogao_reports WHERE org_name='财报' OR org_name='公告' OR org_name LIKE '%公告%'` });
+    if (r.rowsAffected > 0) console.log(`[db] purged ${r.rowsAffected} noise (财报/公告) fxbaogao rows`);
+  } catch (e) {
+    console.warn('[db] purge fxbaogao noise failed:', e.message?.slice(0, 80));
+  }
 }
 
 export async function removeHolding(stock_code) {
@@ -950,10 +958,20 @@ export async function deleteResearchReport(id) {
 // =====================================================
 
 // 批量 upsert（report_id 冲突时更新 title/org_name/pub_time 等，pdf_url/ai_status 保留）
+// 财报/公告类来源（org_name 命中即视为公司公告，不入库：披露季会刷屏 200 条配额，且不是研报）
+export function isFxbaogaoNoiseOrg(orgName) {
+  const s = String(orgName || '').trim();
+  if (!s) return false;
+  return s === '财报' || s === '公告' || s.includes('公告');
+}
+
 export async function upsertFxbaogaoReports(list) {
   if (!list || !list.length) return 0;
+  // 过滤财报/公告类（个股公告不是研报，省 DB 空间 + 省 LLM 精读预算）
+  const rows = list.filter((r) => !isFxbaogaoNoiseOrg(r.orgName));
+  if (!rows.length) return 0;
   const now = Date.now();
-  const stmts = list.map((r) => {
+  const stmts = rows.map((r) => {
     // fxbaogao 返回的 pubTime 是秒；若偶见毫秒也归一到秒，统一入库单位
     const t = Number(r.pubTime || 0);
     const sec = t >= 1e12 ? Math.floor(t / 1000) : t;
@@ -981,7 +999,7 @@ export async function upsertFxbaogaoReports(list) {
     };
   });
   await client.batch(stmts, 'write');
-  return list.length;
+  return rows.length;
 }
 
 // 缓存 PDF 直链（详情页秒开：命中缓存无需再调 MCP）
@@ -995,11 +1013,11 @@ export async function updateFxbaogaoPdfUrl(reportId, url) {
 
 // 分页读取（按 pub_time 倒序），支持时间范围过滤（startMs/endMs 均为毫秒，库内为秒，自动换算）
 export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0, endMs = 0 } = {}) {
-  const wheres = [];
+  const wheres = ["(org_name IS NULL OR (org_name <> '财报' AND org_name <> '公告' AND org_name NOT LIKE '%公告%'))"];
   const args = [];
   if (startMs > 0) { wheres.push('pub_time >= ?'); args.push(Math.floor(startMs / 1000)); }
   if (endMs > 0) { wheres.push('pub_time <= ?'); args.push(Math.floor(endMs / 1000)); }
-  const whereSql = wheres.length ? 'WHERE ' + wheres.join(' AND ') : '';
+  const whereSql = 'WHERE ' + wheres.join(' AND ');
   const sql = `SELECT report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,pdf_url,ai_status FROM fxbaogao_reports ${whereSql} ORDER BY pub_time DESC LIMIT ? OFFSET ?`;
   args.push(Math.min(Math.max(Number(limit) || 20, 1), 200), Math.max(Number(offset) || 0, 0));
   const r = await client.execute({ sql, args });
@@ -1120,7 +1138,7 @@ export async function getFxbaogaoAi(report_id) {
 export async function listUnrefinedFxbaogao(limit = 20) {
   const cap = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const r = await client.execute({
-    sql: `SELECT report_id,title,org_name,page_num,pub_time,pub_date FROM fxbaogao_reports WHERE ai_status=0 ORDER BY pub_time DESC LIMIT ?`,
+    sql: `SELECT report_id,title,org_name,page_num,pub_time,pub_date FROM fxbaogao_reports WHERE ai_status=0 AND (org_name IS NULL OR (org_name <> '财报' AND org_name <> '公告' AND org_name NOT LIKE '%公告%')) ORDER BY pub_time DESC LIMIT ?`,
     args: [cap],
   });
   return r.rows.map((row) => ({
