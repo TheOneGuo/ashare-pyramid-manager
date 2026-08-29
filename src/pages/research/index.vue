@@ -294,18 +294,18 @@ function openAllBrokerMenu() {
 const tab = ref<'all' | 'mine'>('all')
 
 // ============= Tab 1：全部研报 =============
+// 1天/1周 因 fxbaogao 不支持 last1day，且财报披露季内 1周内可能只有半年报公告（被客户端过滤掉）
+// 所以 1天/1周/1月 共享 last1mon 数据源；3月/全部 用各自范围。
 const ALL_DATE_RANGES = [
-  { value: 'last7day', label: '1天' },
-  { value: 'last7day', label: '1周' },
+  { value: 'last1mon', label: '1天' },
+  { value: 'last1mon', label: '1周' },
   { value: 'last1mon', label: '1月' },
   { value: 'last3mon', label: '3月' },
   { value: 'last1year', label: '全部' },
 ]
 const ALL_DATE_RANGE_LABELS = ALL_DATE_RANGES.map((t) => t.label)
-// 注意：fxbaogao 不支持 last1day，1天/1周 都用 last7day（最近 7 天数据做近似）
-// 1天/1周用同一个 value 但显示不同的 label；通过 allDateRange.value（fxbaogao 参数）+ allDateIdx（picker 选中 index）分离
-const allDateRange = ref('last7day') // 实际传给 fxbaogao 的 startTime
-const allDateIdx = ref(1) // 默认 1周（即 5 个 label 中的第 2 个）
+const allDateRange = ref('last1mon') // 实际传给 fxbaogao 的 startTime
+const allDateIdx = ref(2) // 默认 1月（即 5 个 label 中的第 3 个）
 const allBroker = ref<string>('')
 const allBrokerIdx = ref(0) // 0 = '全部'，>0 = 某个 broker
 const allOnlyRecommended = ref(false)
@@ -371,16 +371,17 @@ async function loadAllList() {
   allLoading.value = true
   allError.value = ''
   try {
-    // 并行拉 5 个时间范围以计算 count
-    const tasks = ALL_DATE_RANGES.map(async (t) => {
+    // 并行拉 unique value 的时间范围（1天/1周/1月 都映射到 last1mon，去重避免重复请求）
+    const uniqueValues = Array.from(new Set(ALL_DATE_RANGES.map((t) => t.value)))
+    const tasks = uniqueValues.map(async (v) => {
       try {
-        const r = await listAllReports({ startTime: t.value, pageNum: 1 })
+        const r = await listAllReports({ startTime: v, pageNum: 1 })
         const enriched = (r.items || []).map((it) => {
           const title = it.title || ''
           const det = clientDetect(title + ' ' + (it.orgName || ''))
           return {
             ...it,
-            _dateRange: t.value,
+            _dateRange: v,
             _isIndividual: isIndividualReport(title, it.orgName || ''),
             broker: it.broker || it.orgName,
             recommended: det.recommended,
@@ -393,8 +394,18 @@ async function loadAllList() {
       }
     })
     const results = await Promise.all(tasks)
-    allItemsWithDate.value = results.flat()
-    // 默认 allItems = 当前选定日期范围的项目（按 broker 过滤待用户在菜单里选）
+    // 把去重后的 items 重新展开到 ALL_DATE_RANGES 各自 _dateRange 槽位（保证每个 label 都有 count）
+    const byValue: Record<string, AllItemWithDate[]> = {}
+    uniqueValues.forEach((v, i) => { byValue[v] = results[i] || [] })
+    const all = ALL_DATE_RANGES.flatMap((t) => byValue[t.value] || [])
+    // 去重（同一 reportId 可能跨 value 重复出现——选第一条 _dateRange 出现位置）
+    const seen = new Set<number>()
+    allItemsWithDate.value = all.filter((r) => {
+      if (seen.has(r.reportId)) return false
+      seen.add(r.reportId)
+      return true
+    })
+    // 默认 allItems = 当前选定日期范围的项目
     allItems.value = allItemsWithDate.value.filter((r) => r._dateRange === allDateRange.value)
   } catch (e: any) {
     allError.value = e?.message || '加载失败'
