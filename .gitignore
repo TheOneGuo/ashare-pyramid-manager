@@ -71,3 +71,7 @@ nul
 # 工作区临时
 .runtime_cache/
 build/
+# 本地调试产物（2026-08-29 同步时补充拦截）
+docs/verify/chrome-profile-*/
+docs/verify/*.err
+docs/verify/write-fxbaogao-env.ps1
