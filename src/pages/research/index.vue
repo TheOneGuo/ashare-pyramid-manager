@@ -82,7 +82,7 @@
 
           <!-- 展开：AI 精读（按需拉取）+ 查看原文 -->
           <view v-if="allExpanded.has(r.reportId)" class="rs-report-body">
-            <view v-if="aiLoadingId === r.reportId" class="rs-tldr" style="opacity:0.7">
+            <view v-if="aiLoadingIds.has(r.reportId)" class="rs-tldr" style="opacity:0.7">
               <text class="rs-tldr-label">✦ AI 精读</text>
               <text class="rs-tldr-body">正在读取精读结果…</text>
             </view>
@@ -104,9 +104,10 @@
                 <view v-for="(p, i) in aiMap[r.reportId].risks" :key="i" class="rs-li rs-li--risk"><text class="rs-dot">·</text><text class="rs-li-text">{{ p }}</text></view>
               </view>
             </template>
-            <view v-else class="rs-tldr" style="opacity:0.7">
+            <!-- 区分两种空态：已精读但读取失败（可点重试）vs 真未精读（线上队列中） -->
+            <view v-else class="rs-tldr" :style="r.aiStatus === 2 ? 'opacity:1' : 'opacity:0.7'" @tap.stop="loadAi(r.reportId)">
               <text class="rs-tldr-label">✦ AI 精读</text>
-              <text class="rs-tldr-body">线上队列精读中，稍后回来刷新即可；也可点下方「原文」直接阅读 PDF。</text>
+              <text class="rs-tldr-body">{{ r.aiStatus === 2 ? '精读结果读取失败，点击重试' : '线上队列精读中，稍后回来刷新即可；也可点下方「原文」直接阅读 PDF。' }}</text>
             </view>
 
             <view class="rs-actions">
@@ -585,7 +586,8 @@ function openReportUrl(url: string) {
 // ============= Tab 1：展开 + AI 精读（按需拉取，带缓存） =============
 const allExpanded = ref<Set<number>>(new Set())
 const aiMap = ref<Record<number, FxbaogaoAiResult>>({})
-const aiLoadingId = ref(0)
+// 按 id 独立加锁（单值锁会在上一请求未返回时静默丢弃后续展开，导致"已精读却显示精读中"）
+const aiLoadingIds = ref<Set<number>>(new Set())
 
 // 展开/收起；首次展开按需拉 AI 精读结果（命中缓存不重复请求）
 async function onAllClickRow(r: AllItemWithDate) {
@@ -599,8 +601,10 @@ async function onAllClickRow(r: AllItemWithDate) {
 }
 
 async function loadAi(reportId: number) {
-  if (aiLoadingId.value) return
-  aiLoadingId.value = reportId
+  if (aiLoadingIds.value.has(reportId)) return
+  const s = new Set(aiLoadingIds.value)
+  s.add(reportId)
+  aiLoadingIds.value = s
   try {
     const res = await getFxbaogaoAi(reportId)
     if (res?.ok && res.refined) {
@@ -612,9 +616,11 @@ async function loadAi(reportId: number) {
       triggerFxbaogaoRefine(5).catch(() => {})
     }
   } catch {
-    // 静默失败：卡片显示"精读中"提示
+    // 失败不静默吞：卡片显示"读取失败，点击重试"（tap 精读区即可重试）
   } finally {
-    aiLoadingId.value = 0
+    const s2 = new Set(aiLoadingIds.value)
+    s2.delete(reportId)
+    aiLoadingIds.value = s2
   }
 }
 
