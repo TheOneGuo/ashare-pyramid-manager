@@ -419,14 +419,42 @@ const REFINED_SYSTEM = `你是「节节高」研报精读助手，把卖方/外�
 - key_points: 核心观点 3-6 条
 - opportunities: 新机会/正面催化 3-6 条
 - risks: 风险点 3-6 条
+- report_type: 研报类型判定，只能是 stock/industry/macro/strategy/minutes/other 之一
+  （stock=个股研报, industry=行业研究, macro=宏观, strategy=策略, minutes=会议纪要, other=其他）
+- extraction: 从正文中尽力提取以下维度（研报未提及的字段用空数组/空串，不要编造）：
+  - stocks: 提及的 A 股/港股/美股标的 [{code:"6位代码", name:"公司名"}]
+  - industry: 所属行业（如"半导体""食品饮料"）
+  - suppliers: 供应商/上游企业
+  - buyers: 产品买方/下游客户
+  - regulations: 国内外有影响的法律法规/监管政策
+  - raw_materials: 提及的原材料
+  - origin_risks: 原材料产地的自然风险与地缘冲突风险
+  - orders: 订单/在手订单信息
+  - certifications: 知名大厂认证/客户认证（如进入苹果/特斯拉供应链）
+  - financials: 财报关键数据（营收/利润/增速等）
+  - key_persons: 关键控制人/实际控制人/核心管理层
 - 严格按 JSON 输出，不要加任何额外字段或解释`
+
+export interface LlmExtraction {
+  stocks?: { code?: string; name?: string }[]
+  industry?: string
+  suppliers?: string[]
+  buyers?: string[]
+  regulations?: string[]
+  raw_materials?: string[]
+  origin_risks?: string[]
+  orders?: string[]
+  certifications?: string[]
+  financials?: string[]
+  key_persons?: string[]
+}
 
 export async function refineWithLlm(input: {
   raw_text: string
   title?: string
   broker?: string
   industry?: string
-}): Promise<{ tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; mode: 'llm' | 'fallback' } | null> {
+}): Promise<{ tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; report_type?: string; extraction?: LlmExtraction; mode: 'llm' | 'fallback' } | null> {
   if (!isLlmAvailable()) return null
   const raw = (input.raw_text || '').trim().slice(0, 18000) // 控制 token
   if (raw.length < 200) return null
@@ -435,22 +463,47 @@ export async function refineWithLlm(input: {
     input.broker ? `机构：${input.broker}` : '',
     input.industry ? `行业：${input.industry}` : '',
   ].filter(Boolean).join('\n')
-  const user = `${meta}\n\n研报正文（截取前 18000 字）：\n${raw}\n\n请按以下 JSON 结构输出：\n{"tldr":"...", "key_points":["...","..."], "opportunities":["...","..."], "risks":["...","..."]}`
-  const result = await chatJson<{ tldr?: string; key_points?: string[]; opportunities?: string[]; risks?: string[] }>({
+  const user = `${meta}\n\n研报正文（截取前 18000 字）：\n${raw}\n\n请按以下 JSON 结构输出（extraction 各字段未提及时用空数组/空串）：
+{"tldr":"...", "key_points":["..."], "opportunities":["..."], "risks":["..."], "report_type":"stock|industry|macro|strategy|minutes|other",
+ "extraction":{"stocks":[{"code":"6位代码","name":"公司名"}], "industry":"...", "suppliers":["..."], "buyers":["..."], "regulations":["..."], "raw_materials":["..."], "origin_risks":["..."], "orders":["..."], "certifications":["..."], "financials":["..."], "key_persons":["..."]}}`
+  const result = await chatJson<{ tldr?: string; key_points?: string[]; opportunities?: string[]; risks?: string[]; report_type?: string; extraction?: LlmExtraction }>({
     system: REFINED_SYSTEM,
     user,
     jsonHint: true,
-    maxTokens: 1800,
+    maxTokens: 3200,
     temperature: 0.2,
   })
   if (!result || typeof result !== 'object') return null
   const pickStr = (v: any) => String(v || '').trim()
   const pickList = (v: any): string[] => Array.isArray(v) ? v.map((x) => String(x || '').trim()).filter((x) => x.length > 0).slice(0, 8) : []
+  // report_type 归一（非法值兜底 other）
+  const rt = pickStr(result.report_type).toLowerCase()
+  const reportType = ['stock', 'industry', 'macro', 'strategy', 'minutes', 'other'].includes(rt) ? rt : 'other'
+  // extraction 清洗：数组字段去空、标的代码归一
+  const rawExt = (result.extraction && typeof result.extraction === 'object') ? result.extraction : {}
+  const stocks = Array.isArray(rawExt.stocks)
+    ? rawExt.stocks.map((s: any) => ({ code: String(s?.code || '').replace(/\D/g, '').slice(0, 6), name: String(s?.name || '').trim() })).filter((s: any) => s.code || s.name).slice(0, 10)
+    : []
+  const extraction: LlmExtraction = {
+    stocks,
+    industry: pickStr(rawExt.industry).slice(0, 40),
+    suppliers: pickList(rawExt.suppliers),
+    buyers: pickList(rawExt.buyers),
+    regulations: pickList(rawExt.regulations),
+    raw_materials: pickList(rawExt.raw_materials),
+    origin_risks: pickList(rawExt.origin_risks),
+    orders: pickList(rawExt.orders),
+    certifications: pickList(rawExt.certifications),
+    financials: pickList(rawExt.financials),
+    key_persons: pickList(rawExt.key_persons),
+  }
   return {
     tldr: pickStr(result.tldr).slice(0, 800),
     key_points: pickList(result.key_points),
     opportunities: pickList(result.opportunities),
     risks: pickList(result.risks),
+    report_type: reportType,
+    extraction,
     mode: 'llm',
   }
 }

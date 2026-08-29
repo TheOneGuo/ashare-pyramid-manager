@@ -586,6 +586,19 @@ export async function triggerFxbaogaoRefine(limit = 10): Promise<{ ok: boolean; 
   return jget(`/api/research/fxbaogao/refine-batch?limit=${limit}`, { method: 'POST', body: {}, timeoutMs: 10000 })
 }
 // 单条研报的 AI 精读结果（未精读时 refined 为 null）
+export interface FxbaogaoExtract {
+  stocks?: { code?: string; name?: string }[]
+  industry?: string
+  suppliers?: string[]
+  buyers?: string[]
+  regulations?: string[]
+  raw_materials?: string[]
+  origin_risks?: string[]
+  orders?: string[]
+  certifications?: string[]
+  financials?: string[]
+  key_persons?: string[]
+}
 export interface FxbaogaoAiResult {
   report_id: number
   title: string
@@ -597,9 +610,38 @@ export interface FxbaogaoAiResult {
   risks: string[]
   status: string
   model: string
+  report_type?: string
+  extract?: FxbaogaoExtract
 }
 export async function getFxbaogaoAi(reportId: number): Promise<{ ok: boolean; reportId: number; refined: FxbaogaoAiResult | null }> {
   return jget(`/api/research/fxbaogao/ai/${reportId}`, { timeoutMs: 15000 })
+}
+// 精读库按个股检索：LLM 提取的标的（代码/名称）命中的已精读研报（含精读结果，免重复精读）
+export interface FxbaogaoExtractItem {
+  reportId: number
+  title: string
+  orgName: string
+  broker: string
+  pageNum: number
+  pubDate: string
+  recommended: boolean
+  categories: string[]
+  pdfUrl: string
+  reportType: string
+  industryName: string
+  tldr: string
+  key_points: string[]
+  opportunities: string[]
+  risks: string[]
+  status: string
+  model: string
+  extract: FxbaogaoExtract
+}
+export async function searchFxbaogaoExtract(codes: string[], names: string[]): Promise<{ ok: boolean; items: FxbaogaoExtractItem[]; count: number }> {
+  const q = new URLSearchParams()
+  if (codes.length) q.set('codes', codes.join(','))
+  if (names.length) q.set('names', names.join(','))
+  return jget(`/api/research/fxbaogao/search-extract?${q.toString()}`, { timeoutMs: 15000 })
 }
 // 同步进度 + 库存量
 export async function getFxbaogaoSyncStatus(): Promise<FxbaogaoSyncResult> {

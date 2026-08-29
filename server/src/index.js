@@ -42,7 +42,7 @@ import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans
   upsertResearchReport, listResearchReports, listResearchReportsFiltered, countResearchReportsGrouped, deleteResearchReport,
   upsertStockReport, listStockReports, deleteStockReport,
   upsertFxbaogaoReports, listFxbaogaoReports, getFxbaogaoStats, getFxbaogaoReportById, maxUnrefinedCount,
-  updateFxbaogaoPdfUrl, upsertFxbaogaoAi, getFxbaogaoAi, listUnrefinedFxbaogao, markFxbaogaoAiPending, resetStuckFxbaogaoPending, cleanupOldFxbaogao,
+  updateFxbaogaoPdfUrl, upsertFxbaogaoAi, getFxbaogaoAi, listUnrefinedFxbaogao, markFxbaogaoAiPending, resetStuckFxbaogaoPending, cleanupOldFxbaogao, searchFxbaogaoByStock,
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -673,6 +673,24 @@ app.get('/api/research/fxbaogao/ai/:reportId', async (req, res) => {
     res.json({ ok: true, reportId: id, refined: ai })
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || '读取失败' })
+  }
+})
+
+// 2e2) 精读库按个股检索：LLM 从研报提取的标的（代码/名称）命中的已精读研报
+//      供「持仓和自选个股研报」tab 合并展示——持仓/搜索个股时直接给出相关精读结果
+app.get('/api/research/fxbaogao/search-extract', async (req, res) => {
+  try {
+    const split = (v) => String(v || '').split(/[,，\n]/).map((s) => s.trim()).filter(Boolean)
+    const codes = split(req.query.codes)
+    const names = split(req.query.names)
+    if (!codes.length && !names.length) {
+      return res.status(400).json({ ok: false, error: 'codes/names 必填' })
+    }
+    const items = await searchFxbaogaoByStock(codes, names)
+    res.json({ ok: true, items, count: items.length })
+  } catch (e) {
+    console.warn('[fxbaogao search-extract]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || '检索失败' })
   }
 })
 

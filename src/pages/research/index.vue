@@ -5,7 +5,7 @@
     <view class="rs-head">
       <view class="rs-header">
         <text class="rs-title">AI 研报</text>
-        <text class="rs-meta">全部研报 AI 精读 · 我的持仓研报</text>
+        <text class="rs-meta">全部研报 AI 精读 · 持仓和自选个股研报</text>
       </view>
 
       <view class="rs-tabbar">
@@ -13,7 +13,7 @@
           <text>全部研报 AI 精读</text>
         </view>
         <view class="rs-tab" :class="{ 'rs-tab--active': tab === 'mine' }" @tap="onSwitchTab('mine')">
-          <text>我的持仓研报</text>
+          <text>持仓和自选个股研报</text>
         </view>
       </view>
 
@@ -51,7 +51,7 @@
     </view>
 
     <!-- 可滚动内容区 -->
-    <view class="rs-body">
+    <view class="rs-body" :class="{ 'rs-body--with-bar': tab === 'mine' }">
       <!-- ============================================================ -->
       <!-- Tab 1：全部研报 AI 精读 -->
       <!-- ============================================================ -->
@@ -103,6 +103,14 @@
                 <text class="rs-block-label rs-block-label--risk">⚠️ 风险点</text>
                 <view v-for="(p, i) in aiMap[r.reportId].risks" :key="i" class="rs-li rs-li--risk"><text class="rs-dot">·</text><text class="rs-li-text">{{ p }}</text></view>
               </view>
+              <!-- AI 提取的结构化信息 -->
+              <view v-if="extractRows(aiMap[r.reportId].extract).length" class="rs-block rs-extract">
+                <text class="rs-block-label">🔎 关键信息提取</text>
+                <view v-for="row in extractRows(aiMap[r.reportId].extract)" :key="row.label" class="rs-extract-row">
+                  <text class="rs-extract-k">{{ row.label }}</text>
+                  <text class="rs-extract-v">{{ row.value }}</text>
+                </view>
+              </view>
             </template>
             <!-- 区分两种空态：已精读但读取失败（可点重试）vs 真未精读（线上队列中） -->
             <view v-else class="rs-tldr" :style="r.aiStatus === 2 ? 'opacity:1' : 'opacity:0.7'" @tap.stop="loadAi(r.reportId)">
@@ -126,21 +134,24 @@
       </view>
 
       <!-- ============================================================ -->
-      <!-- Tab 2：我的持仓研报 -->
+      <!-- Tab 2：持仓和自选个股研报 -->
       <!-- ============================================================ -->
       <view v-if="tab === 'mine'" class="rs-pane">
         <view class="rs-card">
           <text class="rs-section-title">持仓标的研报</text>
-          <text class="rs-note rs-note--muted">为持仓自动拉取卖方研报（高盛/摩根/瑞银/华泰/中金 等 30+ 家）。默认显示最近 1 个月，列表自动加载；点击查看研报可下载或打开 PDF / MD 原文。涉及先进生产力行业的研报标⭐推荐。</text>
+          <text class="rs-note rs-note--muted">为持仓自动拉取卖方研报（高盛/摩根/瑞银/华泰/中金 等 30+ 家），并合并线上已精读库中提取到该股的研报。默认显示最近 1 个月；展开可看 AI 提取的标的/行业/供应商/法规等结构化信息。涉及先进生产力行业的研报标⭐推荐。</text>
           <view class="rs-actions">
             <view class="rs-btn rs-btn--primary" hover-class="rs-btn--hover" @tap="onMineLoad(true)" :class="{ 'rs-btn--loading': mineLoading }">
-              <text>{{ mineLoading ? '拉取中…' : '📊 为持仓搜卖方' }}</text>
+              <text>{{ mineLoading ? '拉取中…' : '与持仓相关研报' }}</text>
             </view>
           </view>
         </view>
 
         <view v-if="mineLoading && mineItems.length === 0" class="rs-empty"><text>正在拉取持仓相关研报…</text></view>
-        <view v-else-if="mineItems.length === 0 && mineLoaded" class="rs-empty"><text>暂无持仓相关研报</text></view>
+        <view v-else-if="mineItems.length === 0 && mineLoaded" class="rs-empty">
+          <text>暂无持仓相关研报</text>
+          <text class="rs-empty-hint">用底部搜索框输入股票代码 / 名称查询自选个股</text>
+        </view>
         <view v-else-if="!mineLoaded" class="rs-empty"><text>首次进入自动加载中…</text></view>
 
         <view v-for="r in mineItems" :key="r.key" class="rs-card rs-report-card">
@@ -183,6 +194,15 @@
               <view v-for="(p, i) in mineIngestedMap[r.key].risks" :key="i" class="rs-li rs-li--risk"><text class="rs-dot">·</text><text class="rs-li-text">{{ p }}</text></view>
             </view>
 
+            <!-- AI 提取的结构化信息（标的/行业/供应商/买方/法规/原材料/产地风险/订单/认证/财报/控制人） -->
+            <view v-if="extractRows(mineIngestedMap[r.key]?.extract).length" class="rs-block rs-extract">
+              <text class="rs-block-label">🔎 关键信息提取</text>
+              <view v-for="row in extractRows(mineIngestedMap[r.key]?.extract)" :key="row.label" class="rs-extract-row">
+                <text class="rs-extract-k">{{ row.label }}</text>
+                <text class="rs-extract-v">{{ row.value }}</text>
+              </view>
+            </view>
+
             <view class="rs-actions">
               <view class="rs-btn rs-btn--primary" hover-class="rs-btn--hover" :class="{ 'rs-btn--loading': mineIngesting === r.key }" @tap.stop="onMineIngest(r)">
                 <text>{{ mineIngesting === r.key ? 'AI 精读中…' : (mineIngestedMap[r.key] ? '🔄 重读研报' : '✦ 一键 AI 精读') }}</text>
@@ -193,24 +213,24 @@
             </view>
           </view>
         </view>
+      </view>
+    </view>
 
-        <!-- 底部一行：搜索 + 日期按钮 + 搜索按钮 -->
-        <view class="rs-mine-bottom-bar">
-          <input
-            class="rs-mine-search-input"
-            v-model="mineSearchInput"
-            placeholder="输入股票代码 / 名称"
-            :disabled="mineLoading"
-            @confirm="onMineSearch"
-          />
-          <view class="rs-filter-pill rs-mine-date-btn" @tap="openMineDateMenu">
-            <text class="rs-filter-pill-text">{{ currentMineDateLabel }}</text>
-            <text class="rs-filter-pill-caret">▾</text>
-          </view>
-          <view class="rs-btn rs-btn--primary rs-mine-search-btn" hover-class="rs-btn--hover" @tap="onMineSearch" :class="{ 'rs-btn--loading': mineLoading }">
-            <text>搜索</text>
-          </view>
-        </view>
+    <!-- 底部搜索栏（在滚动区外，固定贴底不被研报列表覆盖；仅 Tab 2 显示） -->
+    <view v-if="tab === 'mine'" class="rs-mine-bottom-bar">
+      <input
+        class="rs-mine-search-input"
+        v-model="mineSearchInput"
+        placeholder="输入股票代码 / 名称"
+        :disabled="mineLoading"
+        @confirm="onMineSearch"
+      />
+      <view class="rs-filter-pill rs-mine-date-btn" @tap="openMineDateMenu">
+        <text class="rs-filter-pill-text">{{ currentMineDateLabel }}</text>
+        <text class="rs-filter-pill-caret">▾</text>
+      </view>
+      <view class="rs-btn rs-btn--primary rs-mine-search-btn" hover-class="rs-btn--hover" @tap="onMineSearch" :class="{ 'rs-btn--loading': mineLoading }">
+        <text>搜索</text>
       </view>
     </view>
 
@@ -251,10 +271,30 @@ import { onShow } from '@dcloudio/uni-app'
 const isH5 = ref(typeof window !== 'undefined')
 import TabBarComp from '@/custom-tab-bar/index.vue'
 import {
-  listHoldingReports, ingestFxbaogaoReport, getFxbaogaoPdfUrl, getFxbaogaoAi,
+  listHoldingReports, ingestFxbaogaoReport, getFxbaogaoPdfUrl, getFxbaogaoAi, searchFxbaogaoExtract,
   listFxbaogaoDbReports, syncFxbaogaoAll, triggerFxbaogaoRefine,
-  type HoldingReportItem, type FxbaogaoAiResult,
+  type HoldingReportItem, type FxbaogaoAiResult, type FxbaogaoExtract,
 } from '@/api/portfolio'
+
+// AI 提取的结构化信息 → 展示行（空的维度自动隐藏）
+interface ExtractRow { label: string; value: string }
+function extractRows(ext?: FxbaogaoExtract | null): ExtractRow[] {
+  if (!ext || typeof ext !== 'object') return []
+  const rows: ExtractRow[] = []
+  const stocks = (ext.stocks || []).map((s) => (s.code ? `${s.name || ''}(${s.code})` : s.name)).filter(Boolean)
+  if (stocks.length) rows.push({ label: '🎯 A股标的', value: stocks.join('、') })
+  if (ext.industry) rows.push({ label: '🏭 行业', value: ext.industry })
+  if (ext.suppliers?.length) rows.push({ label: '⬆️ 供应商', value: ext.suppliers.join('；') })
+  if (ext.buyers?.length) rows.push({ label: '⬇️ 产品买方', value: ext.buyers.join('；') })
+  if (ext.regulations?.length) rows.push({ label: '📜 法规政策', value: ext.regulations.join('；') })
+  if (ext.raw_materials?.length) rows.push({ label: '⛏ 原材料', value: ext.raw_materials.join('；') })
+  if (ext.origin_risks?.length) rows.push({ label: '🌍 产地风险', value: ext.origin_risks.join('；') })
+  if (ext.orders?.length) rows.push({ label: '📦 订单', value: ext.orders.join('；') })
+  if (ext.certifications?.length) rows.push({ label: '🏅 大厂认证', value: ext.certifications.join('；') })
+  if (ext.financials?.length) rows.push({ label: '💰 财报', value: ext.financials.join('；') })
+  if (ext.key_persons?.length) rows.push({ label: '👤 关键控制人', value: ext.key_persons.join('；') })
+  return rows
+}
 
 // 复用同一份关键词表做前端推荐判断（保持和 server 端 detectAdvancedProductivity 一致）
 const ADV_PRODUCTIVITY: { category: string; keywords: string[] }[] = [
@@ -375,7 +415,8 @@ interface AllItemWithDate {
   categories: string[]
   pdfUrl?: string // PDF 直链缓存（详情秒开用）
   aiStatus?: number // 0=未精读 1=精读中 2=已精读
-  _isIndividual?: boolean // 是否是个股研究（标题含 A 股代码或名称）
+  reportType?: string // 服务端分类：stock/industry/macro/strategy/minutes/other
+  industryName?: string // fxbaogao 自带行业分类
 }
 const allItems = ref<AllItemWithDate[]>([])
 const allLoading = ref(false)
@@ -398,24 +439,8 @@ const allBrokers = computed(() => {
 
 const allBrokerLabels = computed(() => ['全部', ...allBrokers.value])
 
-// Tab 1 数据过滤：客户端排除 A 股个股研报 / 公司公告 / 财报
-// 只保留：行业研究 / 宏观 / 策略 / 产业 / 专题 类研报
-function isIndividualReport(title: string, orgName: string): boolean {
-  if (!title && !orgName) return false
-  // 1) 财报类（fxbaogao 用 orgName=财报 表示公司公告）
-  if (orgName === '财报' || orgName === '公告' || orgName?.includes('公告')) return true
-  // 2) 标题含财报 / 业绩公告关键词
-  if (/(半年|年度|季度|一季|三季)报告|业绩快报|业绩预告|首次覆盖|年报点评|公司公告|关于/.test(title)) return true
-  // 3) 6 位 A 股代码
-  if (/\b\d{6}\b/.test(title)) return true
-  if (/[(（【\s]\d{6}[)）】\s.,，]/.test(title)) return true
-  // 4) 持仓标的名称出现在标题里（说明是个股研报 / 个股公告）
-  for (const h of holdings.value) {
-    const name = (h.short_name || '').trim()
-    if (name && name.length >= 2 && title.includes(name)) return true
-  }
-  return false
-}
+// 个股研报过滤已由服务端 report_type 处理（全部研报 tab 只出综合类），
+// 客户端不再做个股过滤，避免误杀标题含持仓名的行业研报。
 
 const allCounts = computed(() => {
   const byDate: Record<string, number> = {}
@@ -423,7 +448,6 @@ const allCounts = computed(() => {
   let total = 0
   const now = Date.now()
   for (const r of allItems.value) {
-    if (r._isIndividual) continue // 不计入筛选统计
     // 按「回拉天数」统计当前已加载数据落入各日期档的数量
     const pubMs = Number(r.pubTime || 0) * 1000
     for (const days of ALL_DATE_DAYS) {
@@ -443,7 +467,7 @@ function daysToRangeMs(days: number): { startMs: number; endMs: number } {
   return { startMs: now - days * 86400000, endMs: now }
 }
 
-// 数据库 item → 展示 item（补 broker / recommended / categories / _isIndividual）
+// 数据库 item → 展示 item（补 recommended / categories；排序由服务端完成）
 function toAllItem(it: any): AllItemWithDate {
   const title = it.title || ''
   const det = clientDetect(title + ' ' + (it.orgName || ''))
@@ -457,9 +481,10 @@ function toAllItem(it: any): AllItemWithDate {
     pubDate: String(it.pubTimeStr || '').replace(/\/+$/, ''),
     recommended: det.recommended,
     categories: det.categories,
-    _isIndividual: isIndividualReport(title, it.orgName || ''),
     pdfUrl: String(it.pdfUrl || ''),
     aiStatus: Number(it.aiStatus || 0),
+    reportType: String(it.reportType || ''),
+    industryName: String(it.industryName || ''),
   }
 }
 
@@ -539,9 +564,10 @@ function isForeignBroker(name: string): boolean {
   return FOREIGN_BROKER_RE.test(name)
 }
 
-// 列表显示 = 选中的日期 + 选中的机构 + 只看推荐 + 只看海外机构 + 排除个股
+// 列表显示 = 选中的机构 + 只看推荐 + 只看海外机构
+// （个股研报过滤与「外资→推荐→行业/宏观→纪要」排序均已由服务端完成）
 const allDisplay = computed(() => {
-  let arr = allItems.value.filter((r) => !r._isIndividual)
+  let arr = allItems.value
   if (allBroker.value) arr = arr.filter((r) => (r.broker || r.orgName) === allBroker.value)
   if (allOnlyRecommended.value) arr = arr.filter((r) => r.recommended)
   if (allOnlyForeign.value) arr = arr.filter((r) => isForeignBroker(r.broker || r.orgName || ''))
@@ -741,8 +767,8 @@ function openMineDateMenu() {
 
 async function loadMineList(timeRange?: string) {
   if (mineLoading.value) return
-  // 无持仓：直接结束 loading 态（否则永远卡在「首次进入自动加载中…」），
-  // 用户可在底部搜索框输入代码/名称查询
+  // 无持仓：合并线上已精读库也没有标的可查，直接结束 loading 态
+  // （否则永远卡在「首次进入自动加载中…」）
   if (!holdings.value.length) {
     mineLoaded.value = true
     mineItems.value = []
@@ -758,11 +784,86 @@ async function loadMineList(timeRange?: string) {
     })
     mineItems.value = r.items || []
     mineLoaded.value = true
+    // 合并线上已精读库中提取到持仓标的的研报（自带精读结果，免重新精读）
+    mergeExtractReports(
+      holdings.value.map((h) => h.stock_code),
+      holdings.value.map((h) => h.short_name || ''),
+    )
   } catch (e: any) {
     mineError.value = e?.message || '拉取失败'
     mineItems.value = []
   } finally {
     mineLoading.value = false
+  }
+}
+
+// 合并精读库按个股检索的结果：LLM 从研报提取的标的（代码/名称）命中的已精读研报
+// 直接预填 mineIngestedMap（精读结果线上已有），展开即看、无需「一键 AI 精读」
+// Turso 海外直连偶发慢查询：8 秒后自动补拉一次（按 reportId 去重，重复调用安全）
+let extractRetryTimer: ReturnType<typeof setTimeout> | null = null
+async function mergeExtractReports(codes: string[], names: string[]) {
+  const validCodes = codes.map((c) => String(c || '').trim()).filter((c) => /^\d{6}$/.test(c))
+  const validNames = names.map((n) => String(n || '').trim()).filter((n) => n.length >= 2)
+  if (!validCodes.length && !validNames.length) return
+  const merged = await doMergeExtract(validCodes, validNames)
+  if (!merged) {
+    if (extractRetryTimer) clearTimeout(extractRetryTimer)
+    extractRetryTimer = setTimeout(() => {
+      if (tab.value === 'mine') doMergeExtract(validCodes, validNames)
+    }, 8000)
+  }
+}
+
+async function doMergeExtract(validCodes: string[], validNames: string[]): Promise<boolean> {
+  try {
+    const r = await searchFxbaogaoExtract(validCodes, validNames)
+    if (!r?.ok || !r.items?.length) return false
+    const seen = new Set(mineItems.value.map((it) => it.reportId))
+    const fresh: HoldingReportItem[] = []
+    const ingestedPatch: Record<string, any> = {}
+    for (const it of r.items) {
+      if (seen.has(it.reportId)) continue
+      seen.add(it.reportId)
+      const det = clientDetect(it.title + ' ' + (it.orgName || ''))
+      const key = `fx:${it.reportId}`
+      fresh.push({
+        source: 'fxbaogao',
+        key,
+        reportId: it.reportId,
+        title: it.title,
+        orgName: it.orgName || it.broker,
+        pubDate: it.pubDate || '',
+        pageNum: it.pageNum || 0,
+        viewUrl: `https://www.fxbaogao.com/view?id=${it.reportId}`,
+        recommended: it.recommended || det.recommended,
+        categories: it.categories?.length ? it.categories : det.categories,
+        holdingCode: '',
+        holdingName: '',
+        broker: it.orgName || it.broker,
+      })
+      // 预填精读结果（含结构化提取）
+      ingestedPatch[key] = {
+        title: it.title,
+        broker: it.orgName || it.broker,
+        industry: it.industryName || it.extract?.industry || '',
+        tldr: it.tldr || '',
+        key_points: it.key_points || [],
+        opportunities: it.opportunities || [],
+        risks: it.risks || [],
+        status: it.status,
+        extract: it.extract,
+        llm_used: it.status === 'refined-llm',
+      }
+    }
+    if (fresh.length) {
+      mineItems.value = [...mineItems.value, ...fresh]
+      mineIngestedMap.value = { ...mineIngestedMap.value, ...ingestedPatch }
+      return true
+    }
+    return false
+  } catch {
+    // 精读库检索失败静默跳过（重试机制会补拉）
+    return false
   }
 }
 
@@ -775,7 +876,8 @@ function onMineSearch() {
     loadMineList()
     return
   }
-  // 把搜索词当 holdings[0] 触发 by-holdings
+  // 把搜索词当 holdings[0] 触发 by-holdings；代码格式则同时合并精读库提取结果
+  const isCode = /^\d{6}$/.test(code)
   mineLoading.value = true
   listHoldingReports({
     holdings: [{ stock_code: code, short_name: code }],
@@ -784,6 +886,8 @@ function onMineSearch() {
   }).then((r) => {
     mineItems.value = r.items || []
     mineLoaded.value = true
+    if (isCode) mergeExtractReports([code], [])
+    else mergeExtractReports([], [code])
   }).catch((e) => {
     uni.showToast({ title: e?.message || '搜索失败', icon: 'none' })
   }).finally(() => {
@@ -917,10 +1021,6 @@ onMounted(() => {
   bindAllScrollListener()
   listHoldings().then((h) => {
     holdings.value = h || []
-    // holdings 拿到后重过滤已加载的 Tab 1（让 isIndividualReport 生效）
-    if (allItems.value.length) {
-      allItems.value = allItems.value.map((r) => ({ ...r, _isIndividual: isIndividualReport(r.title || '', r.orgName || '') }))
-    }
   })
 })
 
@@ -957,6 +1057,8 @@ $spacing-base: 24rpx;
 .rs-page.h5-mode { position: fixed; left: 0; right: 0; top: 0; bottom: calc(110rpx + env(safe-area-inset-bottom)); display: flex; flex-direction: column; overflow: hidden; }
 .rs-head { flex: 0 0 auto; padding: 16rpx 0 8rpx; background: $app-bg; }
 .rs-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 $spacing-base $spacing-base; }
+// Tab 2 打开时给滚动区预留底部搜索栏高度（fixed 布局，防最后一张卡片被遮）
+.rs-body--with-bar { padding-bottom: 140rpx; }
 .rs-body::-webkit-scrollbar { width: 5rpx; }
 .rs-body::-webkit-scrollbar-track { background: transparent; }
 .rs-body::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #fff4c0 0%, #f4c542 50%, #d89c1c 100%); border-radius: 6rpx; }
@@ -1038,11 +1140,25 @@ $spacing-base: 24rpx;
   .rs-filter-item--switch { flex: 0 0 auto; margin-left: auto; justify-content: flex-start; }
 }
 
-// 底部搜索条（Tab 2 我的持仓研报）
-.rs-mine-bottom-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 10rpx; padding: 14rpx 12rpx; margin-top: $spacing-base; background: $app-bg; border: 1rpx solid $app-border; border-radius: $radius-lg; z-index: 10; }
+// 底部搜索栏（Tab 2 持仓和自选个股研报）：fixed 贴在 tabBar 正上方，不被列表覆盖
+// H5：bottom = tabBar 高度（110rpx + safe-area），与自定义 tabBar 精确衔接、点击不被拦截
+.rs-mine-bottom-bar { display: flex; align-items: center; gap: 10rpx; padding: 14rpx 12rpx calc(14rpx + env(safe-area-inset-bottom, 0)); background: $app-bg; border-top: 1rpx solid $app-border; z-index: 20; }
+/* #ifdef H5 */
+.rs-mine-bottom-bar { position: fixed; left: 0; right: 0; bottom: calc(110rpx + env(safe-area-inset-bottom, 0)); }
+/* #endif */
+/* #ifndef H5 */
+.rs-mine-bottom-bar { position: fixed; left: 0; right: 0; bottom: 0; }
+/* #endif */
 .rs-mine-search-input { flex: 1 1 0; min-width: 0; min-height: 60rpx; padding: 8rpx 12rpx; background: $color-bg; border: 1rpx solid $app-border; border-radius: $radius-md; color: $app-text; font-size: 24rpx; box-sizing: border-box; }
 .rs-mine-date-btn { flex: 0 0 auto; }
 .rs-mine-search-btn { flex: 0 0 110rpx; padding: 14rpx 8rpx; font-size: 26rpx; }
+
+// AI 提取的结构化信息块（标的/行业/供应商/法规等）
+.rs-extract { background: rgba(114, 247, 255, 0.04); border-radius: $radius-md; padding: 14rpx; }
+.rs-extract-row { display: flex; gap: 10rpx; margin-bottom: 8rpx; align-items: flex-start; }
+.rs-extract-row:last-child { margin-bottom: 0; }
+.rs-extract-k { flex: 0 0 auto; font-size: 22rpx; color: #72f7ff; background: rgba(114, 247, 255, 0.10); padding: 2rpx 10rpx; border-radius: 6rpx; white-space: nowrap; }
+.rs-extract-v { flex: 1; min-width: 0; font-size: 24rpx; line-height: 1.55; color: $app-text; word-break: break-word; }
 
 // ============================================================
 // 底部菜单 sheet（统一两个 tab 用）

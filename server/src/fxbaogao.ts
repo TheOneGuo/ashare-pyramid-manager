@@ -86,6 +86,7 @@ export interface FxbaogaoReport {
   pageNum: number
   pubTime: number         // 秒级时间戳
   pubTimeStr: string      // '2026/08/27/'
+  industryName: string    // fxbaogao 自带行业分类（食品饮料/金融/机械设备...）
   paragraphs: any[]
   viewUrl: string         // 拼接的官网阅读链接
 }
@@ -124,6 +125,7 @@ export async function searchFxbaogaoReports(args: {
     pageNum: Number(r.pageNum || 0),
     pubTime: Number(r.pubTime || 0),
     pubTimeStr: String(r.pubTimeStr || ''),
+    industryName: String(r.industryName || '').replace(/<[^>]+>/g, ''),
     paragraphs: (r.paragraphs || []).map((p: any) => ({
       ...p,
       content: String(p?.content || p?.text || '').replace(/<[^>]+>/g, ''),
@@ -307,7 +309,7 @@ export async function extractPdfText(buf: Buffer, maxChars = 24000): Promise<str
 // 说明：fetch+pull 与 db 写入解耦。这里只负责「从 fxbaogao 拉取 + 精读」，
 // db 相关的回调由 index.js 注入（保持本文件不 import db.js，避免循环依赖）。
 
-import { refineWithLlm } from './research-report.js'
+import { refineWithLlm, type LlmExtraction } from './research-report.js'
 import { llmConfigInfo } from './llm.js'
 
 export interface FxbaogaoRefineItem {
@@ -332,6 +334,8 @@ export interface FxbaogaoRefineResult {
   status: string       // refined-llm / refined-mock / pdf_failed
   model: string
   pdf_url: string
+  report_type?: string  // stock/industry/macro/strategy/minutes/other
+  extract?: LlmExtraction
   error?: string
 }
 
@@ -367,7 +371,7 @@ export async function refineOneFxbaogao(
       base.error = 'pdf_failed:' + String(e?.message || e).slice(0, 120)
     }
     // 3) LLM 提炼（无 key / 失败走 mock 兜底）
-    let llmResult: { tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; mode: 'llm' | 'fallback' } | null = null
+    let llmResult: { tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; report_type?: string; extraction?: LlmExtraction; mode: 'llm' | 'fallback' } | null = null
     if (rawText.length > 200) {
       try { llmResult = await refineWithLlm({ raw_text: rawText, title, broker }) } catch {}
     }
@@ -380,6 +384,8 @@ export async function refineOneFxbaogao(
       key_points: llmResult?.key_points || [],
       opportunities: llmResult?.opportunities || [],
       risks: llmResult?.risks || [],
+      report_type: llmResult?.report_type || '',
+      extract: llmResult?.extraction || null,
       status: llmResult?.mode === 'llm' ? 'refined-llm' : (rawText.length > 200 ? 'refined-mock' : 'pdf_failed'),
       model: llmResult?.mode === 'llm' ? model : '',
     }
