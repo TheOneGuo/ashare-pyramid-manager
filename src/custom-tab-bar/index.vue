@@ -16,8 +16,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onMounted } from 'vue'
+import { tabActive, syncTabActiveFromRoute } from '@/utils/tab-active'
 
 const list = [
   {
@@ -43,38 +43,27 @@ const list = [
 ]
 
 const routes = list.map((l) => l.pagePath)
-const current = ref(0)
-
-function sync() {
-  try {
-    const ps: any[] = (getCurrentPages() as any[]) || []
-    const route = ps[ps.length - 1]?.route
-    const idx = routes.indexOf(route)
-    if (idx >= 0) current.value = idx
-  } catch (e) {
-    /* ignore */
-  }
-}
+// 所有实例共享同一份高亮状态（见 utils/tab-active.ts）
+const current = tabActive
 
 function onTap(i: number) {
   if (i === current.value) {
-    // 已在当前页：仍确保高亮正确（防 H5 缓存导致高亮错位）
-    sync()
+    syncTabActiveFromRoute()
     return
   }
-  current.value = i // 乐观更新高亮，避免「高亮变了但内容没变」的体感
+  current.value = i // 全局生效：所有页面的 tabBar 同步高亮
   uni.switchTab({ url: '/' + routes[i] })
 }
 
-// H5 端 URL hash 变化（如 jumpToNews 切 tab）时也同步高亮，防止缓存错位
+// H5 端 URL hash 变化（如 jumpToNews 切 tab）时也同步高亮
 onMounted(() => {
+  syncTabActiveFromRoute()
   if (typeof window !== 'undefined') {
-    window.addEventListener('hashchange', sync)
+    window.addEventListener('hashchange', syncTabActiveFromRoute)
+    // 挂载后栈可能尚未就绪，延迟再校准一次
+    setTimeout(syncTabActiveFromRoute, 120)
   }
 })
-
-onMounted(sync)
-onShow(sync)
 </script>
 
 <style lang="scss" scoped>

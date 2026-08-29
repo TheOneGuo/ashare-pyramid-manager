@@ -62,8 +62,8 @@
           <text v-if="!allLoading" class="rs-empty-hint">{{ syncingHint }}</text>
         </view>
 
-        <view v-for="r in allDisplay" :key="r.reportId" class="rs-card rs-report-card" @tap="onAllClickRow(r)">
-          <view class="rs-report-head">
+        <view v-for="r in allDisplay" :key="r.reportId" class="rs-card rs-report-card">
+          <view class="rs-report-head" @tap="onAllClickRow(r)">
             <view class="rs-report-head-main">
               <view class="rs-report-title-row">
                 <text class="rs-report-title">{{ r.title }}</text>
@@ -77,7 +77,46 @@
                 <text v-if="r.categories && r.categories.length" class="rs-fx-pages">· {{ r.categories.join(' / ') }}</text>
               </view>
             </view>
-            <text class="rs-report-chevron">▸</text>
+            <text class="rs-report-chevron">{{ allExpanded.has(r.reportId) ? '▾' : '▸' }}</text>
+          </view>
+
+          <!-- 展开：AI 精读（按需拉取）+ 查看原文 -->
+          <view v-if="allExpanded.has(r.reportId)" class="rs-report-body">
+            <view v-if="aiLoadingId === r.reportId" class="rs-tldr" style="opacity:0.7">
+              <text class="rs-tldr-label">✦ AI 精读</text>
+              <text class="rs-tldr-body">正在读取精读结果…</text>
+            </view>
+            <template v-else-if="aiMap[r.reportId]">
+              <view class="rs-tldr">
+                <text class="rs-tldr-label">✦ 一句话精读</text>
+                <text class="rs-tldr-body">{{ aiMap[r.reportId].tldr || '（暂无摘要）' }}</text>
+              </view>
+              <view v-if="aiMap[r.reportId].key_points?.length" class="rs-block">
+                <text class="rs-block-label">📌 核心观点</text>
+                <view v-for="(p, i) in aiMap[r.reportId].key_points" :key="i" class="rs-li"><text class="rs-dot">·</text><text class="rs-li-text">{{ p }}</text></view>
+              </view>
+              <view v-if="aiMap[r.reportId].opportunities?.length" class="rs-block">
+                <text class="rs-block-label">💡 新机会</text>
+                <view v-for="(p, i) in aiMap[r.reportId].opportunities" :key="i" class="rs-li"><text class="rs-dot">·</text><text class="rs-li-text">{{ p }}</text></view>
+              </view>
+              <view v-if="aiMap[r.reportId].risks?.length" class="rs-block">
+                <text class="rs-block-label rs-block-label--risk">⚠️ 风险点</text>
+                <view v-for="(p, i) in aiMap[r.reportId].risks" :key="i" class="rs-li rs-li--risk"><text class="rs-dot">·</text><text class="rs-li-text">{{ p }}</text></view>
+              </view>
+            </template>
+            <view v-else class="rs-tldr" style="opacity:0.7">
+              <text class="rs-tldr-label">✦ AI 精读</text>
+              <text class="rs-tldr-body">线上队列精读中，稍后回来刷新即可；也可点下方「原文」直接阅读 PDF。</text>
+            </view>
+
+            <view class="rs-actions">
+              <view class="rs-btn rs-btn--primary" hover-class="rs-btn--hover" @tap.stop="onAllViewOriginal(r)">
+                <text>📄 查看研报原文</text>
+              </view>
+              <view class="rs-btn rs-btn--ghost" hover-class="rs-btn--hover" @tap.stop="onAllClickRow(r)">
+                <text>收起</text>
+              </view>
+            </view>
           </view>
         </view>
 
@@ -211,9 +250,9 @@ import { onShow } from '@dcloudio/uni-app'
 const isH5 = ref(typeof window !== 'undefined')
 import TabBarComp from '@/custom-tab-bar/index.vue'
 import {
-  listHoldingReports, ingestFxbaogaoReport, getFxbaogaoPdfUrl,
+  listHoldingReports, ingestFxbaogaoReport, getFxbaogaoPdfUrl, getFxbaogaoAi,
   listFxbaogaoDbReports, syncFxbaogaoAll, triggerFxbaogaoRefine,
-  type HoldingReportItem,
+  type HoldingReportItem, type FxbaogaoAiResult,
 } from '@/api/portfolio'
 
 // 复用同一份关键词表做前端推荐判断（保持和 server 端 detectAdvancedProductivity 一致）
@@ -528,13 +567,48 @@ function openReportUrl(url: string) {
   // #endif
 }
 
+// ============= Tab 1：展开 + AI 精读（按需拉取，带缓存） =============
+const allExpanded = ref<Set<number>>(new Set())
+const aiMap = ref<Record<number, FxbaogaoAiResult>>({})
+const aiLoadingId = ref(0)
+
+// 展开/收起；首次展开按需拉 AI 精读结果（命中缓存不重复请求）
 async function onAllClickRow(r: AllItemWithDate) {
-  // 1) 命中库缓存 PDF 直链 → 秒开（无需 loading，不调网络）
+  const s = new Set(allExpanded.value)
+  if (s.has(r.reportId)) s.delete(r.reportId)
+  else {
+    s.add(r.reportId)
+    if (!aiMap.value[r.reportId]) loadAi(r.reportId)
+  }
+  allExpanded.value = s
+}
+
+async function loadAi(reportId: number) {
+  if (aiLoadingId.value) return
+  aiLoadingId.value = reportId
+  try {
+    const res = await getFxbaogaoAi(reportId)
+    if (res?.ok && res.refined) {
+      aiMap.value = { ...aiMap.value, [reportId]: res.refined }
+      // 同步角标（避免整列表刷新）
+      allItems.value = allItems.value.map((it) => (it.reportId === reportId ? { ...it, aiStatus: 2 } : it))
+    } else if (res?.ok && !res.refined) {
+      // 未精读：触发线上精读批次（fire-and-forget），不阻塞 UI
+      triggerFxbaogaoRefine(5).catch(() => {})
+    }
+  } catch {
+    // 静默失败：卡片显示"精读中"提示
+  } finally {
+    aiLoadingId.value = 0
+  }
+}
+
+// 查看研报原文（优先库缓存 PDF 直链秒开；未命中向后端要，再不行落官网阅读页）
+async function onAllViewOriginal(r: AllItemWithDate) {
   if (r.pdfUrl) {
     openReportUrl(r.pdfUrl)
     return
   }
-  // 2) 未命中缓存 → 向后端要（后端优先查库缓存，未命中才调 MCP 并写回缓存）
   uni.showLoading({ title: '获取原文…' })
   try {
     const pdfInfo = await getFxbaogaoPdfUrl(r.reportId)
@@ -543,15 +617,11 @@ async function onAllClickRow(r: AllItemWithDate) {
       openReportUrl(pdfInfo.url)
       return
     }
-    // PDF 拿不到 → 落到 fxbaogao 官网阅读页（至少能看到标题+摘要）
-    const viewUrl = `https://www.fxbaogao.com/view?id=${r.reportId}`
     uni.hideLoading()
-    openReportUrl(viewUrl)
+    openReportUrl(`https://www.fxbaogao.com/view?id=${r.reportId}`)
   } catch (e: any) {
     uni.hideLoading()
     uni.showToast({ title: e?.message || '查看失败', icon: 'none' })
-  } finally {
-    uni.hideLoading()
   }
 }
 

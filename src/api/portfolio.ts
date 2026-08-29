@@ -585,6 +585,22 @@ export async function syncFxbaogaoAll(windowDays?: number): Promise<FxbaogaoSync
 export async function triggerFxbaogaoRefine(limit = 10): Promise<{ ok: boolean; started?: boolean; reason?: string }> {
   return jget(`/api/research/fxbaogao/refine-batch?limit=${limit}`, { method: 'POST', body: {}, timeoutMs: 10000 })
 }
+// 单条研报的 AI 精读结果（未精读时 refined 为 null）
+export interface FxbaogaoAiResult {
+  report_id: number
+  title: string
+  broker: string
+  source_url: string
+  tldr: string
+  key_points: string[]
+  opportunities: string[]
+  risks: string[]
+  status: string
+  model: string
+}
+export async function getFxbaogaoAi(reportId: number): Promise<{ ok: boolean; reportId: number; refined: FxbaogaoAiResult | null }> {
+  return jget(`/api/research/fxbaogao/ai/${reportId}`, { timeoutMs: 15000 })
+}
 // 同步进度 + 库存量
 export async function getFxbaogaoSyncStatus(): Promise<FxbaogaoSyncResult> {
   return jget('/api/research/fxbaogao/sync', { timeoutMs: 10000 })
