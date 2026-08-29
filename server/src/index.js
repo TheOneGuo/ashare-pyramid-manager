@@ -42,7 +42,7 @@ import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans
   upsertResearchReport, listResearchReports, listResearchReportsFiltered, countResearchReportsGrouped, deleteResearchReport,
   upsertStockReport, listStockReports, deleteStockReport,
   upsertFxbaogaoReports, listFxbaogaoReports, getFxbaogaoStats, getFxbaogaoReportById, maxUnrefinedCount,
-  updateFxbaogaoPdfUrl, upsertFxbaogaoAi, getFxbaogaoAi, listUnrefinedFxbaogao, markFxbaogaoAiPending, resetStuckFxbaogaoPending, cleanupOldFxbaogao, searchFxbaogaoByStock,
+  updateFxbaogaoPdfUrl, upsertFxbaogaoAi, getFxbaogaoAi, listUnrefinedFxbaogao, markFxbaogaoAiPending, resetStuckFxbaogaoPending, cleanupOldFxbaogao, searchFxbaogaoByStock, isFxbaogaoNoiseOrg,
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -881,9 +881,10 @@ app.post('/api/research/fxbaogao/auto-search-holdings-deep', requireAuth, async 
   }
 })
 
-// 7) 聚合：为持仓列表返回相关研报（research_reports 库里已有 + fxbaogao 增量搜索）
-// 用于 Tab 1 统一列表源
-// 返回每条：标准化字段（title / title_zh / orgName / pubDate / recommended / categories / source: 'db' | 'fxbaogao'）
+// 7) 聚合：为持仓列表返回相关标的研报
+// 用于「持仓和自选个股研报」tab：只返回「确实是研究这个股票」的研报。
+// 严格相关性：标题必须包含股票名称或 6 位代码（排除仅沾边的宏观/行业研报），
+// 外资的宏观/策略研报留在「全部研报 AI 精读」tab 展示。
 app.post('/api/research/reports/by-holdings', requireAuth, async (req, res) => {
   try {
     const { holdings, timeRange, maxPerHolding } = req.body || {}
@@ -896,17 +897,37 @@ app.post('/api/research/reports/by-holdings', requireAuth, async (req, res) => {
     const seen = new Set()
 
     for (const h of holdings) {
-      const code = String(h.stock_code || h.code || '').padStart(6, '0').slice(-6)
-      const name = String(h.short_name || h.name || '').trim()
+      let code = String(h.stock_code || h.code || '').trim()
+      let name = String(h.short_name || h.name || '').trim()
+      // 自选搜索只有代码时：解析股票名称（研报标题多含名称不含代码，解析后相关性过滤才准）
+      if (/^\d{1,6}$/.test(code)) {
+        code = code.padStart(6, '0').slice(-6)
+        if (!name || name === code) {
+          try {
+            const q = await fetchQuote(code)
+            if (q?.name) name = q.name
+          } catch {}
+        }
+      } else if (code) {
+        // 输入的是名称（非数字）：当名称用，不当代码
+        if (!name) name = code
+        code = ''
+      }
       if (!code && !name) continue
       try {
-        // 1) fxbaogao 搜索：code + name + 评级 目标价
-        const kw = [code, name, '评级 目标价'].filter(Boolean).join(' ')
+        // 1) fxbaogao 搜索：只搜 股票名+代码（不带"评级 目标价"，避免模糊匹配出沾边研报）
+        const kw = [name, code].filter(Boolean).join(' ')
         const list = await searchFxbaogaoReports({ keywords: kw, startTime, pageNum: 1 })
-        // 2) 卖方过滤
-        const BROKERS = ['高盛', '摩根士丹利', '摩根大通', '瑞银', '美银', '花旗', '汇丰', '中金', '中信建投', '中信证券', '华泰', '国泰君安', '海通', '广发', '招商', '申万宏源', '浙商', '国信', '东方', '国金', '兴业', '东吴', '开源', '天风', '中泰', '国海', '西部', '平安', '安信', '长城', '长江', '光大']
-        const buySide = list.filter((it) => BROKERS.some((b) => it.orgName.includes(b)))
-        for (const r of buySide.slice(0, limit)) {
+        // 2) 严格相关性过滤：标题必须包含股票名称或 6 位代码（即研报研究对象是这个股）；
+        //    只排除财报/公告类来源，不限券商（内资外资个股研报都要）
+        const related = list.filter((it) => {
+          if (isFxbaogaoNoiseOrg(it.orgName)) return false
+          const t = String(it.title || '')
+          if (name && name.length >= 2 && t.includes(name)) return true
+          if (code && t.includes(code)) return true
+          return false
+        })
+        for (const r of related.slice(0, limit)) {
           const key = `fx:${r.reportId}`
           if (seen.has(key)) continue
           seen.add(key)
