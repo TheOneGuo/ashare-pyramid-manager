@@ -548,9 +548,24 @@ const allDisplay = computed(() => {
 })
 
 // onAllClickRow: 直接查看研报（优先 PDF 直链，快速打开；失败则落到官网阅读页）
+// H5 打开外部 URL：uni-app 的 tap 是合成事件，Safari 等浏览器可能静默拦截
+// window.open（无报错、无新窗——即「点了没反应」）。
+// 策略：同步先开 about:blank 拿句柄（必须在用户手势调用栈内），再填 location；
+// 句柄为 null（被拦截）时降级为复制链接 + 提示。
 function openReportUrl(url: string) {
   // #ifdef H5
-  if (typeof window !== 'undefined') { window.open(url, '_blank'); return }
+  if (typeof window !== 'undefined') {
+    const win = window.open('', '_blank')
+    if (win) {
+      try { win.opener = null } catch {}
+      win.location.href = url
+      return
+    }
+    // 被弹窗拦截器拦截：降级复制链接
+    try { navigator.clipboard?.writeText(url).catch(() => {}) } catch {}
+    uni.showToast({ title: '弹窗被浏览器拦截，链接已复制，请粘贴到新标签页打开', icon: 'none', duration: 3000 })
+    return
+  }
   // #endif
   // #ifdef MP-WEIXIN
   if (/\.pdf(\?|$)/i.test(url)) {
@@ -603,23 +618,32 @@ async function loadAi(reportId: number) {
   }
 }
 
-// 查看研报原文（优先库缓存 PDF 直链秒开；未命中向后端要，再不行落官网阅读页）
+// 查看研报原文：命中缓存秒开；未命中先同步拿窗口句柄（防 await 后被弹窗拦截）
 async function onAllViewOriginal(r: AllItemWithDate) {
   if (r.pdfUrl) {
     openReportUrl(r.pdfUrl)
     return
   }
+  // #ifdef H5
+  const win = typeof window !== 'undefined' ? window.open('', '_blank') : null
+  // #endif
   uni.showLoading({ title: '获取原文…' })
   try {
     const pdfInfo = await getFxbaogaoPdfUrl(r.reportId)
-    if (pdfInfo?.url) {
-      uni.hideLoading()
-      openReportUrl(pdfInfo.url)
+    const url = pdfInfo?.url || `https://www.fxbaogao.com/view?id=${r.reportId}`
+    uni.hideLoading()
+    // #ifdef H5
+    if (win) {
+      try { win.opener = null } catch {}
+      win.location.href = url
       return
     }
-    uni.hideLoading()
-    openReportUrl(`https://www.fxbaogao.com/view?id=${r.reportId}`)
+    // #endif
+    openReportUrl(url)
   } catch (e: any) {
+    // #ifdef H5
+    if (win) { try { win.close() } catch {} }
+    // #endif
     uni.hideLoading()
     uni.showToast({ title: e?.message || '查看失败', icon: 'none' })
   }
@@ -711,7 +735,13 @@ function openMineDateMenu() {
 
 async function loadMineList(timeRange?: string) {
   if (mineLoading.value) return
-  if (!holdings.value.length) return
+  // 无持仓：直接结束 loading 态（否则永远卡在「首次进入自动加载中…」），
+  // 用户可在底部搜索框输入代码/名称查询
+  if (!holdings.value.length) {
+    mineLoaded.value = true
+    mineItems.value = []
+    return
+  }
   mineLoading.value = true
   mineError.value = ''
   try {
@@ -795,13 +825,23 @@ async function onMineViewOriginal(r: HoldingReportItem) {
       return
     }
   }
-  // 否则直接拿 PDF
+  // 走 PDF：先同步拿窗口句柄（await 后 window.open 会被弹窗拦截器静默拦截）
+  // #ifdef H5
+  const win = typeof window !== 'undefined' ? window.open('', '_blank') : null
+  // #endif
   uni.showLoading({ title: '获取 PDF…' })
   try {
     const pdfInfo = await getFxbaogaoPdfUrl(r.reportId)
     if (pdfInfo?.url) {
       // #ifdef H5
-      if (typeof window !== 'undefined') window.open(pdfInfo.url, '_blank')
+      if (win) {
+        try { win.opener = null } catch {}
+        win.location.href = pdfInfo.url
+      } else {
+        // 句柄被拦：降级复制链接
+        try { navigator.clipboard?.writeText(pdfInfo.url).catch(() => {}) } catch {}
+        uni.showToast({ title: '弹窗被浏览器拦截，链接已复制', icon: 'none', duration: 3000 })
+      }
       // #endif
       // #ifdef MP-WEIXIN
       uni.downloadFile({
@@ -815,9 +855,21 @@ async function onMineViewOriginal(r: HoldingReportItem) {
       })
       // #endif
     } else {
-      uni.showToast({ title: '未拿到 PDF 链接', icon: 'none' })
+      // PDF 拿不到 → 落官网阅读页兜底（至少能看到标题+摘要）；复用已开的窗口
+      const viewUrl = pdfInfo?.viewUrl || `https://www.fxbaogao.com/view?id=${r.reportId}`
+      // #ifdef H5
+      if (win) {
+        try { win.opener = null } catch {}
+        win.location.href = viewUrl
+      } else if (typeof window !== 'undefined') {
+        window.open(viewUrl, '_blank')
+      }
+      // #endif
     }
   } catch (e: any) {
+    // #ifdef H5
+    if (win) { try { win.close() } catch {} }
+    // #endif
     uni.showToast({ title: e?.message || '查看失败', icon: 'none' })
   } finally {
     uni.hideLoading()
