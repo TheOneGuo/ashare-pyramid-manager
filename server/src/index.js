@@ -42,7 +42,7 @@ import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans
   upsertResearchReport, listResearchReports, listResearchReportsFiltered, countResearchReportsGrouped, deleteResearchReport,
   upsertStockReport, listStockReports, deleteStockReport,
   upsertFxbaogaoReports, listFxbaogaoReports, getFxbaogaoStats, getFxbaogaoReportById, maxUnrefinedCount,
-  updateFxbaogaoPdfUrl, upsertFxbaogaoAi, getFxbaogaoAi, listUnrefinedFxbaogao, markFxbaogaoAiPending, cleanupOldFxbaogao,
+  updateFxbaogaoPdfUrl, upsertFxbaogaoAi, getFxbaogaoAi, listUnrefinedFxbaogao, markFxbaogaoAiPending, resetStuckFxbaogaoPending, cleanupOldFxbaogao,
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -109,6 +109,13 @@ async function startFxbaogaoJobFeed(limit) {
 const FX_PUMP_MS = 15 * 60 * 1000;
 async function pumpFxbaogaoOnline() {
   if (!isFxbaogaoAvailable()) return; // 未配 key 直接跳过
+  // 0) 自愈：把上一轮 PDF 失败/中断卡在「精读中」的重置回队列（仅在无批次运行时）
+  if (!fxbaogaoJobRunning()) {
+    try {
+      const n = await resetStuckFxbaogaoPending();
+      if (n > 0) console.log(`[fxbaogao pump] requeued ${n} stuck pending reports`);
+    } catch {}
+  }
   // 1) 增量同步最近 1 天（upsert 幂等，重复安全）
   try {
     await syncFxbaogaoToDb({

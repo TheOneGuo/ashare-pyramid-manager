@@ -1138,6 +1138,12 @@ export async function markFxbaogaoAiPending(report_id) {
   await client.execute({ sql: `UPDATE fxbaogao_reports SET ai_status=1 WHERE report_id=?`, args: [Number(report_id)] });
 }
 
+// 自愈：把卡在「精读中」的行（PDF 失败/进程中断）重置回未精读队列，供下一轮 pump 重试
+export async function resetStuckFxbaogaoPending() {
+  const r = await client.execute(`UPDATE fxbaogao_reports SET ai_status=0 WHERE ai_status=1`);
+  return r.rowsAffected || 0;
+}
+
 // 清理超过 cutoffMs 的研报（线上库仅保留最近 3 个月）；级联删精读结果
 export async function cleanupOldFxbaogao(cutoffMs) {
   try {
