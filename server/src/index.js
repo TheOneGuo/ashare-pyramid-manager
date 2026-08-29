@@ -34,12 +34,16 @@ import { handleResearch, refineExternalReport, refineWithLlm, buildRefinedReport
 import {
   isFxbaogaoAvailable, fxbaogaoKeyTail,
   searchFxbaogaoReports, getFxbaogaoParagraphs, getFxbaogaoPdfUrl,
-  downloadFxbaogaoPdf, extractPdfText,
+  downloadFxbaogaoPdf, extractPdfText, syncFxbaogaoToDb, getSyncProgress,
+  refineFxbaogaoBatch,
 } from './fxbaogao.js';
 import { buildAccount, previewChange, checkWithdraw, TERMS, EVENT_DEPOSIT, EVENT_WITHDRAW, EVENT_FEE_RATE } from './account-ledger.js';
 import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans, removePlan,
   upsertResearchReport, listResearchReports, listResearchReportsFiltered, countResearchReportsGrouped, deleteResearchReport,
-  upsertStockReport, listStockReports, deleteStockReport } from './db.js';
+  upsertStockReport, listStockReports, deleteStockReport,
+  upsertFxbaogaoReports, listFxbaogaoReports, getFxbaogaoStats, getFxbaogaoReportById, maxUnrefinedCount,
+  updateFxbaogaoPdfUrl, upsertFxbaogaoAi, getFxbaogaoAi, listUnrefinedFxbaogao, markFxbaogaoAiPending, cleanupOldFxbaogao,
+} from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 9999);
@@ -58,6 +62,75 @@ let refreshing = false;
 
 let lastRefreshAt = 0;
 let lastRefreshSummary = null;
+
+// =====================================================
+// fxbaogao 后台精读任务状态（供 15 分钟定时任务 / 手动触发共用）
+// =====================================================
+const fxJob = {
+  running: false,
+  startedAt: 0,
+  finishedAt: 0,
+  ok: 0,
+  failed: 0,
+  total: 0,
+  lastError: '',
+};
+function fxbaogaoJobRunning() { return fxJob.running; }
+function fxbaogaoJobStatus() { return { ...fxJob }; }
+
+// 消费未精读队列（limit 限流）——供手动触发，也供定时任务调（定时任务 priority 更高）
+async function startFxbaogaoJobFeed(limit) {
+  if (fxJob.running) return;
+  fxJob.running = true;
+  fxJob.startedAt = Date.now();
+  fxJob.ok = fxJob.failed = fxJob.total = 0;
+  fxJob.lastError = '';
+  try {
+    const items = await listUnrefinedFxbaogao(limit);
+    if (!items.length) return;
+    fxJob.total = items.length;
+    const res = await refineFxbaogaoBatch(items, {
+      markPending: markFxbaogaoAiPending,
+      savePdfUrl: updateFxbaogaoPdfUrl,
+      saveResult: (r) => upsertFxbaogaoAi({ ...r, report_id: r.reportId }),
+    }, { delayMs: 300 });
+    fxJob.ok = res.ok;
+    fxJob.failed = res.failed;
+  } catch (e) {
+    fxJob.lastError = String(e?.message || e).slice(0, 200);
+    fxJob.failed++;
+  } finally {
+    fxJob.running = false;
+    fxJob.finishedAt = Date.now();
+  }
+}
+
+// 线上每 15 分钟管线：增量同步最近 1 天 → 精读未读 20 条 → 清理 3 个月外旧数据
+const FX_PUMP_MS = 15 * 60 * 1000;
+async function pumpFxbaogaoOnline() {
+  if (!isFxbaogaoAvailable()) return; // 未配 key 直接跳过
+  // 1) 增量同步最近 1 天（upsert 幂等，重复安全）
+  try {
+    await syncFxbaogaoToDb({
+      windowDays: 1,
+      upsert: (rows) => upsertFxbaogaoReports(rows),
+    });
+  } catch (e) {
+    console.warn('[fxbaogao pump] sync failed:', e?.message?.slice(0, 120));
+  }
+  // 2) 精读未读队列（limit 20，防超时）
+  if (!fxbaogaoJobRunning()) {
+    await startFxbaogaoJobFeed(20);
+  }
+  // 3) 清理最近 3 个月之外的研报
+  const cutoff = Date.now() - 90 * 86400000;
+  try {
+    const n = await cleanupOldFxbaogao(cutoff);
+    if (n > 0) console.log(`[fxbaogao pump] cleaned ${n} old reports (>3 months)`);
+  } catch (e) {
+    console.warn('[fxbaogao pump] cleanup failed:', e?.message?.slice(0, 120));
+  }
+}
 
 // =====================================================
 // Health
@@ -503,7 +576,7 @@ app.get('/api/research/fxbaogao/search', async (req, res) => {
     const keywords = String(req.query.keywords || '').trim()
     const startTime = String(req.query.startTime || req.query.timeRange || 'last1mon')
     const endTime = req.query.endTime ? String(req.query.endTime) : undefined
-    const pageNum = Math.min(Math.max(Number(req.query.pageNum) || 1, 1), 10)
+    const pageNum = Math.min(Math.max(Number(req.query.pageNum) || 1, 1), 200)
     const orgNames = req.query.orgNames ? String(req.query.orgNames).split(',').map((s) => s.trim()).filter(Boolean) : undefined
     const items = await searchFxbaogaoReports({ keywords, startTime, endTime, pageNum, orgNames })
     res.json({ ok: true, items, count: items.length, pageNum, startTime, keywords })
@@ -528,13 +601,103 @@ app.get('/api/research/fxbaogao/paragraphs', async (req, res) => {
   }
 })
 
-// 3) 拿 PDF 直链（前端用这个去浏览器原生下载）
+// 2a) 分片同步入库（全量研报 → fxbaogao_reports 表）。
+//     按天分片、逐页翻取（20/页）、调用间限速以免 API 超时；幂等 upsert，可重复触发续拉。
+app.post('/api/research/fxbaogao/sync', async (req, res) => {
+  if (!isFxbaogaoAvailable()) return res.status(503).json({ ok: false, error: 'FXBAOGAO_API_KEY 未配置' })
+  const windowDays = Number(req.query.windowDays || req.body?.windowDays) || undefined
+  // 异步执行：立即返回 running 状态，前端轮询 GET /sync 拿进度
+  syncFxbaogaoToDb({
+    windowDays,
+    upsert: (rows) => upsertFxbaogaoReports(rows),
+  }).catch((e) => console.warn('[fxbaogao sync] fatal', e?.message || e))
+  const stats = await getFxbaogaoStats().catch(() => ({ total: 0, latestPubTime: 0 }))
+  res.json({ ok: true, started: true, windowDays: windowDays || 30, progress: getSyncProgress(), ...stats })
+})
+
+// 2b) 同步进度 + 库存量
+app.get('/api/research/fxbaogao/sync', async (_req, res) => {
+  const stats = await getFxbaogaoStats().catch(() => ({ total: 0, latestPubTime: 0 }))
+  res.json({ ok: true, progress: getSyncProgress(), ...stats })
+})
+
+// 2c) 从库分页读取（已同步的全量研报），支持时间范围过滤（startMs/endMs）
+app.get('/api/research/fxbaogao/reports', async (req, res) => {
+  try {
+    const pageNum = Math.max(Number(req.query.pageNum) || 1, 1)
+    const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 20, 1), 100)
+    const startMs = Number(req.query.startMs) || 0
+    const endMs = Number(req.query.endMs) || 0
+    const items = await listFxbaogaoReports({ offset: (pageNum - 1) * pageSize, limit: pageSize, startMs, endMs })
+    const stats = await getFxbaogaoStats().catch(() => ({ total: 0, latestPubTime: 0 }))
+    res.json({ ok: true, items, count: items.length, pageNum, pageSize, total: stats.total, latestPubTime: stats.latestPubTime })
+  } catch (e) {
+    console.warn('[fxbaogao reports]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || '读取失败' })
+  }
+})
+
+// 2d) 库摘要：总数 + 最新时间 + 未精读数量 + 保留窗口（前端无需同步按钮）
+app.get('/api/research/fxbaogao/summary', async (_req, res) => {
+  try {
+    const stats = await getFxbaogaoStats().catch(() => ({ total: 0, latestPubTime: 0 }))
+    const unrefined = await listUnrefinedFxbaogao(1)
+    res.json({ ok: true, ...stats, unrefinedCount: unrefined.length >= 0 ? (await maxUnrefinedCount()) : 0, aiStatus: fxbaogaoJobStatus() })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || '读取失败' })
+  }
+})
+
+// 2e) 单条研报 AI 精读结果（未精读时返回 null，前端可触发精读）
+app.get('/api/research/fxbaogao/ai/:reportId', async (req, res) => {
+  try {
+    const id = Number(req.params.reportId)
+    if (!id) return res.status(400).json({ ok: false, error: 'reportId 必填' })
+    const ai = await getFxbaogaoAi(id)
+    res.json({ ok: true, reportId: id, refined: ai })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message || '读取失败' })
+  }
+})
+
+// 2f) 手动触发后台精读批次（线上定时任务也可调用；无人值守时前端点详情自动触发单条）
+app.post('/api/research/fxbaogao/refine-batch', async (req, res) => {
+  try {
+    if (!isFxbaogaoAvailable()) return res.status(503).json({ ok: false, error: 'FXBAOGAO_API_KEY 未配置' })
+    const limit = Math.min(Math.max(Number(req.query.limit || req.body?.limit) || 10, 1), 50)
+    if (fxbaogaoJobRunning()) {
+      return res.json({ ok: true, started: false, reason: 'already_running', status: fxbaogaoJobStatus() })
+    }
+    startFxbaogaoJobFeed(limit)
+    res.json({ ok: true, started: true, status: fxbaogaoJobStatus() })
+  } catch (e) {
+    console.warn('[fxbaogao refine-batch]', e?.message || e)
+    res.status(500).json({ ok: false, error: e?.message || '触发失败' })
+  }
+})
+
+// 2g) 定时任务状态（供前端展示"线上每 15 分钟自动同步+精读"）
+app.get('/api/research/fxbaogao/job-status', async (_req, res) => {
+  res.json({ ok: true, status: fxbaogaoJobStatus() })
+})
+
+// 3) 拿 PDF 直链（前端用这个去浏览器原生下载；库缓存优先，秒开）
 app.get('/api/research/fxbaogao/pdf-url', async (req, res) => {
   try {
     if (!isFxbaogaoAvailable()) return res.status(503).json({ ok: false, error: 'FXBAOGAO_API_KEY 未配置' })
     const reportId = Number(req.query.reportId)
     if (!reportId) return res.status(400).json({ ok: false, error: 'reportId 必填' })
-    const url = await getFxbaogaoPdfUrl({ reportId })
+    let url = ''
+    // 1) 库里缓存优先
+    const cached = await listFxbaogaoReports({ offset: 0, limit: 1 }).catch(() => [])
+    // (直接查单条的成本较高，这里用 getFxbaogaoAi 等价触发) —— 改为直接查行
+    const row = await getFxbaogaoReportById(reportId).catch(() => null)
+    if (row && row.pdfUrl) url = row.pdfUrl
+    // 2) 未命中则调 MCP 并写缓存
+    if (!url) {
+      url = await getFxbaogaoPdfUrl({ reportId })
+      if (url) updateFxbaogaoPdfUrl(reportId, url).catch(() => {})
+    }
     res.json({ ok: true, reportId, url, viewUrl: `https://www.fxbaogao.com/view?id=${reportId}` })
   } catch (e) {
     console.warn('[fxbaogao pdf-url]', e?.message || e)
@@ -1028,6 +1191,16 @@ async function main() {
   setInterval(runTrackOnce, TRACK_POLL_MS);
   // 启动后 5s 跑一次，尽快体现跟踪
   setTimeout(runTrackOnce, 5000);
+
+  // 线上 fxbaogao 管线：每 15 分钟增量同步 + AI 精读 + 清理 3 个月外旧数据
+  // 说明：增量同步用 upsert（幂等），重复拉同一天不会有重复；分片有间隔限速，不会打爆 API。
+  setInterval(() => {
+    pumpFxbaogaoOnline().catch((e) => console.warn('[fxbaogao pump] error:', e?.message || e));
+  }, FX_PUMP_MS);
+  // 启动 30s 后先跑一轮预热的精读
+  setTimeout(() => {
+    pumpFxbaogaoOnline().catch((e) => console.warn('[fxbaogao pump] warmup error:', e?.message || e));
+  }, 30_000);
 }
 
 // =====================================================

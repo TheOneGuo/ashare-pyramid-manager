@@ -16,6 +16,38 @@
           <text>我的持仓研报</text>
         </view>
       </view>
+
+      <!-- 集成到 Head 的筛选条：日期 + 机构 + 只看推荐 + 只看海外机构研报（同一行，无边框） -->
+      <view v-if="tab === 'all'" class="rs-filter-bar">
+        <view class="rs-filter-row">
+          <view class="rs-filter-item" @tap="openAllDateMenu">
+            <text class="rs-filter-label">日期</text>
+            <view class="rs-filter-pill">
+              <text class="rs-filter-pill-text">{{ ALL_DATE_RANGE_LABELS[allDateIdx] || '1周' }}</text>
+              <text class="rs-filter-pill-caret">▾</text>
+            </view>
+          </view>
+          <view class="rs-filter-item" @tap="openAllBrokerMenu">
+            <text class="rs-filter-label">机构</text>
+            <view class="rs-filter-pill">
+              <text class="rs-filter-pill-text">{{ allBrokerLabels[allBrokerIdx] || '全部' }}</text>
+              <text class="rs-filter-pill-caret">▾</text>
+            </view>
+          </view>
+          <view class="rs-filter-item rs-filter-item--switch" @tap="onAllOnlyRecToggle">
+            <view class="rs-checkbox" :class="{ 'rs-checkbox--on': allOnlyRecommended }">
+              <view v-if="allOnlyRecommended" class="rs-checkbox-tick">✓</view>
+            </view>
+            <text class="rs-filter-switch-label">只看推荐</text>
+          </view>
+          <view class="rs-filter-item rs-filter-item--switch" @tap="onAllOnlyForeignToggle">
+            <view class="rs-checkbox" :class="{ 'rs-checkbox--on': allOnlyForeign }">
+              <view v-if="allOnlyForeign" class="rs-checkbox-tick">✓</view>
+            </view>
+            <text class="rs-filter-switch-label">只看海外机构研报</text>
+          </view>
+        </view>
+      </view>
     </view>
 
     <!-- 可滚动内容区 -->
@@ -24,34 +56,11 @@
       <!-- Tab 1：全部研报 AI 精读 -->
       <!-- ============================================================ -->
       <view v-if="tab === 'all'" class="rs-pane">
-        <!-- 顶部筛选条：日期 + 机构 + 只看推荐（同一行，缩小字号） -->
-        <view class="rs-filter-bar">
-          <view class="rs-filter-row">
-            <view class="rs-filter-item" @tap="openAllDateMenu">
-              <text class="rs-filter-label">日期</text>
-              <view class="rs-filter-pill">
-                <text class="rs-filter-pill-text">{{ ALL_DATE_RANGE_LABELS[allDateIdx] || '1周' }}</text>
-                <text class="rs-filter-pill-caret">▾</text>
-              </view>
-            </view>
-            <view class="rs-filter-item" @tap="openAllBrokerMenu">
-              <text class="rs-filter-label">机构</text>
-              <view class="rs-filter-pill">
-                <text class="rs-filter-pill-text">{{ allBrokerLabels[allBrokerIdx] || '全部' }}</text>
-                <text class="rs-filter-pill-caret">▾</text>
-              </view>
-            </view>
-            <view class="rs-filter-item rs-filter-item--switch" @tap="onAllOnlyRecToggle">
-              <view class="rs-checkbox" :class="{ 'rs-checkbox--on': allOnlyRecommended }">
-                <view v-if="allOnlyRecommended" class="rs-checkbox-tick">✓</view>
-              </view>
-              <text class="rs-filter-switch-label">只看推荐</text>
-            </view>
-          </view>
-        </view>
-
         <view v-if="allLoading && allDisplay.length === 0" class="rs-empty"><text>正在加载研报列表…</text></view>
-        <view v-else-if="allDisplay.length === 0" class="rs-empty"><text>暂无研报</text></view>
+        <view v-else-if="allDisplay.length === 0" class="rs-empty">
+          <text>暂无研报</text>
+          <text v-if="!allLoading" class="rs-empty-hint">线上每日自动同步最新研报，稍后再来看看</text>
+        </view>
 
         <view v-for="r in allDisplay" :key="r.reportId" class="rs-card rs-report-card" @tap="onAllClickRow(r)">
           <view class="rs-report-head">
@@ -70,6 +79,9 @@
             <text class="rs-report-chevron">▸</text>
           </view>
         </view>
+
+        <view v-if="allLoadingMore" class="rs-loadmore"><text>加载更多研报…</text></view>
+        <view v-else-if="allDisplay.length > 0 && !dbHasMore" class="rs-loadmore rs-loadmore--end"><text>已全部加载</text></view>
       </view>
 
       <!-- ============================================================ -->
@@ -198,8 +210,9 @@ import { onShow } from '@dcloudio/uni-app'
 const isH5 = ref(typeof window !== 'undefined')
 import TabBarComp from '@/custom-tab-bar/index.vue'
 import {
-  listAllReports, listHoldingReports, ingestFxbaogaoReport, getFxbaogaoPdfUrl,
-  type AllReportItem, type HoldingReportItem,
+  listHoldingReports, ingestFxbaogaoReport, getFxbaogaoPdfUrl,
+  listFxbaogaoDbReports,
+  type HoldingReportItem,
 } from '@/api/portfolio'
 
 // 复用同一份关键词表做前端推荐判断（保持和 server 端 detectAdvancedProductivity 一致）
@@ -253,21 +266,18 @@ function onMenuSelect(opt: MenuOption) {
 
 // Tab 1 打开日期菜单
 function openAllDateMenu() {
-  const opts: MenuOption[] = ALL_DATE_RANGES.map((t) => ({
-    value: ALL_DATE_RANGES.indexOf(t),
+  const opts: MenuOption[] = ALL_DATE_RANGES.map((t, i) => ({
+    value: i,
     label: t.label,
-    count: allCounts.value.byDate[t.value] || 0,
+    count: allCounts.value.byDate[ALL_DATE_DAYS[i]] || 0,
   }))
   openMenu({
     title: '选择日期范围',
     options: opts,
     value: allDateIdx.value,
     onSelect: (opt) => {
-      const idx = Number(opt.value)
-      allDateIdx.value = idx
-      const v = ALL_DATE_RANGES[idx]?.value || 'last7day'
-      allDateRange.value = v
-      allItems.value = allItemsWithDate.value.filter((r) => r._dateRange === v)
+      allDateIdx.value = Number(opt.value)
+      loadAllListFromDb()
     },
   })
 }
@@ -294,28 +304,46 @@ function openAllBrokerMenu() {
 const tab = ref<'all' | 'mine'>('all')
 
 // ============= Tab 1：全部研报 =============
-// 1天/1周 因 fxbaogao 不支持 last1day，且财报披露季内 1周内可能只有半年报公告（被客户端过滤掉）
-// 所以 1天/1周/1月 共享 last1mon 数据源；3月/全部 用各自范围。
+// 日期范围（Tab 1/Tab 2 共用）：value 传给后端 by-holdings 时间范围 key
+// 「最新」= 默认，不设时间过滤，只显示库内最新 200 条；其余按回拉天数过滤
 const ALL_DATE_RANGES = [
-  { value: 'last1mon', label: '1天' },
-  { value: 'last1mon', label: '1周' },
+  { value: 'last1day', label: '最新' },
+  { value: 'last1day', label: '1天' },
+  { value: 'last1week', label: '1周' },
   { value: 'last1mon', label: '1月' },
   { value: 'last3mon', label: '3月' },
-  { value: 'last1year', label: '全部' },
 ]
 const ALL_DATE_RANGE_LABELS = ALL_DATE_RANGES.map((t) => t.label)
-const allDateRange = ref('last1mon') // 实际传给 fxbaogao 的 startTime
-const allDateIdx = ref(2) // 默认 1月（即 5 个 label 中的第 3 个）
+// Tab 1 从数据库读取研报，日期筛选按「回拉天数」（0 = 最新，仅取前 LATEST_CAP 条）
+const ALL_DATE_DAYS = [0, 1, 7, 30, 90]
+const allDateIdx = ref(0) // 默认「最新」
+const LATEST_CAP = 200 // 「最新」档最多展示条数
 const allBroker = ref<string>('')
 const allBrokerIdx = ref(0) // 0 = '全部'，>0 = 某个 broker
 const allOnlyRecommended = ref(false)
-interface AllItemWithDate extends AllReportItem {
-  _dateRange: string
+const allOnlyForeign = ref(false) // 只看海外机构研报
+interface AllItemWithDate {
+  reportId: number
+  title: string
+  orgName: string
+  broker: string
+  pageNum: number
+  pubTime: number        // 秒（库内单位）
+  pubDate: string
+  recommended: boolean
+  categories: string[]
+  pdfUrl?: string // PDF 直链缓存（详情秒开用）
   _isIndividual?: boolean // 是否是个股研究（标题含 A 股代码或名称）
 }
 const allItems = ref<AllItemWithDate[]>([])
 const allLoading = ref(false)
 const allError = ref('')
+
+// ---- 数据库读取状态（fxbaogao 已同步入库的研报） ----
+const DB_PAGE_SIZE = 50
+const dbPage = ref(0)
+const dbHasMore = ref(true)
+const allLoadingMore = ref(false)
 
 const allBrokers = computed(() => {
   const set = new Set<string>()
@@ -351,9 +379,14 @@ const allCounts = computed(() => {
   const byDate: Record<string, number> = {}
   const byBroker: Record<string, number> = {}
   let total = 0
+  const now = Date.now()
   for (const r of allItems.value) {
     if (r._isIndividual) continue // 不计入筛选统计
-    byDate[r._dateRange] = (byDate[r._dateRange] || 0) + 1
+    // 按「回拉天数」统计当前已加载数据落入各日期档的数量
+    const pubMs = Number(r.pubTime || 0) * 1000
+    for (const days of ALL_DATE_DAYS) {
+      if (days === 0 || pubMs >= now - days * 86400000) byDate[days] = (byDate[days] || 0) + 1
+    }
     const b = r.broker || r.orgName
     if (b) byBroker[b] = (byBroker[b] || 0) + 1
     total++
@@ -361,102 +394,158 @@ const allCounts = computed(() => {
   return { byDate, byBroker, total }
 })
 
-interface AllItemWithDate extends AllReportItem {
-  _dateRange: string
+// 把给定「回拉天数」换算成毫秒时间范围（0 = 全部）
+function daysToRangeMs(days: number): { startMs: number; endMs: number } {
+  const now = Date.now()
+  if (!days) return { startMs: 0, endMs: now }
+  return { startMs: now - days * 86400000, endMs: now }
 }
 
-const allItemsWithDate = ref<AllItemWithDate[]>([])
+// 数据库 item → 展示 item（补 broker / recommended / categories / _isIndividual）
+function toAllItem(it: any): AllItemWithDate {
+  const title = it.title || ''
+  const det = clientDetect(title + ' ' + (it.orgName || ''))
+  return {
+    reportId: Number(it.reportId),
+    title,
+    orgName: String(it.orgName || ''),
+    broker: String(it.orgName || ''),
+    pageNum: Number(it.pageNum || 0),
+    pubTime: Number(it.pubTime || 0),
+    pubDate: String(it.pubTimeStr || '').replace(/\/+$/, ''),
+    recommended: det.recommended,
+    categories: det.categories,
+    _isIndividual: isIndividualReport(title, it.orgName || ''),
+    pdfUrl: String(it.pdfUrl || ''),
+  }
+}
 
-async function loadAllList() {
-  allLoading.value = true
-  allError.value = ''
+// 从数据库分页读取研报（按选中日期范围过滤 + 触底分页）
+async function loadAllListFromDb() {
+  const days = ALL_DATE_DAYS[allDateIdx.value] ?? 0
+  const isLatest = days === 0
+  const { startMs, endMs } = daysToRangeMs(days)
+  allLoading.value = !allLoadingMore.value
   try {
-    // 并行拉 unique value 的时间范围（1天/1周/1月 都映射到 last1mon，去重避免重复请求）
-    const uniqueValues = Array.from(new Set(ALL_DATE_RANGES.map((t) => t.value)))
-    const tasks = uniqueValues.map(async (v) => {
-      try {
-        const r = await listAllReports({ startTime: v, pageNum: 1 })
-        const enriched = (r.items || []).map((it) => {
-          const title = it.title || ''
-          const det = clientDetect(title + ' ' + (it.orgName || ''))
-          return {
-            ...it,
-            _dateRange: v,
-            _isIndividual: isIndividualReport(title, it.orgName || ''),
-            broker: it.broker || it.orgName,
-            recommended: det.recommended,
-            categories: det.categories,
-          }
-        })
-        return enriched
-      } catch {
-        return []
-      }
-    })
-    const results = await Promise.all(tasks)
-    // 把去重后的 items 重新展开到 ALL_DATE_RANGES 各自 _dateRange 槽位（保证每个 label 都有 count）
-    const byValue: Record<string, AllItemWithDate[]> = {}
-    uniqueValues.forEach((v, i) => { byValue[v] = results[i] || [] })
-    const all = ALL_DATE_RANGES.flatMap((t) => byValue[t.value] || [])
-    // 去重（同一 reportId 可能跨 value 重复出现——选第一条 _dateRange 出现位置）
-    const seen = new Set<number>()
-    allItemsWithDate.value = all.filter((r) => {
-      if (seen.has(r.reportId)) return false
-      seen.add(r.reportId)
-      return true
-    })
-    // 默认 allItems = 当前选定日期范围的项目
-    allItems.value = allItemsWithDate.value.filter((r) => r._dateRange === allDateRange.value)
+    const r = await listFxbaogaoDbReports({ pageNum: 1, pageSize: DB_PAGE_SIZE, startMs, endMs })
+    if (!r?.ok) throw new Error('读取研报失败')
+    allItems.value = (r.items || []).map(toAllItem)
+    dbPage.value = 1
+    const got = (r.items || []).length
+    dbHasMore.value = got >= DB_PAGE_SIZE && (!isLatest || got < LATEST_CAP)
   } catch (e: any) {
     allError.value = e?.message || '加载失败'
     allItems.value = []
+    dbHasMore.value = false
   } finally {
     allLoading.value = false
+    allLoadingMore.value = false
   }
+}
+
+// 触底加载下一页（追加到当前日期范围）
+async function loadAllMoreDb() {
+  if (allLoadingMore.value || allLoading.value) return
+  if (!dbHasMore.value) return
+  const next = dbPage.value + 1
+  const days = ALL_DATE_DAYS[allDateIdx.value] ?? 0
+  const isLatest = days === 0
+  const { startMs, endMs } = daysToRangeMs(days)
+  allLoadingMore.value = true
+  try {
+    const r = await listFxbaogaoDbReports({ pageNum: next, pageSize: DB_PAGE_SIZE, startMs, endMs })
+    const items = (r?.items || []).map(toAllItem)
+    const seen = new Set(allItems.value.map((it) => it.reportId))
+    const fresh = items.filter((it) => !seen.has(it.reportId))
+    allItems.value = [...allItems.value, ...fresh]
+    dbPage.value = next
+    dbHasMore.value = items.length >= DB_PAGE_SIZE && (!isLatest || allItems.value.length < LATEST_CAP)
+  } catch {
+    // 单页失败不阻塞：保留 hasMore 以便再次触底重试
+  } finally {
+    allLoadingMore.value = false
+  }
+}
+
+// H5：监听 .rs-body 滚动到底部附近时触发加载更多
+function bindAllScrollListener() {
+  // #ifdef H5
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
+  const el = document.querySelector('.rs-body') as HTMLElement | null
+  if (!el) return
+  const onScroll = () => {
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 160) {
+      loadAllMoreDb()
+    }
+  }
+  el.addEventListener('scroll', onScroll)
+  // #endif
 }
 
 function onAllOnlyRecToggle() {
   allOnlyRecommended.value = !allOnlyRecommended.value
 }
+function onAllOnlyForeignToggle() {
+  allOnlyForeign.value = !allOnlyForeign.value
+}
 
-// 列表显示 = 选中的日期 + 选中的机构 + 只看推荐 + 排除个股
+// 海外/外资机构名单（中文名 + 英文关键词），用于「只看海外机构研报」
+const FOREIGN_BROKER_RE = /高盛|摩根|瑞银|美银|花旗|巴克莱|德意志|瑞信|野村|大和|富瑞|法兴|麦格理|里昂|汇丰|渣打|伯恩斯坦|奥本海默|盛博|大摩|小摩|Jefferies|Morgan|Goldman|UBS|JPMorgan|Citibank|BofA|Barclays|Credit\s*Suisse|Deutsche|Nomura|Daiwa|CLSA|Macquarie|HSBC|Societe|Berenberg|Bernstein/i
+function isForeignBroker(name: string): boolean {
+  if (!name) return false
+  return FOREIGN_BROKER_RE.test(name)
+}
+
+// 列表显示 = 选中的日期 + 选中的机构 + 只看推荐 + 只看海外机构 + 排除个股
 const allDisplay = computed(() => {
   let arr = allItems.value.filter((r) => !r._isIndividual)
   if (allBroker.value) arr = arr.filter((r) => (r.broker || r.orgName) === allBroker.value)
   if (allOnlyRecommended.value) arr = arr.filter((r) => r.recommended)
+  if (allOnlyForeign.value) arr = arr.filter((r) => isForeignBroker(r.broker || r.orgName || ''))
   return arr
 })
 
-// onAllClickRow: 直接查看研报（PDF / TXT→MD）
-async function onAllClickRow(r: AllReportItem) {
-  // 直接触发 PDF / MD 查看（下载 + 打开）
-  // 这里先拿 PDF URL：有就开 PDF；否则按 TXT 走 MD 路径（无 raw 时尝试 get_paragraphs 转 MD）
+// onAllClickRow: 直接查看研报（优先 PDF 直链，快速打开；失败则落到官网阅读页）
+function openReportUrl(url: string) {
+  // #ifdef H5
+  if (typeof window !== 'undefined') { window.open(url, '_blank'); return }
+  // #endif
+  // #ifdef MP-WEIXIN
+  if (/\.pdf(\?|$)/i.test(url)) {
+    uni.downloadFile({
+      url,
+      success: (d) => {
+        if (d.tempFilePath) uni.openDocument({ filePath: d.tempFilePath, fileType: 'pdf', showMenu: true, success: () => uni.showToast({ title: '已打开 PDF', icon: 'success' }) })
+      },
+      fail: () => uni.showToast({ title: 'PDF 下载失败', icon: 'none' }),
+    })
+  } else {
+    uni.setClipboardData({ data: url, success: () => uni.showToast({ title: '链接已复制（请在浏览器打开）', icon: 'none' }) })
+  }
+  // #endif
+}
+
+async function onAllClickRow(r: AllItemWithDate) {
+  // 1) 命中库缓存 PDF 直链 → 秒开（无需 loading，不调网络）
+  if (r.pdfUrl) {
+    openReportUrl(r.pdfUrl)
+    return
+  }
+  // 2) 未命中缓存 → 向后端要（后端优先查库缓存，未命中才调 MCP 并写回缓存）
   uni.showLoading({ title: '获取原文…' })
   try {
     const pdfInfo = await getFxbaogaoPdfUrl(r.reportId)
     if (pdfInfo?.url) {
-      // PDF：浏览器内嵌/直接打开
-      // #ifdef H5
-      if (typeof window !== 'undefined') {
-        window.open(pdfInfo.url, '_blank')
-      }
-      // #endif
-      // #ifdef MP-WEIXIN
-      // 微信小程序：先下载到 temp，再用 wx.openDocument 打开
-      uni.downloadFile({
-        url: pdfInfo.url,
-        success: (d) => {
-          if (d.tempFilePath) {
-            uni.openDocument({ filePath: d.tempFilePath, fileType: 'pdf', showMenu: true, success: () => uni.showToast({ title: '已打开 PDF', icon: 'success' }) })
-          }
-        },
-        fail: () => uni.showToast({ title: 'PDF 下载失败', icon: 'none' }),
-      })
-      // #endif
-    } else {
-      uni.showToast({ title: '未拿到 PDF 链接', icon: 'none' })
+      uni.hideLoading()
+      openReportUrl(pdfInfo.url)
+      return
     }
+    // PDF 拿不到 → 落到 fxbaogao 官网阅读页（至少能看到标题+摘要）
+    const viewUrl = `https://www.fxbaogao.com/view?id=${r.reportId}`
+    uni.hideLoading()
+    openReportUrl(viewUrl)
   } catch (e: any) {
+    uni.hideLoading()
     uni.showToast({ title: e?.message || '查看失败', icon: 'none' })
   } finally {
     uni.hideLoading()
@@ -666,8 +755,8 @@ async function onMineViewOriginal(r: HoldingReportItem) {
 
 function onSwitchTab(t: 'all' | 'mine') {
   tab.value = t
-  if (t === 'all' && allItemsWithDate.value.length === 0 && !allLoading.value) {
-    loadAllList()
+  if (t === 'all' && allItems.value.length === 0 && !allLoading.value) {
+    loadAllListFromDb()
   }
   if (t === 'mine' && !mineLoaded.value && !mineLoading.value) {
     loadMineList()
@@ -676,13 +765,13 @@ function onSwitchTab(t: 'all' | 'mine') {
 
 onMounted(() => {
   // 默认 Tab 1
-  loadAllList()
+  loadAllListFromDb()
+  bindAllScrollListener()
   listHoldings().then((h) => {
     holdings.value = h || []
-    // holdings 拿到后重过滤 Tab 1（让 isIndividualReport 生效）
-    if (allItemsWithDate.value.length) {
-      allItemsWithDate.value = allItemsWithDate.value.map((r) => ({ ...r, _isIndividual: isIndividualReport(r.title || '', r.orgName || '') }))
-      allItems.value = allItemsWithDate.value.filter((r) => r._dateRange === allDateRange.value)
+    // holdings 拿到后重过滤已加载的 Tab 1（让 isIndividualReport 生效）
+    if (allItems.value.length) {
+      allItems.value = allItems.value.map((r) => ({ ...r, _isIndividual: isIndividualReport(r.title || '', r.orgName || '') }))
     }
   })
 })
@@ -738,6 +827,9 @@ $spacing-base: 24rpx;
 .rs-btn--loading { opacity: 0.6; }
 
 .rs-empty { padding: 80rpx 20rpx; text-align: center; color: $app-text-muted; font-size: 26rpx; line-height: 1.7; }
+.rs-empty-hint { display: block; margin-top: 8rpx; font-size: 24rpx; color: $rf-amber; }
+.rs-loadmore { padding: 24rpx 0 8rpx; text-align: center; color: $app-text-muted; font-size: 24rpx; }
+.rs-loadmore--end { opacity: 0.7; }
 
 .rs-report-card { }
 .rs-report-head { display: flex; justify-content: space-between; align-items: center; gap: 12rpx; }
@@ -756,10 +848,6 @@ $spacing-base: 24rpx;
 .rs-li-text { flex: 1; min-width: 0; word-break: break-word; }
 .rs-dot { color: $rf-amber; }
 
-.rs-fx-time { display: flex; gap: 8rpx; flex-wrap: wrap; }
-.rs-fx-time-pill { padding: 10rpx 16rpx; border-radius: 999rpx; background: rgba(255, 184, 107, 0.06); border: 1rpx solid rgba(255, 184, 107, 0.18); color: $app-text-muted; font-size: 22rpx; }
-.rs-fx-time-pill.active { background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%); color: $color-bg; border-color: transparent; font-weight: 600; }
-
 .rs-fx-row-meta { display: flex; gap: 12rpx; align-items: center; margin-top: 6rpx; flex-wrap: wrap; }
 .rs-fx-org { font-size: 22rpx; color: $rf-amber; background: rgba(212, 175, 55, 0.12); padding: 2rpx 12rpx; border-radius: 6rpx; }
 .rs-fx-date { font-size: 22rpx; color: $app-text-muted; }
@@ -768,15 +856,15 @@ $spacing-base: 24rpx;
 .rs-report-title-row { display: flex; align-items: center; gap: 12rpx; flex-wrap: wrap; }
 .rs-rec-badge { font-size: 22rpx; font-weight: 600; color: #0d1b2a; background: linear-gradient(135deg, #ffb86b 0%, #ff7a3d 100%); padding: 4rpx 14rpx; border-radius: 8rpx; flex: 0 0 auto; }
 
-// 顶部筛选条（Tab 1）—— 一行：日期 pill + 机构 pill + 只看推荐 复选框（窄屏自动换行）
-.rs-filter-bar { margin: 0 0 $spacing-base; padding: 10rpx 12rpx; background: rgba(255, 255, 255, 0.03); border: 1rpx solid $app-border; border-radius: $radius-md; overflow: visible; }
-.rs-filter-row { display: flex; align-items: center; gap: 10rpx 10rpx; flex-wrap: wrap; }
+// 筛选条（集成在 Head 区）—— 一行：日期 pill + 机构 pill + 只看推荐 + 只看海外机构研报（无边框）
+.rs-filter-bar { margin: 0 0 12rpx; padding: 0 2rpx; background: transparent; border: none; }
+.rs-filter-row { display: flex; align-items: center; gap: 12rpx; flex-wrap: nowrap; }
 .rs-filter-item { display: flex; align-items: center; gap: 6rpx; flex: 0 0 auto; min-width: 0; }
-.rs-filter-item--switch { flex: 1 1 100%; min-width: 0; justify-content: flex-end; align-items: center; gap: 10rpx; padding: 4rpx 0; }
+.rs-filter-item--switch { flex: 0 0 auto; min-width: 0; justify-content: flex-end; align-items: center; gap: 8rpx; padding: 0; }
 .rs-filter-item--switch .rs-filter-switch-label { flex: 0 0 auto; }
 .rs-filter-label { font-size: 20rpx; color: $app-text-muted; flex: 0 0 auto; }
 // 触发底部菜单的 pill 按钮：和现有 card 配色融合
-.rs-filter-pill { display: inline-flex; align-items: center; gap: 4rpx; padding: 8rpx 12rpx; min-height: 48rpx; background: linear-gradient(180deg, rgba(255, 184, 107, 0.10), rgba(255, 184, 107, 0.04)); border: 1rpx solid rgba(255, 184, 107, 0.28); border-radius: 8rpx; box-sizing: border-box; box-shadow: inset 0 -1rpx 0 rgba(0, 0, 0, 0.18), 0 1rpx 2rpx rgba(0, 0, 0, 0.15); transition: all 0.15s; }
+.rs-filter-pill { display: inline-flex; align-items: center; gap: 4rpx; padding: 6rpx 10rpx; min-height: 44rpx; background: linear-gradient(180deg, rgba(255, 184, 107, 0.10), rgba(255, 184, 107, 0.04)); border: 1rpx solid rgba(255, 184, 107, 0.28); border-radius: 8rpx; box-sizing: border-box; box-shadow: inset 0 -1rpx 0 rgba(0, 0, 0, 0.18), 0 1rpx 2rpx rgba(0, 0, 0, 0.15); transition: all 0.15s; }
 .rs-filter-pill:active { transform: translateY(1rpx); box-shadow: inset 0 1rpx 2rpx rgba(0, 0, 0, 0.22); }
 .rs-filter-pill-text { font-size: 22rpx; color: $app-text; font-weight: 500; white-space: nowrap; }
 .rs-filter-pill-caret { font-size: 16rpx; color: $rf-amber; }

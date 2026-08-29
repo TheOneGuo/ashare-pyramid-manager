@@ -554,6 +554,63 @@ export async function getFxbaogaoStatus(): Promise<{ ok: boolean; fxbaogao: { av
   return jget('/api/research/fxbaogao/status')
 }
 
+// ---- 分片同步入库（全量研报 → 数据库） ----
+export interface FxbaogaoSyncProgress {
+  running: boolean
+  startedAt: number
+  finishedAt: number
+  shardTotal: number
+  shardDone: number
+  fetched: number
+  upserted: number
+  errors: number
+  lastError: string
+  totalInDb: number
+  windowDays: number
+}
+export interface FxbaogaoSyncResult {
+  ok: boolean
+  started?: boolean
+  windowDays?: number
+  progress: FxbaogaoSyncProgress
+  total?: number
+  latestPubTime?: number
+}
+// 触发同步（异步，轮询 status 拿进度）
+export async function syncFxbaogaoAll(windowDays?: number): Promise<FxbaogaoSyncResult> {
+  const q = windowDays ? `?windowDays=${windowDays}` : ''
+  return jget(`/api/research/fxbaogao/sync${q}`, { method: 'POST', timeoutMs: 15000 })
+}
+// 同步进度 + 库存量
+export async function getFxbaogaoSyncStatus(): Promise<FxbaogaoSyncResult> {
+  return jget('/api/research/fxbaogao/sync', { timeoutMs: 10000 })
+}
+// 从库分页读取全量研报（startMs/endMs 毫秒）
+export interface DbReportItem {
+  reportId: number
+  title: string
+  orgName: string
+  pageNum: number
+  pubTime: number
+  pubTimeStr: string
+  recommended: boolean
+  categories: string[]
+  pdfUrl?: string   // PDF 直链缓存（命中即「秒开」原文）
+}
+export async function listFxbaogaoDbReports(params: {
+  pageNum?: number
+  pageSize?: number
+  startMs?: number
+  endMs?: number
+}): Promise<{ ok: boolean; items: DbReportItem[]; count: number; pageNum: number; pageSize: number; total: number; latestPubTime: number }> {
+  const q = new URLSearchParams()
+  if (params.pageNum) q.set('pageNum', String(params.pageNum))
+  if (params.pageSize) q.set('pageSize', String(params.pageSize))
+  if (params.startMs) q.set('startMs', String(params.startMs))
+  if (params.endMs) q.set('endMs', String(params.endMs))
+  return jget(`/api/research/fxbaogao/reports?${q.toString()}`, { timeoutMs: 15000 })
+}
+
 // ============================================================================
 // 统一列表（Tab 1 主源）+ 深度多维度搜索（Tab 3 升级）
 // ============================================================================

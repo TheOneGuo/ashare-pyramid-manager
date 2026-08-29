@@ -162,6 +162,42 @@ CREATE TABLE IF NOT EXISTS research_reports (
 
 CREATE INDEX IF NOT EXISTS idx_research_created ON research_reports(created_at DESC);
 
+-- fxbaogao 全量研报索引（按时间段分片同步入库，report_id 唯一）
+CREATE TABLE IF NOT EXISTS fxbaogao_reports (
+  report_id   INTEGER PRIMARY KEY,
+  title       TEXT NOT NULL DEFAULT '',
+  org_name    TEXT NOT NULL DEFAULT '',   -- 机构/券商
+  page_num    INTEGER NOT NULL DEFAULT 0,
+  pub_time    INTEGER NOT NULL DEFAULT 0,  -- 秒时间戳（排序/筛选用）
+  pub_date    TEXT NOT NULL DEFAULT '',    -- 展示用日期字符串
+  recommended INTEGER NOT NULL DEFAULT 0,  -- 1=先进生产力相关推荐
+  categories  TEXT NOT NULL DEFAULT '[]',  -- JSON 数组
+  source_range TEXT NOT NULL DEFAULT '',   -- 同步来源时间范围标记
+  pdf_url     TEXT NOT NULL DEFAULT '',    -- PDF 直链缓存（详情页秒开用）
+  ai_status   INTEGER NOT NULL DEFAULT 0,  -- 0=未精读 1=精读中 2=已精读
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fxbaogao_pub_time ON fxbaogao_reports(pub_time DESC);
+CREATE INDEX IF NOT EXISTS idx_fxbaogao_ai ON fxbaogao_reports(ai_status);
+
+-- fxbaogao 研报 AI 精读结果（与原始研报分开存储，report_id 关联）
+CREATE TABLE IF NOT EXISTS fxbaogao_ai (
+  report_id   INTEGER PRIMARY KEY,
+  title       TEXT NOT NULL DEFAULT '',
+  broker      TEXT NOT NULL DEFAULT '',
+  source_url  TEXT NOT NULL DEFAULT '',
+  raw_text    TEXT NOT NULL DEFAULT '',     -- PDF 提取的原文
+  tldr        TEXT NOT NULL DEFAULT '',
+  key_points  TEXT NOT NULL DEFAULT '[]',
+  opportunities TEXT NOT NULL DEFAULT '[]',
+  risks       TEXT NOT NULL DEFAULT '[]',
+  status      TEXT NOT NULL DEFAULT 'refined-llm',  -- refined-llm / refined-mock
+  model       TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fxbaogao_ai_created ON fxbaogao_ai(updated_at DESC);
+
 -- 已持仓标的 AI 研报分析：按十二研究模块生成的逐标的研报
 CREATE TABLE IF NOT EXISTS research_stock_reports (
   stock_code   TEXT NOT NULL,
@@ -207,6 +243,7 @@ export async function initDb() {
   await migrateHoldingsColumns();
   await migrateNewsContent();
   await migratePlansColumns();
+  await migrateFxbaogaoColumns();
   console.log('[db] schema initialized (holdings migrated)');
 }
 
@@ -513,6 +550,22 @@ export async function migrateNewsContent() {
   try {
     await client.execute({ sql: `UPDATE news_items SET content = summary WHERE content = ''` });
   } catch (e) { /* ignore */ }
+}
+
+// 旧库迁移：fxbaogao_reports 增加 pdf_url / ai_status 列（详情秒开 + 精读状态）
+export async function migrateFxbaogaoColumns() {
+  const needed = [
+    ['pdf_url', "TEXT NOT NULL DEFAULT ''"],
+    ['ai_status', 'INTEGER NOT NULL DEFAULT 0'],
+  ];
+  for (const [col, type] of needed) {
+    try {
+      await client.execute({ sql: `ALTER TABLE fxbaogao_reports ADD COLUMN ${col} ${type}` });
+      console.log(`[db] migrated fxbaogao_reports +${col}`);
+    } catch (e) {
+      // 列已存在则忽略
+    }
+  }
 }
 
 export async function removeHolding(stock_code) {
@@ -890,6 +943,212 @@ export async function countResearchReportsGrouped() {
 
 export async function deleteResearchReport(id) {
   await client.execute({ sql: `DELETE FROM research_reports WHERE id=?`, args: [String(id)] });
+}
+
+// =====================================================
+// fxbaogao 全量研报索引（分片同步）
+// =====================================================
+
+// 批量 upsert（report_id 冲突时更新 title/org_name/pub_time 等，pdf_url/ai_status 保留）
+export async function upsertFxbaogaoReports(list) {
+  if (!list || !list.length) return 0;
+  const now = Date.now();
+  const stmts = list.map((r) => {
+    // fxbaogao 返回的 pubTime 是秒；若偶见毫秒也归一到秒，统一入库单位
+    const t = Number(r.pubTime || 0);
+    const sec = t >= 1e12 ? Math.floor(t / 1000) : t;
+    return {
+      sql: `INSERT INTO fxbaogao_reports(report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,source_range,pdf_url,ai_status,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(report_id) DO UPDATE SET
+              title=excluded.title, org_name=excluded.org_name, page_num=excluded.page_num,
+              pub_time=excluded.pub_time, pub_date=excluded.pub_date, recommended=excluded.recommended,
+              categories=excluded.categories, source_range=excluded.source_range`,
+      args: [
+        Number(r.reportId) || 0,
+        String(r.title || '').slice(0, 300),
+        String(r.orgName || '').slice(0, 80),
+        Number(r.pageNum || 0),
+        sec,
+        String(r.pubTimeStr || r.pubDate || '').slice(0, 40),
+        r.recommended ? 1 : 0,
+        JSON.stringify(Array.isArray(r.categories) ? r.categories : []),
+        String(r.sourceRange || '').slice(0, 60),
+        String(r.pdfUrl || '').slice(0, 500),
+        0,
+        now,
+      ],
+    };
+  });
+  await client.batch(stmts, 'write');
+  return list.length;
+}
+
+// 缓存 PDF 直链（详情页秒开：命中缓存无需再调 MCP）
+export async function updateFxbaogaoPdfUrl(reportId, url) {
+  if (!reportId || !url) return;
+  await client.execute({
+    sql: `UPDATE fxbaogao_reports SET pdf_url=? WHERE report_id=?`,
+    args: [String(url).slice(0, 500), Number(reportId)],
+  });
+}
+
+// 分页读取（按 pub_time 倒序），支持时间范围过滤（startMs/endMs 均为毫秒，库内为秒，自动换算）
+export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0, endMs = 0 } = {}) {
+  const wheres = [];
+  const args = [];
+  if (startMs > 0) { wheres.push('pub_time >= ?'); args.push(Math.floor(startMs / 1000)); }
+  if (endMs > 0) { wheres.push('pub_time <= ?'); args.push(Math.floor(endMs / 1000)); }
+  const whereSql = wheres.length ? 'WHERE ' + wheres.join(' AND ') : '';
+  const sql = `SELECT report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,pdf_url,ai_status FROM fxbaogao_reports ${whereSql} ORDER BY pub_time DESC LIMIT ? OFFSET ?`;
+  args.push(Math.min(Math.max(Number(limit) || 20, 1), 200), Math.max(Number(offset) || 0, 0));
+  const r = await client.execute({ sql, args });
+  return r.rows.map((row) => ({
+    reportId: Number(row.report_id),
+    title: String(row.title || ''),
+    orgName: String(row.org_name || ''),
+    pageNum: Number(row.page_num || 0),
+    pubTime: Number(row.pub_time || 0),
+    pubTimeStr: String(row.pub_date || ''),
+    recommended: Number(row.recommended || 0) === 1,
+    categories: safeJson(row.categories),
+    pdfUrl: String(row.pdf_url || ''),
+    aiStatus: Number(row.ai_status || 0),
+  }));
+}
+
+// 统计：总数 + 最新入库时间（返回毫秒，与前端 Date.now() 同单位）
+export async function getFxbaogaoStats() {
+  const r = await client.execute('SELECT COUNT(*) AS n, COALESCE(MAX(pub_time),0) AS latest FROM fxbaogao_reports');
+  const latestSec = Number(r.rows[0]?.latest || 0);
+  const latestMs = latestSec >= 1e12 ? latestSec : latestSec * 1000;
+  return {
+    total: Number(r.rows[0]?.n || 0),
+    latestPubTime: latestMs,
+  };
+}
+
+// 按 report_id 取单条（含 pdf_url 缓存），供详情页「秒开 PDF」用
+export async function getFxbaogaoReportById(reportId) {
+  const r = await client.execute({
+    sql: `SELECT report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,pdf_url,ai_status FROM fxbaogao_reports WHERE report_id=? LIMIT 1`,
+    args: [Number(reportId)],
+  });
+  if (!r.rows.length) return null;
+  const row = r.rows[0];
+  return {
+    reportId: Number(row.report_id),
+    title: String(row.title || ''),
+    orgName: String(row.org_name || ''),
+    pageNum: Number(row.page_num || 0),
+    pubTime: Number(row.pub_time || 0),
+    pubTimeStr: String(row.pub_date || ''),
+    recommended: Number(row.recommended || 0) === 1,
+    categories: safeJson(row.categories),
+    pdfUrl: String(row.pdf_url || ''),
+    aiStatus: Number(row.ai_status || 0),
+  };
+}
+
+// 未精读总数（摘要/状态展示用）
+export async function maxUnrefinedCount() {
+  const r = await client.execute('SELECT COUNT(*) AS n FROM fxbaogao_reports WHERE ai_status=0');
+  return Number(r.rows[0]?.n || 0);
+}
+
+// =====================================================
+// fxbaogao 研报 AI 精读（与原文分开存储）
+// =====================================================
+
+export async function upsertFxbaogaoAi({ report_id, title, broker, source_url, raw_text, tldr, key_points, opportunities, risks, status, model }) {
+  const now = Date.now();
+  await client.execute({
+    sql: `INSERT INTO fxbaogao_ai(report_id,title,broker,source_url,raw_text,tldr,key_points,opportunities,risks,status,model,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+          ON CONFLICT(report_id) DO UPDATE SET
+            title=excluded.title, broker=excluded.broker, source_url=excluded.source_url, raw_text=excluded.raw_text,
+            tldr=excluded.tldr, key_points=excluded.key_points, opportunities=excluded.opportunities,
+            risks=excluded.risks, status=excluded.status, model=excluded.model, updated_at=excluded.updated_at`,
+    args: [
+      Number(report_id),
+      String(title || '').slice(0, 300),
+      String(broker || '').slice(0, 80),
+      String(source_url || '').slice(0, 500),
+      String(raw_text || '').slice(0, 60000),
+      String(tldr || '').slice(0, 2000),
+      JSON.stringify(Array.isArray(key_points) ? key_points : []),
+      JSON.stringify(Array.isArray(opportunities) ? opportunities : []),
+      JSON.stringify(Array.isArray(risks) ? risks : []),
+      String(status || 'refined-llm'),
+      String(model || '').slice(0, 40),
+      now,
+      now,
+    ],
+  });
+  // 同步标记索引表 ai_status = 2（已精读）
+  await client.execute({
+    sql: `UPDATE fxbaogao_reports SET ai_status=2 WHERE report_id=?`,
+    args: [Number(report_id)],
+  });
+}
+
+export async function getFxbaogaoAi(report_id) {
+  const r = await client.execute({
+    sql: `SELECT report_id,title,broker,source_url,raw_text,tldr,key_points,opportunities,risks,status,model,created_at,updated_at FROM fxbaogao_ai WHERE report_id=?`,
+    args: [Number(report_id)],
+  });
+  if (!r.rows.length) return null;
+  const row = r.rows[0];
+  return {
+    report_id: Number(row.report_id),
+    title: String(row.title || ''),
+    broker: String(row.broker || ''),
+    source_url: String(row.source_url || ''),
+    raw_text: String(row.raw_text || ''),
+    tldr: String(row.tldr || ''),
+    key_points: safeJson(row.key_points),
+    opportunities: safeJson(row.opportunities),
+    risks: safeJson(row.risks),
+    status: String(row.status || ''),
+    model: String(row.model || ''),
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  };
+}
+
+// 取"已入库但尚未精读"的研报（供后台 15 分钟任务消费），limit 可限流
+export async function listUnrefinedFxbaogao(limit = 20) {
+  const cap = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const r = await client.execute({
+    sql: `SELECT report_id,title,org_name,page_num,pub_time,pub_date FROM fxbaogao_reports WHERE ai_status=0 ORDER BY pub_time DESC LIMIT ?`,
+    args: [cap],
+  });
+  return r.rows.map((row) => ({
+    reportId: Number(row.report_id),
+    title: String(row.title || ''),
+    orgName: String(row.org_name || ''),
+    pageNum: Number(row.page_num || 0),
+    pubTime: Number(row.pub_time || 0),
+    pubTimeStr: String(row.pub_date || ''),
+  }));
+}
+
+// 将某条研报标记为"精读中"，避免多实例重复消费
+export async function markFxbaogaoAiPending(report_id) {
+  await client.execute({ sql: `UPDATE fxbaogao_reports SET ai_status=1 WHERE report_id=?`, args: [Number(report_id)] });
+}
+
+// 清理超过 cutoffMs 的研报（线上库仅保留最近 3 个月）；级联删精读结果
+export async function cleanupOldFxbaogao(cutoffMs) {
+  try {
+    const cutoffSec = Math.floor(cutoffMs / 1000);
+    await client.execute({ sql: `DELETE FROM fxbaogao_ai WHERE report_id IN (SELECT report_id FROM fxbaogao_reports WHERE pub_time < ?)`, args: [cutoffSec] });
+    const r = await client.execute({ sql: `DELETE FROM fxbaogao_reports WHERE pub_time < ?`, args: [cutoffSec] });
+    return r.rowsAffected || 0;
+  } catch (e) {
+    console.warn('[db] cleanupOldFxbaogao:', e.message?.slice(0, 80));
+    return 0;
+  }
 }
 
 // =====================================================
