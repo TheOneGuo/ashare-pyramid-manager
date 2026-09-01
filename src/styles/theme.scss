@@ -16,6 +16,12 @@ $app-down:        #00B578;   // A 股绿跌
 $app-warn:        #F0AD4E;
 $app-error:       #DD524D;
 
+// 资金流向四类资金色（与 SankeyChart SVG 内联常量同步，见 components/SankeyChart.vue）
+$fund-joint:   #D4AF37;  // 共同增仓（金，复用主金）
+$fund-public:   #F0AD4E;  // 公募基金（琥珀）
+$fund-stab:    #26D0CE;  // 超级平准（青）
+$fund-foreign: #FF7A45;  // 超级外资（橙红）
+
 // 圆角
 $radius-sm:   8rpx;
 $radius-base: 12rpx;

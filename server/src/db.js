@@ -1474,7 +1474,7 @@ export async function listUnrefinedFxbaogao(limit = 20) {
 // ── 每日 21 点下载任务 ─────────────────────────────────
 // 候选池：未精读的外资 行业/宏观 研报，按「中国行业→美国行业→韩日台港行业→
 // 中国宏观→美国宏观→韩日台港宏观」层级排序（region/report_type 为启发式回填值，
-// 任务运行时由 LLM 按标题权威判定并重排）。题材筛选（7 大主题）由 LLM 完成。
+// 任务运行时由 LLM 按标题权威判定并重排）。题材筛选（8 大主题）由 LLM 完成。
 export async function listFxbaogaoDailyCandidates(limit = 300) {
   const cap = Math.min(Math.max(Number(limit) || 100, 1), 500);
   const foreignCase = FOREIGN_ORG_LIKE.map(() => 'org_name LIKE ?').join(' OR ');

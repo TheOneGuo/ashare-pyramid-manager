@@ -12,7 +12,7 @@ export const TAB_ROUTES = [
   'pages/news/index',
   'pages/research/index',
   'pages/portfolio/index',
-  'pages/market/index',
+  'pages/fundflow/index',
 ] as const
 
 /** 全局当前 tab 下标（-1 = 未知，显示不高亮） */

@@ -25,6 +25,13 @@
         "navigationBarTitleText": "行情中心",
         "enablePullDownRefresh": true
       }
+    },
+    {
+      "path": "pages/fundflow/index",
+      "style": {
+        "navigationBarTitleText": "资金动态",
+        "enablePullDownRefresh": true
+      }
     }
   ],
   "tabBar": {
@@ -46,8 +53,8 @@
         "text": "持仓"
       },
       {
-        "pagePath": "pages/market/index",
-        "text": "行情"
+        "pagePath": "pages/fundflow/index",
+        "text": "资金流向"
       }
     ]
   },

@@ -21,7 +21,7 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, ROLE_LABELS } from './db.js';
+import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, updatePlanPrice, ROLE_LABELS } from './db.js';
 import { enrichHolding, importFromText, importFromFile, fetchQuote } from './stock-service.js';
 import { registerCorsAndParse, requireAuth, ifindRateLimit } from './middleware.js';
 import { getProvider } from './providers/index.js';
@@ -38,6 +38,7 @@ import {
   refineFxbaogaoBatch, isPdfUrlBlocked,
   setDownloadGuard, setNewDownloadHook, judgeFxbaogaoTitlesByLlm,
 } from './fxbaogao.js';
+import { buildFundFlow } from './fund-flow.js';
 import { buildAccount, previewChange, checkWithdraw, TERMS, EVENT_DEPOSIT, EVENT_WITHDRAW, EVENT_FEE_RATE } from './account-ledger.js';
 import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans, removePlan,
   upsertResearchReport, listResearchReports, listResearchReportsFiltered, countResearchReportsGrouped, deleteResearchReport,
@@ -127,7 +128,7 @@ async function startFxbaogaoJobFeed(limit) {
 
 // =====================================================
 // 每日 21:00 下载 + 精读任务（新下载预算 19 篇/天）
-// 选题：LLM 按标题判定是否涉及 7 大主题（半导体全产业链技术/关键矿产/航空航天/
+// 选题：LLM 按标题判定是否涉及 8 大主题（半导体全产业链技术/关键矿产/航空航天/
 // AI/具身智能/新能源/电力设施/先进制造）的外资研报，按
 // 中国行业→美国行业→韩日台港行业→中国宏观策略→美国宏观策略→韩日台港宏观策略
 // 排序下载，下载完立即精读，次日「全部研报 AI 精读」可见（已精读按最新精读置顶）。
@@ -167,7 +168,7 @@ async function runDailyFxbaogaoJob() {
         || Number(b.recommended) - Number(a.recommended)
         || (b.pubTime || 0) - (a.pubTime || 0),
       );
-    if (!picked.length) { console.log('[fxbaogao daily] LLM 判定无 7 大主题相关研报，今日不下载'); return; }
+    if (!picked.length) { console.log('[fxbaogao daily] LLM 判定无 8 大主题相关研报，今日不下载'); return; }
     const take = Math.min(DAILY_PDF_BUDGET - used, picked.length);
     const items = picked.slice(0, take).map((x) => ({
       reportId: x.reportId, title: x.title, orgName: x.orgName, pageNum: 0,
@@ -831,6 +832,26 @@ app.get('/api/research/fxbaogao/pdf-url', async (req, res) => {
   } catch (e) {
     console.warn('[fxbaogao pdf-url]', e?.message || e)
     res.status(500).json({ ok: false, error: e?.message || '获取 PDF 链接失败' })
+  }
+})
+
+// ============================================================
+// 资金流向（资金动态）：4 类资金 → 板块 桑基图 + 板块/个股榜
+// ============================================================
+const FUND_FLOW_MODE = String(process.env.FUND_FLOW_MODE || 'mock').toLowerCase();
+app.get('/api/fundflow', (req, res) => {
+  // 预留 eastmoney/partner 真实数据源；本期仅 mock
+  if (FUND_FLOW_MODE !== 'mock') {
+    return res.status(501).json({ ok: false, error: `FUND_FLOW_MODE=${FUND_FLOW_MODE} 未实现（预留 eastmoney/partner）` });
+  }
+  const hit = getCached('fundflow', req);
+  if (hit) return res.json(hit);
+  try {
+    const data = buildFundFlow({});
+    setCached('fundflow', req, data);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e?.message || e).slice(0, 200) });
   }
 })
 
