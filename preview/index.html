@@ -427,10 +427,10 @@
 <body>
   <div class="topbar">
     <h1>📱 节节高 · 多端响应式预览</h1>
-    <span class="meta">后端 9999 · H5 5173</span>
+    <span class="meta" id="h5-meta">后端 9999 · H5 5173</span>
     <span class="spacer"></span>
     <span class="meta">后端: <span id="backend-status" class="status">检测中</span></span>
-    <span class="meta">H5: <a href="http://localhost:5173/" target="_blank" style="color:var(--accent);text-decoration:none;">5173 ↗</a></span>
+    <span class="meta">H5: <a id="h5-link" href="http://localhost:5173/" target="_blank" style="color:var(--accent);text-decoration:none;">5173 ↗</a></span>
     <button onclick="reloadAll()">⟳ 重载</button>
   </div>
 
@@ -600,6 +600,16 @@
     };
 
     // ========== 状态 ==========
+    // 前端 H5 服务地址：dev 端口可能从 5173 顺延。
+    // 由后端 /api/frontend 探测实际端口（后端同源探测，无浏览器 CORS 限制）。
+    let H5_BASE = 'http://localhost:5173/';
+    async function detectH5Base() {
+      try {
+        const r = await fetch('http://localhost:9999/api/frontend');
+        const j = await r.json();
+        if (j && j.ok && /^https?:\/\//.test(j.base)) H5_BASE = j.base;
+      } catch { /* 保底使用默认 5173 */ }
+    }
     const state = {
       selectedId: null,
       orient: 'portrait',
@@ -809,7 +819,7 @@
       const isMp = dev.form === 'mp';
       const extraH = isMp ? 24 + 44 + 49 : isLandscape ? 0 : 0;
       const frameH = dispH + extraH;
-      const iframeUrl = `http://localhost:5173/?device=${encodeURIComponent(dev.name)}&w=${w}&h=${h}&orient=${orientText}`;
+      const iframeUrl = `${H5_BASE}?device=${encodeURIComponent(dev.name)}&w=${w}&h=${h}&orient=${orientText}`;
 
       let frameInner;
       if (isMp) {
@@ -864,8 +874,20 @@
     }
 
     // ========== 初始化 ==========
-    buildSidebar();
-    selectDevice('iphone-15-pro-max');
+    // 前端端口可能不是 5173（被占用时 uni dev 会自动顺延 5174/5175…），
+    // 先探测可达端口再渲染设备，避免 iframe 指向空端口显示乱码/空白。
+    (async function init() {
+      await detectH5Base();
+      const h5Link = document.getElementById('h5-link');
+      if (h5Link) {
+        h5Link.href = H5_BASE;
+        h5Link.textContent = new URL(H5_BASE).port + ' ↗';
+      }
+      document.getElementById('h5-meta') &&
+        (document.getElementById('h5-meta').textContent = '后端 9999 · H5 ' + new URL(H5_BASE).port);
+      buildSidebar();
+      selectDevice('iphone-15-pro-max');
+    })();
 
     // 后端探活
     fetch('http://localhost:9999/api/health')

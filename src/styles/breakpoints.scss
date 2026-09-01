@@ -14,3 +14,11 @@ $bp-xl:  1200rpx; // 桌面
 
 @mixin landscape { @media (orientation: landscape) { @content; } }
 @mixin portrait  { @media (orientation: portrait)  { @content; } }
+
+// 折叠屏/平板双栏布局断点（H5 px 宽）。
+// Z Fold 展开竖屏宽 673~844px，平板竖屏 768~900px。
+// 原理：uni-app rpx 按屏宽等比缩放，折叠屏上同值 rpx 会物理放大近 2 倍，
+// 所以折叠屏要「复直板机物理尺寸（px）+ 左右双栏」。直板机（< 700px）不命中，UI 不变。
+@mixin fold-wide {
+  @media (min-width: 700px) and (max-width: 1400px) { @content; }
+}

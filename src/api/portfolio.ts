@@ -658,6 +658,11 @@ export interface DbReportItem {
   recommended: boolean
   categories: string[]
   pdfUrl?: string   // PDF 直链缓存（命中即「秒开」原文）
+  aiStatus?: number
+  reportType?: string
+  industryName?: string
+  region?: string   // CN/US/KR/JP/TW/HK/GLOBAL/OTHER
+  perspective?: string // 产业/金融/供应链/技术/订单/认证/''
 }
 export async function listFxbaogaoDbReports(params: {
   pageNum?: number

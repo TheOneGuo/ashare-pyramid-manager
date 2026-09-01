@@ -421,6 +421,11 @@ const REFINED_SYSTEM = `你是「节节高」研报精读助手，把卖方/外�
 - risks: 风险点 3-6 条
 - report_type: 研报类型判定，只能是 stock/industry/macro/strategy/minutes/other 之一
   （stock=个股研报, industry=行业研究, macro=宏观, strategy=策略, minutes=会议纪要, other=其他）
+- region: 研报主要涉及的市场/地区，只能是 CN/US/KR/JP/TW/HK/GLOBAL/OTHER 之一
+  （CN=中国/A股, US=美国/美股, KR=韩国, JP=日本, TW=台湾, HK=香港/港股, GLOBAL=全球, OTHER=其他）
+- perspective: 研报的分析视角，只能是 产业/金融/供应链/技术/订单/认证/'' 之一
+  （产业=产业与行业格局, 金融=金融/资本/估值视角, 供应链=供应链/上下游/供应商, 技术=技术/研发/工艺,
+    订单=订单/产能/交付, 认证=客户认证/进入供应链认证；无法判断用空串）
 - extraction: 从正文中尽力提取以下维度（研报未提及的字段用空数组/空串，不要编造）：
   - stocks: 提及的 A 股/港股/美股标的 [{code:"6位代码", name:"公司名"}]
   - industry: 所属行业（如"半导体""食品饮料"）
@@ -454,7 +459,7 @@ export async function refineWithLlm(input: {
   title?: string
   broker?: string
   industry?: string
-}): Promise<{ tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; report_type?: string; extraction?: LlmExtraction; mode: 'llm' | 'fallback' } | null> {
+}): Promise<{ tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; report_type?: string; region?: string; perspective?: string; extraction?: LlmExtraction; mode: 'llm' | 'fallback' } | null> {
   if (!isLlmAvailable()) return null
   const raw = (input.raw_text || '').trim().slice(0, 18000) // 控制 token
   if (raw.length < 200) return null
@@ -465,8 +470,9 @@ export async function refineWithLlm(input: {
   ].filter(Boolean).join('\n')
   const user = `${meta}\n\n研报正文（截取前 18000 字）：\n${raw}\n\n请按以下 JSON 结构输出（extraction 各字段未提及时用空数组/空串）：
 {"tldr":"...", "key_points":["..."], "opportunities":["..."], "risks":["..."], "report_type":"stock|industry|macro|strategy|minutes|other",
+ "region":"CN|US|KR|JP|TW|HK|GLOBAL|OTHER", "perspective":"产业|金融|供应链|技术|订单|认证|",
  "extraction":{"stocks":[{"code":"6位代码","name":"公司名"}], "industry":"...", "suppliers":["..."], "buyers":["..."], "regulations":["..."], "raw_materials":["..."], "origin_risks":["..."], "orders":["..."], "certifications":["..."], "financials":["..."], "key_persons":["..."]}}`
-  const result = await chatJson<{ tldr?: string; key_points?: string[]; opportunities?: string[]; risks?: string[]; report_type?: string; extraction?: LlmExtraction }>({
+  const result = await chatJson<{ tldr?: string; key_points?: string[]; opportunities?: string[]; risks?: string[]; report_type?: string; region?: string; perspective?: string; extraction?: LlmExtraction }>({
     system: REFINED_SYSTEM,
     user,
     jsonHint: true,
@@ -479,6 +485,12 @@ export async function refineWithLlm(input: {
   // report_type 归一（非法值兜底 other）
   const rt = pickStr(result.report_type).toLowerCase()
   const reportType = ['stock', 'industry', 'macro', 'strategy', 'minutes', 'other'].includes(rt) ? rt : 'other'
+  // region 归一（CN/US/KR/JP/TW/HK/GLOBAL/OTHER，非法值兜底 OTHER）
+  const reg = pickStr(result.region).toUpperCase()
+  const region = ['CN', 'US', 'KR', 'JP', 'TW', 'HK', 'GLOBAL'].includes(reg) ? reg : 'OTHER'
+  // perspective 归一（产业/金融/供应链/技术/订单/认证/''，非法值兜底 ''）
+  const pv = pickStr(result.perspective)
+  const perspective = ['产业', '金融', '供应链', '技术', '订单', '认证'].includes(pv) ? pv : ''
   // extraction 清洗：数组字段去空、标的代码归一
   const rawExt = (result.extraction && typeof result.extraction === 'object') ? result.extraction : {}
   const stocks = Array.isArray(rawExt.stocks)
@@ -503,6 +515,8 @@ export async function refineWithLlm(input: {
     opportunities: pickList(result.opportunities),
     risks: pickList(result.risks),
     report_type: reportType,
+    region,
+    perspective,
     extraction,
     mode: 'llm',
   }

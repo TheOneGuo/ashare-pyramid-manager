@@ -5,7 +5,7 @@ import express from 'express';
 // CORS：只允许显式白名单。默认开发期 localhost + file://；生产必须用 ALLOWED_ORIGINS 指定，禁止反射任意 Origin
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
 const DEV_CORS = process.env.DEV_CORS === '1' || ALLOWED_ORIGINS.length === 0;
-const DEV_ORIGINS = ['http://localhost:5173', 'https://localhost:5173', 'http://127.0.0.1:5173', 'null'];
+const DEV_ORIGINS = ['http://localhost:5173', 'https://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:5174', 'http://127.0.0.1:5174', 'null'];
 const ALLOWED_ORIGIN_SET = new Set([...ALLOWED_ORIGINS, ...(DEV_CORS ? DEV_ORIGINS : [])]);
 
 export function registerCorsAndParse(app) {

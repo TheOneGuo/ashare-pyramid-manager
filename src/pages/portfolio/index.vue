@@ -5,6 +5,12 @@
     <view class="pf-head">
       <text class="pf-title">持仓分析</text>
       <text class="pf-hint">下拉刷新最新 · AI 建议仅供参考</text>
+      <!-- 折叠屏左栏快捷导航（直板机隐藏） -->
+      <view class="pf-rail">
+        <view v-for="s in PF_SECTIONS" :key="s.cls" class="pf-rail-item" @tap="scrollToCard(s.cls)">
+          <text class="pf-rail-label">{{ s.label }}</text>
+        </view>
+      </view>
     </view>
 
     <!-- 可滚动内容区（滚动条仅在此区域内） -->
@@ -46,12 +52,8 @@
           <view class="pf-ledger-grid">
             <view class="pf-ledger-cell"><text class="pf-ledger-k">可用保证金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.available) }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">手续费率</text><text class="pf-ledger-v">万分之 {{ ledgerSnapshot.fee_rate_wan }}</text></view>
-          </view>
-          <view class="pf-ledger-grid">
             <view class="pf-ledger-cell"><text class="pf-ledger-k">可开标的</text><text class="pf-ledger-v">{{ ledgerSnapshot.max_hold }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">已分配资金</text><text class="pf-ledger-v">{{ fmtMoney(ledgerSnapshot.allocated) }}</text></view>
-          </view>
-          <view class="pf-ledger-grid">
             <view class="pf-ledger-cell"><text class="pf-ledger-k">未实现盈亏</text><text class="pf-ledger-v" :class="unrealizedPnl >= 0 ? 'pf-up' : 'pf-down'">{{ fmtMoney(unrealizedPnl) }}</text></view>
             <view class="pf-ledger-cell"><text class="pf-ledger-k">累计实现盈亏</text><text class="pf-ledger-v" :class="ledgerSnapshot.realized_pnl >= 0 ? 'pf-up' : 'pf-down'">{{ fmtMoney(ledgerSnapshot.realized_pnl) }}</text></view>
           </view>
@@ -288,6 +290,20 @@ import {
   type LedgerSnapshot, type LedgerEvent, type PlanItem,
 } from '@/api/portfolio'
 import { fmtMoney, fmtPct, tierLabel, padCode } from '@/utils/portfolioFormat'
+
+// 折叠屏左栏模块导航：点击滚动到对应卡片（H5 专用；直板机左栏隐藏不触发）
+const PF_SECTIONS = [
+  { cls: 'pf-ledger', label: '可用保证金' },
+  { cls: 'pf-import', label: '持仓导入' },
+  { cls: 'pf-proposed', label: '拟新买标的' },
+  { cls: 'pf-report', label: '策略方案' },
+  { cls: 'pf-track', label: '持仓跟踪' },
+]
+function scrollToCard(cls: string) {
+  // #ifdef H5
+  document.querySelector(`.${cls}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // #endif
+}
 
 // ── ① 账本 ──
 const ledgerOpen = ref(true)
@@ -895,7 +911,7 @@ $rf-cream: #f5ecd9;
 $rf-muted: #a89a82;
 $rf-green: #6bffad;
 $rf-red:   #ff4d4d;
-$color-bg: #0d1b2a;
+$color-bg: #0b0b0d;
 $color-card-bg: linear-gradient(180deg, rgba(255, 184, 107, 0.055), rgba(114, 247, 255, 0.025));
 $color-border: rgba(255, 184, 107, 0.24);
 $color-text-primary: $rf-cream;
@@ -905,7 +921,12 @@ $radius-lg: 20rpx;
 $radius-md: 14rpx;
 $color-text: $color-text-primary;
 
-.pf-page { min-height: 100vh; background: $color-bg; padding: 24rpx 24rpx 150rpx; overscroll-behavior-y: contain; }
+.pf-page { min-height: 100vh; background: $color-bg;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 48px 48px;
+  padding: 24rpx 24rpx calc(160rpx + env(safe-area-inset-bottom, 0px)); overscroll-behavior-y: contain; }
 
 /* H5：页面作为滚动容器，底部止于 tab 上沿 */
 /* H5：页面作为包含 head(固定) + body(滚动) 的容器，止于 tab 上沿 */
@@ -932,7 +953,7 @@ $color-text: $color-text-primary;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 0 24rpx 24rpx;
+  padding: 0 24rpx calc(140rpx + env(safe-area-inset-bottom, 0px));
   display: flex;
   flex-direction: column;
   gap: 20rpx;
@@ -1001,10 +1022,10 @@ $color-text: $color-text-primary;
 
 /* ① 账本 */
 .pf-ledger-state { margin-top: 12rpx; }
-.pf-ledger-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10rpx; }
-.pf-ledger-cell { display: flex; flex-direction: column; padding: 10rpx 12rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; }
-.pf-ledger-k { font-size: 20rpx; color: $color-text-secondary; margin-bottom: 4rpx; }
-.pf-ledger-v { font-size: 26rpx; font-weight: 600; color: $color-text-primary; font-variant-numeric: tabular-nums; }
+.pf-ledger-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10rpx; }
+.pf-ledger-cell { display: flex; flex-direction: column; padding: 8rpx 6rpx; background: rgba(255, 184, 107, 0.03); border: 1rpx solid rgba(255, 184, 107, 0.1); border-radius: 10rpx; min-width: 0; }
+.pf-ledger-k { font-size: 18rpx; color: $color-text-secondary; margin-bottom: 2rpx; white-space: nowrap; }
+.pf-ledger-v { font-size: 22rpx; font-weight: 600; color: $color-text-primary; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pf-ledger-v--cyan { color: $rf-cyan; }
 .pf-up { color: $rf-green !important; }
 .pf-down { color: $rf-red !important; }
@@ -1172,7 +1193,8 @@ $color-text: $color-text-primary;
 
 /* 响应式 */
 @media (max-width: 390px) {
-  .pf-ledger-grid { grid-template-columns: 1fr 1fr; }
+  /* 可用保证金六个卡片：保持三列两行 */
+  .pf-ledger-grid { grid-template-columns: repeat(3, 1fr); }
   .pf-hold-head,
   .pf-hold-row { grid-template-columns: 1fr 1.3fr 1.1fr 0.7fr 1.1fr 1.1fr 32rpx; }
   .pf-col { font-size: 20rpx; }
@@ -1201,4 +1223,43 @@ $color-text: $color-text-primary;
 .pf-profile-actions { display: flex; gap: 12rpx; margin-top: 8rpx; }
 .pf-profile-actions .pf-btn { flex: 0 0 auto; padding: 8rpx 28rpx; }
 .pf-btn--ghost { background: transparent; border: 1rpx solid $color-border; color: $color-text-secondary; }
+
+// ─────────────────────────────────────────────────────────
+// 折叠屏/平板专属（H5，宽 700~1400px）：整页左右双栏。
+// 左栏 = head（标题 + 模块快捷导航），右栏 = 内容。恢复直板机物理尺寸（px）。
+// 直板机（< 700px）不命中，pf-rail 默认隐藏，UI 不变。
+// ─────────────────────────────────────────────────────────
+.pf-rail { display: none; }
+@include fold-wide {
+  .pf-page.h5-mode { flex-direction: row; }
+
+  .pf-head {
+    flex: 0 0 240px;
+    width: 240px;
+    border-right: 1rpx solid $color-border;
+    padding: 16rpx 14rpx 24rpx;
+    overflow-y: auto;
+  }
+  .pf-title { font-size: 20px; }
+  .pf-hint { font-size: 11px; }
+  .pf-rail { display: flex; flex-direction: column; gap: 6rpx; margin-top: 14rpx; }
+  .pf-rail-item {
+    padding: 9rpx 12rpx;
+    border-radius: $radius-base;
+    background: rgba(255, 184, 107, 0.05);
+    border: 1rpx solid $color-border;
+  }
+  .pf-rail-label { font-size: 13px; color: $color-text-primary; }
+
+  .pf-body { flex: 1; min-width: 0; padding: 12px 14px 12px; }
+  .pf-section-title { font-size: 15px; }
+  .pf-sub-section-title { font-size: 13.5px; }
+  .pf-label { font-size: 12px; }
+  .pf-note { font-size: 12px; }
+  .pf-input { min-height: 34px; font-size: 13px; }
+  .pf-btn { font-size: 13px; min-height: 34px; }
+  .pf-col { font-size: 13px; }
+  .pf-ledger-k { font-size: 11px; }
+  .pf-ledger-v { font-size: 13px; }
+}
 </style>

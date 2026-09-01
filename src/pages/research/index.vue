@@ -63,18 +63,21 @@
         </view>
 
         <view v-for="r in allDisplay" :key="r.reportId" class="rs-card rs-report-card">
+          <view v-if="r.recommended" class="rs-rec-seal" @tap.stop="onAllClickRow(r)">
+            <text class="rs-rec-seal-char">推</text>
+            <text class="rs-rec-seal-char">荐</text>
+          </view>
           <view class="rs-report-head" @tap="onAllClickRow(r)">
             <view class="rs-report-head-main">
               <view class="rs-report-title-row">
-                <text class="rs-report-title">{{ r.title }}</text>
-                <text v-if="r.recommended" class="rs-rec-badge">⭐ 推荐</text>
+                <text class="rs-report-title">{{ trimTitle(r.title) }}</text>
               </view>
               <view class="rs-fx-row-meta">
+                <text v-if="regionLabel(r.region)" class="rs-tag rs-tag--region">{{ regionLabel(r.region) }}</text>
+                <text v-if="r.perspective" class="rs-tag rs-tag--persp">{{ r.perspective }}视角</text>
                 <text class="rs-fx-org">{{ r.broker || r.orgName }}</text>
                 <text v-if="r.aiStatus === 2" class="rs-ai-badge">✦ 已精读</text>
                 <text class="rs-fx-date">{{ r.pubDate }}</text>
-                <text v-if="r.pageNum" class="rs-fx-pages">· {{ r.pageNum }} 页</text>
-                <text v-if="r.categories && r.categories.length" class="rs-fx-pages">· {{ r.categories.join(' / ') }}</text>
               </view>
             </view>
             <text class="rs-report-chevron">{{ allExpanded.has(r.reportId) ? '▾' : '▸' }}</text>
@@ -155,17 +158,19 @@
         <view v-else-if="!mineLoaded" class="rs-empty"><text>首次进入自动加载中…</text></view>
 
         <view v-for="r in mineItems" :key="r.key" class="rs-card rs-report-card">
+          <view v-if="r.recommended" class="rs-rec-seal" @tap.stop="onMineToggleExpand(r)">
+            <text class="rs-rec-seal-char">推</text>
+            <text class="rs-rec-seal-char">荐</text>
+          </view>
           <view class="rs-report-head" @tap="onMineToggleExpand(r)">
             <view class="rs-report-head-main">
               <view class="rs-report-title-row">
-                <text class="rs-report-title">{{ r.title }}</text>
-                <text v-if="r.recommended" class="rs-rec-badge">⭐ 推荐</text>
+                <text class="rs-report-title">{{ trimTitle(r.title) }}</text>
               </view>
               <view class="rs-fx-row-meta">
                 <text class="rs-fx-org">{{ r.broker || r.orgName }}</text>
                 <text class="rs-fx-date">{{ r.pubDate }}</text>
                 <text v-if="r.holdingCode" class="rs-fx-pages">· 关联 {{ r.holdingName || r.holdingCode }}</text>
-                <text v-if="r.categories && r.categories.length" class="rs-fx-pages">· {{ r.categories.join(' / ') }}</text>
               </view>
             </view>
             <text class="rs-report-chevron">{{ mineExpanded.has(r.key) ? '▾' : '▸' }}</text>
@@ -417,6 +422,20 @@ interface AllItemWithDate {
   aiStatus?: number // 0=未精读 1=精读中 2=已精读
   reportType?: string // 服务端分类：stock/industry/macro/strategy/minutes/other
   industryName?: string // fxbaogao 自带行业分类
+  region?: string   // CN/US/KR/JP/TW/HK/GLOBAL/OTHER（研报涉及地区）
+  perspective?: string // 产业/金融/供应链/技术/订单/认证/''（中资行业研报视角）
+}
+
+// 地区码 → 中文标签（与后端 detectFxbaogaoRegion 一致）
+const REGION_LABELS: Record<string, string> = {
+  CN: '中国', US: '美国', KR: '韩国', JP: '日本', TW: '台湾', HK: '香港', GLOBAL: '全球', OTHER: '',
+}
+function regionLabel(code: string | undefined): string {
+  return REGION_LABELS[String(code || '').toUpperCase()] || ''
+}
+// 标题展示前去掉前面的空格与换行（数据源里部分标题带 \n/空格前缀）
+function trimTitle(t: string | undefined): string {
+  return String(t || '').replace(/^[\s\n\r]+/, '')
 }
 const allItems = ref<AllItemWithDate[]>([])
 const allLoading = ref(false)
@@ -485,6 +504,8 @@ function toAllItem(it: any): AllItemWithDate {
     aiStatus: Number(it.aiStatus || 0),
     reportType: String(it.reportType || ''),
     industryName: String(it.industryName || ''),
+    region: String(it.region || ''),
+    perspective: String(it.perspective || ''),
   }
 }
 
@@ -1041,10 +1062,10 @@ onShow(() => {
 // ---- design tokens (matching portfolio page palette) ----
 $rf-amber: #ffb86b;
 $rf-orange: #ff7a3d;
-$color-bg: #0d1b2a;
+$color-bg: #0b0b0d;
 $color-text-primary: #f5ecd9;
 $color-text-secondary: #a89a82;
-$app-bg: #0d1b2a;
+$app-bg: #0b0b0d;
 $app-card-bg: linear-gradient(180deg, rgba(255, 184, 107, 0.055), rgba(114, 247, 255, 0.025));
 $app-border: rgba(255, 184, 107, 0.24);
 $app-text: #f5ecd9;
@@ -1053,12 +1074,17 @@ $radius-md: 14rpx;
 $radius-lg: 20rpx;
 $spacing-base: 24rpx;
 
-.rs-page { min-height: 100vh; background: $app-bg; padding: $spacing-base; padding-bottom: 160rpx; }
+.rs-page { min-height: 100vh; background: $app-bg;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 48px 48px;
+  padding: $spacing-base; padding-bottom: calc(160rpx + env(safe-area-inset-bottom, 0px)); }
 .rs-page.h5-mode { position: fixed; left: 0; right: 0; top: 0; bottom: calc(110rpx + env(safe-area-inset-bottom)); display: flex; flex-direction: column; overflow: hidden; }
 .rs-head { flex: 0 0 auto; padding: 16rpx 0 8rpx; background: $app-bg; }
-.rs-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 $spacing-base $spacing-base; }
+.rs-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; padding: 0 $spacing-base calc(140rpx + env(safe-area-inset-bottom, 0px)); }
 // Tab 2 打开时给滚动区预留底部搜索栏高度（fixed 布局，防最后一张卡片被遮）
-.rs-body--with-bar { padding-bottom: 140rpx; }
+.rs-body--with-bar { padding-bottom: calc(140rpx + env(safe-area-inset-bottom, 0px)); }
 .rs-body::-webkit-scrollbar { width: 5rpx; }
 .rs-body::-webkit-scrollbar-track { background: transparent; }
 .rs-body::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #fff4c0 0%, #f4c542 50%, #d89c1c 100%); border-radius: 6rpx; }
@@ -1089,7 +1115,7 @@ $spacing-base: 24rpx;
 .rs-loadmore { padding: 24rpx 0 8rpx; text-align: center; color: $app-text-muted; font-size: 24rpx; }
 .rs-loadmore--end { opacity: 0.7; }
 
-.rs-report-card { }
+.rs-report-card { position: relative; }
 .rs-report-head { display: flex; justify-content: space-between; align-items: center; gap: 12rpx; }
 .rs-report-head-main { min-width: 0; flex: 1; }
 .rs-report-title { display: block; font-size: 30rpx; font-weight: 600; color: $app-text; }
@@ -1113,7 +1139,94 @@ $spacing-base: 24rpx;
 .rs-fx-pages { font-size: 22rpx; color: $app-text-muted; }
 
 .rs-report-title-row { display: flex; align-items: center; gap: 12rpx; flex-wrap: wrap; }
-.rs-rec-badge { font-size: 22rpx; font-weight: 600; color: #0d1b2a; background: linear-gradient(135deg, #ffb86b 0%, #ff7a3d 100%); padding: 4rpx 14rpx; border-radius: 8rpx; flex: 0 0 auto; }
+
+// 推荐标记：古欧洲火漆封笺——不规则波浪蜡缘 + 铜章压出的内凹盘 + 烫金凹凸「推荐」
+// 视觉参照：真实火漆印的边缘是蜡被挤压溢出的不规则圆、中心比外缘低一圈、
+// 字被压进蜡里（上沿有阴影、下沿反光），左上有一块蜡面高光。
+.rs-rec-seal {
+  position: absolute;
+  top: 8rpx;
+  right: 40rpx;
+  z-index: 2;
+  width: 90rpx;
+  height: 90rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  // 不规则波浪外缘：火漆受压溢出的形状
+  border-radius: 48% 52% 50% 50% / 53% 47% 55% 45%;
+  background:
+    // 左上蜡面高光（光泽感）
+    radial-gradient(90% 70% at 28% 20%, rgba(255, 160, 130, 0.5) 0%, rgba(255, 120, 90, 0) 38%),
+    // 右下暗部（厚度感）
+    radial-gradient(120% 120% at 76% 84%, rgba(96, 14, 10, 0.85) 0%, rgba(226, 72, 61, 0) 52%),
+    // 蜡体基色
+    linear-gradient(148deg, #cc4034 0%, #a52c23 52%, #7c1f17 100%);
+  transform: rotate(-7deg);
+  box-shadow:
+    // 外缘受光（蜡的上缘亮线）
+    inset 0 3rpx 5rpx rgba(255, 200, 180, 0.35),
+    // 外缘背光（蜡的下缘暗线）
+    inset 0 -6rpx 10rpx rgba(56, 8, 5, 0.65),
+    // 落在纸面的投影
+    0 6rpx 16rpx rgba(0, 0, 0, 0.5);
+}
+// 铜章压入蜡面形成的内凹盘（中心低一圈，边缘有一圈挤压隆起）
+.rs-rec-seal::before {
+  content: '';
+  position: absolute;
+  inset: 9rpx;
+  border-radius: 50% 50% 50% 50% / 52% 48% 50% 50%;
+  background:
+    radial-gradient(80% 80% at 30% 22%, rgba(255, 150, 120, 0.22) 0%, rgba(255, 120, 90, 0) 40%),
+    linear-gradient(152deg, #96241b 0%, #b63428 55%, #cc4034 100%);
+  box-shadow:
+    // 压痕：内凹盘上沿的阴影（深）
+    inset 0 4rpx 7rpx rgba(56, 8, 5, 0.8),
+    // 压痕：内凹盘下沿的反光（受挤压隆起反光）
+    inset 0 -3rpx 5rpx rgba(255, 175, 145, 0.3);
+}
+// 火漆溢出的小蜡滴（右下角一滴，增加手工感）
+.rs-rec-seal::after {
+  content: '';
+  position: absolute;
+  right: -8rpx;
+  bottom: 14rpx;
+  width: 20rpx;
+  height: 17rpx;
+  border-radius: 52% 48% 45% 55% / 55% 50% 50% 45%;
+  background: linear-gradient(148deg, #b63428 0%, #8a251d 60%, #6e1b14 100%);
+  box-shadow:
+    inset 0 2rpx 3rpx rgba(255, 190, 165, 0.28),
+    inset 0 -3rpx 5rpx rgba(50, 7, 4, 0.6);
+}
+// 烫金字：压进蜡里的凹凸感——上沿阴影 + 下沿反光，金箔渐变
+.rs-rec-seal-char {
+  position: relative;
+  z-index: 1;
+  display: block;
+  font-size: 30rpx;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+  font-family: "Xingkai SC", "STXingkai", "Kaiti SC", "KaiTi", "STKaiti", cursive, serif;
+  background: linear-gradient(180deg, #f8e3a0 0%, #f4c542 40%, #d19a1e 72%, #f4c542 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  // 凹凸（clip:text 下 text-shadow 会重影，用链式 drop-shadow 代替）：
+  // 上沿暗（凹进去的上侧吃不到光）→ 下沿亮（凹进去的下侧被照亮）→ 整字在凹盘里的投影
+  filter:
+    drop-shadow(0 -1rpx 1rpx rgba(52, 8, 5, 0.85))
+    drop-shadow(0 2rpx 2rpx rgba(255, 232, 170, 0.45))
+    drop-shadow(0 2rpx 3rpx rgba(52, 8, 5, 0.55));
+}
+
+// 地区 / 视角小标签（列表 meta 行）
+.rs-tag { font-size: 20rpx; padding: 2rpx 10rpx; border-radius: 6rpx; }
+.rs-tag--region { color: #a08ade; background: rgba(160, 138, 222, 0.14); }
+.rs-tag--persp { color: $rf-amber; background: rgba(212, 175, 55, 0.12); }
 
 // 筛选条（集成在 Head 区）—— 一行：日期 pill + 机构 pill + 只看推荐 + 只看海外机构研报（无边框）
 .rs-filter-bar { margin: 0 0 12rpx; padding: 0 2rpx; background: transparent; border: none; }
@@ -1182,4 +1295,56 @@ $spacing-base: 24rpx;
 .rs-menu-item-count { font-size: 22rpx; color: $app-text-muted; background: rgba(255, 184, 107, 0.08); padding: 4rpx 14rpx; border-radius: 999rpx; min-width: 56rpx; text-align: center; font-weight: 600; }
 .rs-menu-item-count--active { background: linear-gradient(135deg, $rf-amber 0%, $rf-orange 100%); color: $color-bg; }
 .rs-menu-item-tick { font-size: 32rpx; color: $rf-amber; font-weight: 800; flex: 0 0 auto; }
+
+// ─────────────────────────────────────────────────────────
+// 折叠屏/平板专属（H5，宽 700~1400px）：整页左右双栏。
+// 原理：rpx 按屏宽等比放大，折叠屏上字会变得过大；这里恢复直板机的
+// 物理尺寸（px），并把 head 变成左侧竖导航栏、body 为右侧内容区。
+// 直板机（< 700px）完全不命中，UI 不变。
+// ─────────────────────────────────────────────────────────
+@include fold-wide {
+  .rs-page.h5-mode { flex-direction: row; }
+
+  // 左栏 = head（标题 + 子tab + 筛选），竖排可滚
+  .rs-head {
+    flex: 0 0 250px;
+    width: 250px;
+    border-right: 1rpx solid $app-border;
+    padding: 16rpx 14rpx 24rpx;
+    overflow-y: auto;
+  }
+  .rs-title { font-size: 20px; letter-spacing: 1px; }
+  .rs-meta { font-size: 11px; line-height: 1.5; }
+  .rs-tabbar { flex-direction: column; gap: 8rpx; padding: 10rpx 0; }
+  .rs-tab { padding: 10rpx 12rpx; font-size: 14px; border-radius: $radius-base; }
+  .rs-filter-bar { margin: 4rpx 0 0; }
+  .rs-filter-row { flex-direction: column; align-items: stretch; gap: 8rpx; flex-wrap: wrap; }
+  .rs-filter-item { justify-content: space-between; }
+  .rs-filter-item--switch { margin-left: 0; justify-content: space-between; }
+  .rs-filter-item--switch .rs-filter-switch-label { flex: 0 0 auto; font-size: 12px; }
+  .rs-filter-label { font-size: 11px; }
+  .rs-filter-pill { padding: 4rpx 10rpx; }
+  .rs-filter-pill-text { font-size: 13px; }
+  .rs-checkbox { width: 18px; height: 18px; min-width: 18px; }
+  .rs-checkbox-tick { font-size: 12px; }
+
+  // 右栏 = 内容，恢复直板机字号
+  .rs-body { flex: 1; min-width: 0; padding: 12px 14px 12px; }
+  .rs-body--with-bar { padding-bottom: 12px; }
+  .rs-report-title { font-size: 15px; line-height: 1.45; }
+  .rs-report-chevron { font-size: 15px; }
+  .rs-fx-org, .rs-fx-date, .rs-fx-pages { font-size: 11px; }
+  .rs-ai-badge { font-size: 10px; }
+  .rs-tag { font-size: 10px; padding: 1px 7px; }
+  .rs-tldr-label, .rs-block-label { font-size: 12px; }
+  .rs-tldr-body { font-size: 14px; line-height: 1.6; }
+  .rs-li { font-size: 13.5px; }
+  .rs-section-title { font-size: 15px; }
+  .rs-note { font-size: 12px; }
+  .rs-btn { font-size: 13px; min-height: 34px; padding: 8px 14px; }
+  .rs-loadmore { font-size: 12px; }
+  .rs-empty { font-size: 13px; }
+  .rs-mine-search-input { min-height: 34px; font-size: 12px; }
+  .rs-mine-search-btn { min-height: 34px; font-size: 13px; }
+}
 </style>

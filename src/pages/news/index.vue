@@ -380,7 +380,7 @@ $rf-amber: #ffb86b;
 $rf-orange: rgba(255, 184, 107, 1);
 $rf-cream: #f5ecd9;
 $rf-muted: #a89a82;
-$color-bg: #0d1b2a;
+$color-bg: #0b0b0d;
 $color-card-bg: linear-gradient(180deg, rgba(255, 184, 107, 0.055), rgba(114, 247, 255, 0.025));
 $color-border: rgba(255, 184, 107, 0.24);
 $color-text-primary: #f5ecd9;
@@ -395,7 +395,11 @@ $radius-full: 999px;
 .news-page {
   min-height: 100vh;
   background: $color-bg;
-  padding: 24rpx 24rpx 150rpx;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 48px 48px;
+  padding: 24rpx 24rpx calc(160rpx + env(safe-area-inset-bottom, 0px));
 }
 
 /* H5：页面作为包含 head(固定) + body(滚动) 的容器，止于 tab 上沿 */
@@ -423,7 +427,7 @@ $radius-full: 999px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 0 24rpx 24rpx;
+  padding: 0 24rpx calc(140rpx + env(safe-area-inset-bottom, 0px));
 }
 .news-body::-webkit-scrollbar { width: 5rpx; }
 .news-body::-webkit-scrollbar-track { background: transparent; }
@@ -618,4 +622,32 @@ $radius-full: 999px;
   font-weight: 600;
 }
 
+// ─────────────────────────────────────────────────────────
+// 折叠屏/平板专属（H5，宽 700~1400px）：整页左右双栏。
+// 左栏 = head（全部/持仓 切换），右栏 = 快讯流。恢复直板机物理尺寸（px）。
+// 直板机（< 700px）不受影响。
+// ─────────────────────────────────────────────────────────
+@include fold-wide {
+  .news-page.h5-mode { flex-direction: row; }
+
+  .news-head {
+    flex: 0 0 240px;
+    width: 240px;
+    border-right: 1rpx solid $color-border;
+    padding: 16rpx 14rpx 24rpx;
+    overflow-y: auto;
+  }
+  .news-title { font-size: 20px; }
+  .news-hint { font-size: 11px; }
+  .news-source-strip { flex-direction: column; gap: 8rpx; padding: 10rpx 0; }
+  .news-source-chip { padding: 8rpx 12rpx; font-size: 14px; border-radius: $radius-md; width: 100%; box-sizing: border-box; justify-content: center; }
+
+  .news-body { flex: 1; min-width: 0; padding: 12px 14px 12px; }
+  .news-kw-title { font-size: 14px; }
+  .news-kw-sub { font-size: 11px; }
+  .news-kw-name { font-size: 13px; }
+  .news-kw-code { font-size: 11px; }
+  .news-item-title { font-size: 14px; }
+  .news-item-time { font-size: 11px; }
+}
 </style>

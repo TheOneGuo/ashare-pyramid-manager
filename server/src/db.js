@@ -177,6 +177,8 @@ CREATE TABLE IF NOT EXISTS fxbaogao_reports (
   ai_status   INTEGER NOT NULL DEFAULT 0,  -- 0=未精读 1=精读中 2=已精读
   report_type TEXT NOT NULL DEFAULT '',    -- stock/industry/macro/strategy/minutes/other（LLM 精读时权威更新）
   industry_name TEXT NOT NULL DEFAULT '',  -- fxbaogao 自带行业分类
+  region      TEXT NOT NULL DEFAULT '',    -- 研报涉及地区：CN/US/KR/JP/TW/HK/GLOBAL/OTHER（LLM 精读权威，启发式兜底）
+  perspective TEXT NOT NULL DEFAULT '',    -- 中资行业研报视角：产业/金融/供应链/技术/订单/认证
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_fxbaogao_pub_time ON fxbaogao_reports(pub_time DESC);
@@ -245,10 +247,12 @@ export async function initDb() {
     }
   }
   initialized = true;
-  await migrateHoldingsColumns();
-  await migrateNewsContent();
-  await migratePlansColumns();
-  await migrateFxbaogaoColumns();
+  // 迁移失败只告警、不抛错：保证 HTTP 服务总能拉起，数据库错误延迟到具体请求时再暴露
+  for (const fn of [migrateHoldingsColumns, migrateNewsContent, migratePlansColumns, migrateFxbaogaoColumns]) {
+    try { await fn(); } catch (e) {
+      console.warn('[db] migration skipped:', String(e?.message || e).slice(0, 120));
+    }
+  }
   console.log('[db] schema initialized (holdings migrated)');
 }
 
@@ -572,6 +576,41 @@ export function classifyFxbaogaoReport(title, orgName) {
   return 'other';
 }
 
+// 研报涉及地区启发式判定（LLM 精读前用；精读后由 LLM 权威值覆盖）
+// 返回 CN/US/KR/JP/TW/HK/GLOBAL/OTHER
+export function detectFxbaogaoRegion(title, orgName = '') {
+  const t = String(title || '').trim();
+  const s = t + ' ' + String(orgName || '').trim();
+  if (!t) return 'OTHER';
+  // 明确指中国/内地/大中华区
+  if (/中国|内地|大中华|中概|A股|沪|深|创业板|科创板/.test(s)) return 'CN';
+  // 美股/美国（注意「美国」优先于泛「美股」）
+  if (/美股|美国|US\b|NASDAQ|NYSE|S&P|标普|道琼斯|特斯拉|英伟达|苹果|微软|谷歌|亚马逊|Meta|Alphabet/.test(s)) return 'US';
+  if (/韩国|韩股|三星|SK海力士|现代汽车|LG化学|KOSPI/.test(s)) return 'KR';
+  if (/日本|日股|丰田|索尼|松下|任天堂|软银|日经|NIKKEI/.test(s)) return 'JP';
+  if (/台湾|台股|台积电|联发科|鸿海|富士康|联电|台达|TWSE/.test(s)) return 'TW';
+  if (/香港|港股|H股|恒生|港交所|中概股|腾讯|阿里|美团|小米|快手|京东/.test(s)) return 'HK';
+  if (/全球|海外|出海|国际市场|新兴市场|跨境/.test(s)) return 'GLOBAL';
+  // 未命中任何地区关键词：中资机构研报绝大多数聚焦中国/A股，默认按 CN；
+  // 外资机构研报保持 OTHER（宁可不猜也不误标，交由 LLM 精读权威判定）
+  if (orgName && !isForeignFxbaogaoOrg(orgName)) return 'CN';
+  return 'OTHER';
+}
+
+// 中资行业研报「视角」启发式判定（LLM 精读前用；精读后由 LLM 权威值覆盖）
+// 产业/金融/供应链/技术/订单/认证/''（无）
+export function detectFxbaogaoPerspective(title, orgName = '') {
+  const s = String(title || '').trim() + ' ' + String(orgName || '').trim();
+  if (!s.trim()) return '';
+  if (/认证|通过.{0,6}(验证|测试)|进入.{0,8}供应链|供应商认证|客户认证|体系认证|定点/.test(s)) return '认证';
+  if (/订单|在手订单|中标|新签订单|排产|产能利用率|交付/.test(s)) return '订单';
+  if (/技术|研发|专利|工艺|制程|创新|材料体系|技术路线|良率/.test(s)) return '技术';
+  if (/供应链|产业链|上下游|供应商|原材料|保供|环节/.test(s)) return '供应链';
+  if (/金融|银行|保险|券商|基金|资金|流动性|利率|信贷|估值|投资策略/.test(s)) return '金融';
+  if (/产业|行业|赛道|市场空间|格局|景气|趋势|深度/.test(s)) return '产业';
+  return '';
+}
+
 // 旧库迁移：fxbaogao_reports 增加 pdf_url / ai_status / report_type / industry_name 列
 // 海外 Turso 直连偶发 fetch failed：关键 DDL 带重试（幂等，列已存在时静默跳过）
 async function execRetry(sql, args = [], tries = 3) {
@@ -595,6 +634,8 @@ export async function migrateFxbaogaoColumns() {
     ['ai_status', 'INTEGER NOT NULL DEFAULT 0'],
     ['report_type', "TEXT NOT NULL DEFAULT ''"],
     ['industry_name', "TEXT NOT NULL DEFAULT ''"],
+    ['region', "TEXT NOT NULL DEFAULT ''"],
+    ['perspective', "TEXT NOT NULL DEFAULT ''"],
   ];
   for (const [col, type] of needed) {
     try {
@@ -607,7 +648,7 @@ export async function migrateFxbaogaoColumns() {
     }
   }
   // fxbaogao_ai 增加精读扩展列
-  for (const [col, type] of [['report_type', "TEXT NOT NULL DEFAULT ''"], ['extract_json', "TEXT NOT NULL DEFAULT '{}'"]]) {
+  for (const [col, type] of [['report_type', "TEXT NOT NULL DEFAULT ''"], ['extract_json', "TEXT NOT NULL DEFAULT '{}'"], ['region', "TEXT NOT NULL DEFAULT ''"], ['perspective', "TEXT NOT NULL DEFAULT ''"]]) {
     try {
       await execRetry(`ALTER TABLE fxbaogao_ai ADD COLUMN ${col} ${type}`);
       console.log(`[db] migrated fxbaogao_ai +${col}`);
@@ -619,6 +660,8 @@ export async function migrateFxbaogaoColumns() {
   }
   // report_type 索引（存量库列后建；失败不阻塞）
   try { await execRetry(`CREATE INDEX IF NOT EXISTS idx_fxbaogao_type ON fxbaogao_reports(report_type)`); } catch {}
+  // 每日新下载计数（额度预算：每天最多新下载 N 篇，21 点任务前查剩余额度）
+  try { await execRetry(`CREATE TABLE IF NOT EXISTS fxbaogao_daily_download (day TEXT PRIMARY KEY, cnt INTEGER NOT NULL DEFAULT 0)`); } catch {}
   // 存量清理：财报/公告类不是研报（披露季会刷屏 200 条配额），级联删精读结果（幂等）
   try {
     await execRetry(`DELETE FROM fxbaogao_ai WHERE report_id IN (SELECT report_id FROM fxbaogao_reports WHERE org_name='财报' OR org_name='公告' OR org_name LIKE '%公告%')`);
@@ -644,6 +687,29 @@ export async function migrateFxbaogaoColumns() {
     }
   } catch (e) {
     console.warn('[db] backfill report_type failed:', String(e?.message || '').slice(0, 80));
+  }
+  // 存量回填 region / perspective（新列默认空；按标题启发式，LLM 精读后会被权威值覆盖）
+  // 除空值外，把「启发式判为 OTHER」且「尚未 LLM 精读」的行也重算一次（吸收启发式改进，如中资默认 CN）；
+  // ai_status=2（LLM 精读过）的行保持 LLM 权威值，不被启发式覆盖。
+  try {
+    const r0 = await execRetry(`SELECT report_id, title, org_name FROM fxbaogao_reports WHERE (region='' OR region IS NULL OR (ai_status <> 2 AND region = 'OTHER'))`);
+    const rows = r0?.rows || [];
+    if (rows.length > 0) {
+      const stmts = rows.map((row) => ({
+        sql: `UPDATE fxbaogao_reports SET region=?, perspective=? WHERE report_id=?`,
+        args: [
+          detectFxbaogaoRegion(row.title, row.org_name),
+          detectFxbaogaoPerspective(row.title, row.org_name),
+          Number(row.report_id),
+        ],
+      }));
+      for (let i = 0; i < stmts.length; i += 50) {
+        await execRetryBatch(stmts.slice(i, i + 50));
+      }
+      console.log(`[db] backfilled region/perspective for ${rows.length} fxbaogao rows`);
+    }
+  } catch (e) {
+    console.warn('[db] backfill region/perspective failed:', String(e?.message || '').slice(0, 80));
   }
 }
 
@@ -1061,12 +1127,13 @@ export async function upsertFxbaogaoReports(list) {
     const t = Number(r.pubTime || 0);
     const sec = t >= 1e12 ? Math.floor(t / 1000) : t;
     return {
-      sql: `INSERT INTO fxbaogao_reports(report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,source_range,pdf_url,ai_status,report_type,industry_name,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      sql: `INSERT INTO fxbaogao_reports(report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,source_range,pdf_url,ai_status,report_type,industry_name,region,perspective,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(report_id) DO UPDATE SET
               title=excluded.title, org_name=excluded.org_name, page_num=excluded.page_num,
               pub_time=excluded.pub_time, pub_date=excluded.pub_date, recommended=excluded.recommended,
-              categories=excluded.categories, source_range=excluded.source_range, industry_name=excluded.industry_name`,
+              categories=excluded.categories, source_range=excluded.source_range, industry_name=excluded.industry_name,
+              region=excluded.region, perspective=excluded.perspective`,
       args: [
         Number(r.reportId) || 0,
         String(r.title || '').slice(0, 300),
@@ -1081,6 +1148,8 @@ export async function upsertFxbaogaoReports(list) {
         0,
         classifyFxbaogaoReport(r.title, r.orgName),
         String(r.industryName || '').slice(0, 60),
+        detectFxbaogaoRegion(r.title, r.orgName),
+        detectFxbaogaoPerspective(r.title, r.orgName),
         now,
       ],
     };
@@ -1101,25 +1170,83 @@ export async function updateFxbaogaoPdfUrl(reportId, url) {
 // 外资/海外机构关键词（LIKE 模式，用于「全部研报」优先排序）
 const FOREIGN_ORG_LIKE = ['%高盛%', '%摩根%', '%瑞银%', '%美银%', '%花旗%', '%巴克莱%', '%德意志%', '%瑞信%', '%野村%', '%大和%', '%富瑞%', '%法兴%', '%麦格理%', '%里昂%', '%汇丰%', '%渣打%', '%伯恩斯坦%', '%奥本海默%', '%盛博%', '%Jefferies%', '%Morgan%', '%Goldman%', '%UBS%', '%JPMorgan%', '%Citibank%', '%BofA%', '%Barclays%', '%Nomura%', '%Daiwa%', '%CLSA%', '%Macquarie%', '%HSBC%', '%Bernstein%', '%Deutsche%', '%Societe%', '%Citi%'];
 
+// 机构是否为外资/海外（与排序同源：命中 FOREIGN_ORG_LIKE 即外资）
+function isForeignFxbaogaoOrg(orgName) {
+  const n = String(orgName || '').trim();
+  if (!n) return false;
+  return FOREIGN_ORG_LIKE.some((p) => n.includes(p.slice(1, -1)));
+}
+
 // 分页读取（按 pub_time 倒序），支持时间范围过滤（startMs/endMs 均为毫秒，库内为秒，自动换算）
 // includeStock=false：排除个股研报（留给「持仓和自选个股研报」tab）
-// 排序优先级：外资研报 → 推荐研报 → 行业研究/宏观策略 → 会议纪要 → 其他，同档按时间倒序
+// 展现优先级（已拍板）：
+//   外资研报：中国行业 → 美国行业 → 韩国/日本/台湾/香港行业 → 中国宏观策略 → 美国宏观策略 → 韩/日/台/港宏观策略 → 个股
+//   中资研报：中国行业（产业→金融→供应链→技术→订单→认证视角）→ 其余同外资层级
+//   同档：推荐优先 → 时间倒序
 export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0, endMs = 0, includeStock = false } = {}) {
-  const wheres = ["(org_name IS NULL OR (org_name <> '财报' AND org_name <> '公告' AND org_name NOT LIKE '%公告%'))"];
+  const wheres = ["(f.org_name IS NULL OR (f.org_name <> '财报' AND f.org_name <> '公告' AND f.org_name NOT LIKE '%公告%'))"];
   const args = [];
-  if (!includeStock) wheres.push("IFNULL(report_type,'') <> 'stock'");
-  if (startMs > 0) { wheres.push('pub_time >= ?'); args.push(Math.floor(startMs / 1000)); }
-  if (endMs > 0) { wheres.push('pub_time <= ?'); args.push(Math.floor(endMs / 1000)); }
+  if (!includeStock) wheres.push("IFNULL(f.report_type,'') <> 'stock'");
+  if (startMs > 0) { wheres.push('f.pub_time >= ?'); args.push(Math.floor(startMs / 1000)); }
+  if (endMs > 0) { wheres.push('f.pub_time <= ?'); args.push(Math.floor(endMs / 1000)); }
   const whereSql = 'WHERE ' + wheres.join(' AND ');
-  const foreignCase = FOREIGN_ORG_LIKE.map(() => 'org_name LIKE ?').join(' OR ');
-  const sql = `SELECT report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,pdf_url,ai_status,report_type,industry_name FROM fxbaogao_reports ${whereSql}
+  const foreignCase = FOREIGN_ORG_LIKE.map(() => 'f.org_name LIKE ?').join(' OR ');
+  const sql = `SELECT f.report_id,f.title,f.org_name,f.page_num,f.pub_time,f.pub_date,f.recommended,f.categories,f.pdf_url,f.ai_status,f.report_type,f.industry_name,f.region,f.perspective
+    FROM fxbaogao_reports f
+    LEFT JOIN fxbaogao_ai a ON a.report_id = f.report_id
+    ${whereSql}
     ORDER BY
+      -- 0. 已精读优先：按最新精读时间倒序置顶（每次阅读都能看到最新精读的更新）
+      CASE WHEN IFNULL(f.ai_status,0) = 2 THEN 0 ELSE 1 END ASC,
+      COALESCE(a.updated_at, 0) DESC,
+      -- 1. 外资优先
       CASE WHEN (${foreignCase}) THEN 0 ELSE 1 END ASC,
-      recommended DESC,
-      CASE IFNULL(report_type,'') WHEN 'industry' THEN 0 WHEN 'macro' THEN 1 WHEN 'strategy' THEN 1 WHEN 'minutes' THEN 2 ELSE 3 END ASC,
-      pub_time DESC
+      -- 2. 类型+地区层级（外资：中国行业→美国行业→韩日台港行业→中国宏观策略→美国宏观策略→韩日台港宏观策略→个股；中资同层级）
+      CASE
+        WHEN IFNULL(f.report_type,'') = 'industry' THEN
+          CASE f.region
+            WHEN 'CN' THEN 0
+            WHEN 'US' THEN 1
+            WHEN 'KR' THEN 2
+            WHEN 'JP' THEN 3
+            WHEN 'TW' THEN 4
+            WHEN 'HK' THEN 5
+            ELSE 6
+          END
+        WHEN IFNULL(f.report_type,'') IN ('macro','strategy') THEN
+          CASE f.region
+            WHEN 'CN' THEN 10
+            WHEN 'US' THEN 11
+            WHEN 'KR' THEN 12
+            WHEN 'JP' THEN 13
+            WHEN 'TW' THEN 14
+            WHEN 'HK' THEN 15
+            ELSE 16
+          END
+        WHEN IFNULL(f.report_type,'') = 'stock' THEN 20
+        WHEN IFNULL(f.report_type,'') = 'minutes' THEN 25
+        ELSE 30
+      END ASC,
+      -- 3. 中资中国行业研报按视角排序（产业→金融→供应链→技术→订单→认证）
+      CASE
+        WHEN (${foreignCase}) = 0 AND IFNULL(f.report_type,'') = 'industry' AND f.region = 'CN' THEN
+          CASE f.perspective
+            WHEN '产业' THEN 0
+            WHEN '金融' THEN 1
+            WHEN '供应链' THEN 2
+            WHEN '技术' THEN 3
+            WHEN '订单' THEN 4
+            WHEN '认证' THEN 5
+            ELSE 6
+          END
+        ELSE 0
+      END ASC,
+      -- 4. 同档内推荐优先
+      f.recommended DESC,
+      -- 5. 时间倒序
+      f.pub_time DESC
     LIMIT ? OFFSET ?`;
-  args.push(...FOREIGN_ORG_LIKE, Math.min(Math.max(Number(limit) || 20, 1), 200), Math.max(Number(offset) || 0, 0));
+  args.push(...FOREIGN_ORG_LIKE, ...FOREIGN_ORG_LIKE, Math.min(Math.max(Number(limit) || 20, 1), 200), Math.max(Number(offset) || 0, 0));
   const r = await client.execute({ sql, args });
   return r.rows.map((row) => ({
     reportId: Number(row.report_id),
@@ -1134,6 +1261,8 @@ export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0,
     aiStatus: Number(row.ai_status || 0),
     reportType: String(row.report_type || ''),
     industryName: String(row.industry_name || ''),
+    region: String(row.region || ''),
+    perspective: String(row.perspective || ''),
   }));
 }
 
@@ -1180,15 +1309,16 @@ export async function maxUnrefinedCount() {
 // fxbaogao 研报 AI 精读（与原文分开存储）
 // =====================================================
 
-export async function upsertFxbaogaoAi({ report_id, title, broker, source_url, raw_text, tldr, key_points, opportunities, risks, status, model, report_type = '', extract = null }) {
+export async function upsertFxbaogaoAi({ report_id, title, broker, source_url, raw_text, tldr, key_points, opportunities, risks, status, model, report_type = '', region = '', perspective = '', extract = null }) {
   const now = Date.now();
   await client.execute({
-    sql: `INSERT INTO fxbaogao_ai(report_id,title,broker,source_url,raw_text,tldr,key_points,opportunities,risks,status,model,report_type,extract_json,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    sql: `INSERT INTO fxbaogao_ai(report_id,title,broker,source_url,raw_text,tldr,key_points,opportunities,risks,status,model,report_type,region,perspective,extract_json,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
           ON CONFLICT(report_id) DO UPDATE SET
             title=excluded.title, broker=excluded.broker, source_url=excluded.source_url, raw_text=excluded.raw_text,
             tldr=excluded.tldr, key_points=excluded.key_points, opportunities=excluded.opportunities,
             risks=excluded.risks, status=excluded.status, model=excluded.model, report_type=excluded.report_type,
+            region=excluded.region, perspective=excluded.perspective,
             extract_json=excluded.extract_json, updated_at=excluded.updated_at`,
     args: [
       Number(report_id),
@@ -1203,21 +1333,23 @@ export async function upsertFxbaogaoAi({ report_id, title, broker, source_url, r
       String(status || 'refined-llm'),
       String(model || '').slice(0, 40),
       String(report_type || '').slice(0, 20),
+      String(region || '').slice(0, 10),
+      String(perspective || '').slice(0, 20),
       JSON.stringify(extract && typeof extract === 'object' ? extract : {}).slice(0, 20000),
       now,
       now,
     ],
   });
-  // 同步标记索引表 ai_status = 2（已精读）；report_type 用 LLM 权威值覆盖启发式
+  // 同步标记索引表 ai_status = 2（已精读）；report_type/region/perspective 用 LLM 权威值覆盖启发式
   await client.execute({
-    sql: `UPDATE fxbaogao_reports SET ai_status=2, report_type=? WHERE report_id=?`,
-    args: [String(report_type || '').slice(0, 20), Number(report_id)],
+    sql: `UPDATE fxbaogao_reports SET ai_status=2, report_type=?, region=?, perspective=? WHERE report_id=?`,
+    args: [String(report_type || '').slice(0, 20), String(region || '').slice(0, 10), String(perspective || '').slice(0, 20), Number(report_id)],
   });
 }
 
 export async function getFxbaogaoAi(report_id) {
   const r = await client.execute({
-    sql: `SELECT report_id,title,broker,source_url,raw_text,tldr,key_points,opportunities,risks,status,model,report_type,extract_json,created_at,updated_at FROM fxbaogao_ai WHERE report_id=?`,
+    sql: `SELECT report_id,title,broker,source_url,raw_text,tldr,key_points,opportunities,risks,status,model,report_type,region,perspective,extract_json,created_at,updated_at FROM fxbaogao_ai WHERE report_id=?`,
     args: [Number(report_id)],
   });
   if (!r.rows.length) return null;
@@ -1235,6 +1367,8 @@ export async function getFxbaogaoAi(report_id) {
     status: String(row.status || ''),
     model: String(row.model || ''),
     report_type: String(row.report_type || ''),
+    region: String(row.region || ''),
+    perspective: String(row.perspective || ''),
     extract: safeJson(row.extract_json),
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
@@ -1286,12 +1420,45 @@ export async function searchFxbaogaoByStock(codes = [], names = []) {
   }));
 }
 
-// 取"已入库但尚未精读"的研报（供后台 15 分钟任务消费），limit 可限流
+// 取"已入库但尚未精读"的研报（供后台 15 分钟任务消费），limit 可限流。
+// 分工约定：线上库只精读「全部研报 AI 精读」列表覆盖的非个股研报
+// （外资/推荐/行业/宏观/策略/纪要等综合性信息，report_type in industry/macro/strategy/minutes/other/_''）；
+// 个股研报（report_type='stock'）由前端「持仓和自选个股研报」本地 LLM 即时精读，不入线上队列。
 export async function listUnrefinedFxbaogao(limit = 20) {
   const cap = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const foreignCase = FOREIGN_ORG_LIKE.map(() => 'org_name LIKE ?').join(' OR ');
   const r = await client.execute({
-    sql: `SELECT report_id,title,org_name,page_num,pub_time,pub_date FROM fxbaogao_reports WHERE ai_status=0 AND (org_name IS NULL OR (org_name <> '财报' AND org_name <> '公告' AND org_name NOT LIKE '%公告%')) ORDER BY pub_time DESC LIMIT ?`,
-    args: [cap],
+    sql: `SELECT report_id,title,org_name,page_num,pub_time,pub_date,pdf_url FROM fxbaogao_reports
+      WHERE ai_status=0
+        AND (org_name IS NULL OR (org_name <> '财报' AND org_name <> '公告' AND org_name NOT LIKE '%公告%'))
+        AND IFNULL(report_type,'') <> 'stock'
+      ORDER BY
+        -- 与 listFxbaogaoReports 一致：外资优先 → 类型+地区层级 → 中资中国行业视角 → 同档推荐 → 时间倒序
+        CASE WHEN (${foreignCase}) THEN 0 ELSE 1 END ASC,
+        CASE
+          WHEN IFNULL(report_type,'') = 'industry' THEN
+            CASE region
+              WHEN 'CN' THEN 0 WHEN 'US' THEN 1 WHEN 'KR' THEN 2 WHEN 'JP' THEN 3 WHEN 'TW' THEN 4 WHEN 'HK' THEN 5 ELSE 6
+            END
+          WHEN IFNULL(report_type,'') IN ('macro','strategy') THEN
+            CASE region
+              WHEN 'CN' THEN 10 WHEN 'US' THEN 11 WHEN 'KR' THEN 12 WHEN 'JP' THEN 13 WHEN 'TW' THEN 14 WHEN 'HK' THEN 15 ELSE 16
+            END
+          WHEN IFNULL(report_type,'') = 'stock' THEN 20
+          WHEN IFNULL(report_type,'') = 'minutes' THEN 25
+          ELSE 30
+        END ASC,
+        CASE
+          WHEN (${foreignCase}) = 0 AND IFNULL(report_type,'') = 'industry' AND region = 'CN' THEN
+            CASE perspective
+              WHEN '产业' THEN 0 WHEN '金融' THEN 1 WHEN '供应链' THEN 2 WHEN '技术' THEN 3 WHEN '订单' THEN 4 WHEN '认证' THEN 5 ELSE 6
+            END
+          ELSE 0
+        END ASC,
+        recommended DESC,
+        pub_time DESC
+      LIMIT ?`,
+    args: [...FOREIGN_ORG_LIKE, ...FOREIGN_ORG_LIKE, cap],
   });
   return r.rows.map((row) => ({
     reportId: Number(row.report_id),
@@ -1300,7 +1467,71 @@ export async function listUnrefinedFxbaogao(limit = 20) {
     pageNum: Number(row.page_num || 0),
     pubTime: Number(row.pub_time || 0),
     pubTimeStr: String(row.pub_date || ''),
+    pdfUrl: /^https?:\/\//i.test(String(row.pdf_url || '')) ? String(row.pdf_url) : '',
   }));
+}
+
+// ── 每日 21 点下载任务 ─────────────────────────────────
+// 候选池：未精读的外资 行业/宏观 研报，按「中国行业→美国行业→韩日台港行业→
+// 中国宏观→美国宏观→韩日台港宏观」层级排序（region/report_type 为启发式回填值，
+// 任务运行时由 LLM 按标题权威判定并重排）。题材筛选（7 大主题）由 LLM 完成。
+export async function listFxbaogaoDailyCandidates(limit = 300) {
+  const cap = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  const foreignCase = FOREIGN_ORG_LIKE.map(() => 'org_name LIKE ?').join(' OR ');
+  const r = await client.execute({
+    sql: `SELECT report_id,title,org_name,recommended,pub_time,pub_date,pdf_url,report_type,region
+      FROM fxbaogao_reports
+      WHERE ai_status=0
+        AND (${foreignCase})
+        AND IFNULL(report_type,'') IN ('industry','macro')
+      ORDER BY
+        CASE
+          WHEN IFNULL(report_type,'') = 'industry' THEN
+            CASE region WHEN 'CN' THEN 0 WHEN 'US' THEN 1 WHEN 'KR' THEN 2 WHEN 'JP' THEN 3 WHEN 'TW' THEN 4 WHEN 'HK' THEN 5 ELSE 6 END
+          ELSE
+            CASE region WHEN 'CN' THEN 10 WHEN 'US' THEN 11 WHEN 'KR' THEN 12 WHEN 'JP' THEN 13 WHEN 'TW' THEN 14 WHEN 'HK' THEN 15 ELSE 16 END
+        END ASC,
+        recommended DESC,
+        pub_time DESC
+      LIMIT ?`,
+    args: [...FOREIGN_ORG_LIKE, cap],
+  });
+  return r.rows.map((row) => ({
+    reportId: Number(row.report_id),
+    title: String(row.title || ''),
+    orgName: String(row.org_name || ''),
+    recommended: Number(row.recommended || 0) === 1,
+    pubTime: Number(row.pub_time || 0),
+    pubTimeStr: String(row.pub_date || ''),
+    pdfUrl: /^https?:\/\//i.test(String(row.pdf_url || '')) ? String(row.pdf_url) : '',
+    reportType: String(row.report_type || ''),
+    region: String(row.region || ''),
+  }));
+}
+
+// 当日已新下载的 PDF 数量（服务器本地时区自然日）
+function localDayKey() {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+export async function getPdfDownloadsToday() {
+  try {
+    const r = await client.execute({ sql: `SELECT cnt FROM fxbaogao_daily_download WHERE day=?`, args: [localDayKey()] });
+    return Number(r.rows?.[0]?.cnt || 0);
+  } catch { return 0; }
+}
+export async function incrPdfDownloadsToday(n = 1) {
+  try {
+    await client.execute({
+      sql: `INSERT INTO fxbaogao_daily_download(day,cnt) VALUES(?,?)
+        ON CONFLICT(day) DO UPDATE SET cnt=cnt+excluded.cnt`,
+      args: [localDayKey(), Math.max(0, Number(n) || 1)],
+    });
+  } catch (e) {
+    console.warn('[db] incrPdfDownloadsToday:', String(e?.message || '').slice(0, 80));
+  }
 }
 
 // 将某条研报标记为"精读中"，避免多实例重复消费

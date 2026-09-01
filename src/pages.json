@@ -31,7 +31,7 @@
     "custom": true,
     "color": "#8A8A8E",
     "selectedColor": "#D4AF37",
-    "backgroundColor": "#0D1B2A",
+    "backgroundColor": "#0b0b0d",
     "list": [
       {
         "pagePath": "pages/news/index",
@@ -56,6 +56,6 @@
     "navigationBarTextStyle": "white",
     "navigationBarTitleText": "节节高",
     "navigationBarBackgroundColor": "#0D1B2A",
-    "backgroundColor": "#0D1B2A"
+    "backgroundColor": "#0b0b0d"
   }
 }

@@ -16,4 +16,15 @@ onHide(() => {
 .uni-tabbar {
   display: none !important;
 }
+
+/* 保留项：墨色基底 + 细衬线字体 + 极淡账本网格底纹（其余沿用原深蓝+金配色） */
+page {
+  background-color: #0b0b0d;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 48px 48px;
+  font-family: "Noto Serif SC", "Songti SC", "SimSun", serif;
+  font-weight: 400;
+}
 </style>

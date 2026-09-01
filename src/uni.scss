@@ -17,7 +17,7 @@ $uni-text-color-placeholder: #808080;
 $uni-text-color-disable: #c0c0c0;
 
 /* 背景颜色 */
-$uni-bg-color: #0D1B2A;
+$uni-bg-color: #0b0b0d;
 $uni-bg-color-grey: #152739;
 $uni-bg-color-hover: #1B2C3F;
 $uni-bg-color-mask: rgba(0, 0, 0, 0.4);
@@ -62,13 +62,16 @@ $uni-font-size-subtitle: 32rpx;
 $uni-color-paragraph: #D5D5DA;
 $uni-font-size-paragraph: 28rpx;
 
+// 断点 mixin（sm/md/lg/xl/fold-wide），随 uni.scss 全局注入所有组件
+@import '@/styles/breakpoints.scss';
+
 
 /**
  * 节节高项目自定义变量（追加在下方，全局可访问）
  * 详见 src/styles/theme.scss 注释
  */
 
-$app-bg:          #0D1B2A;
+$app-bg:          #0b0b0d;
 $app-card-bg:     #152739;
 $app-border:      rgba(212, 175, 55, 0.18);
 $app-text:        #F5F5F7;

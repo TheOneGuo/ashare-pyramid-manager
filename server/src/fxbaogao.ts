@@ -7,6 +7,9 @@
 // 凭证：FXBAOGAO_API_KEY 走 .env，绝不在日志/响应里出现完整 key
 
 import { env } from 'node:process'
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 
 const API_KEY = (env.FXBAOGAO_API_KEY || '').trim()
 const ENDPOINT = 'https://api.fxbaogao.com/mcp/'
@@ -66,6 +69,11 @@ async function rpcCall<T = any>(toolName: string, args: Record<string, any>): Pr
   if (data?.error) {
     throw new Error(`fxbaogao RPC error: ${data.error.message || JSON.stringify(data.error)}`)
   }
+  // MCP 显式错误标记
+  if (data?.result?.isError) {
+    const errText = String(data?.result?.content?.[0]?.text || 'unknown error').slice(0, 150)
+    throw new Error(`fxbaogao tool error: ${errText}`)
+  }
   // result.content[0].text 是 JSON 字符串
   const txt: string = data?.result?.content?.[0]?.text
   if (!txt) {
@@ -73,6 +81,15 @@ async function rpcCall<T = any>(toolName: string, args: Record<string, any>): Pr
       throw new Error(`fxbaogao tool error: ${txt || 'unknown'}`)
     }
     return [] as unknown as T
+  }
+  // 服务端频控/业务错误：返回非 JSON 的错误文本（如「请求超速」），直接抛错，
+  // 避免把错误文案当成合法数据（例如被当作 PDF URL）往下游传。
+  const trimmed = txt.trim()
+  if (!/^[\[{]/u.test(trimmed) && !/^https?:\/\//i.test(trimmed)) {
+    // 期望 get_pdf_url 返回 URL 字符串，其余非 JSON 文本按错误处理
+    if (/超速|限流|失败|错误|无效|异常|权益|用完|未登录|需登录|权限|too\s*many|rate\s*limit|error|invalid/i.test(txt)) {
+      throw new Error(`fxbaogao tool error: ${txt.slice(0, 150)}`)
+    }
   }
   // 解析失败兜底
   try { return JSON.parse(txt) as T } catch { return txt as unknown as T }
@@ -159,32 +176,178 @@ export async function getFxbaogaoParagraphs(args: { reportId: number; keyword?: 
   return resp
 }
 
-export async function getFxbaogaoPdfUrl(args: { reportId: number }): Promise<string> {
+// ── get_pdf_url 限流/额度熔断 ──────────────────────────────
+// fxbaogao 下载接口有严格频控（返回「请求超速」code 300013），且受账号月度下载额度约束
+// （高级VIP 约 600 篇/月，超限返回「权益已用完」）。一旦触发就全局熔断一段时间，
+// 期间所有 get_pdf_url 直接快速失败，避免反复重试把剩余额度/时间窗口烧光。
+let pdfUrlBlockedUntil = 0
+let pdfUrlBlockReason = ''
+const PDF_URL_BLOCK_RATE_MS = 30 * 60 * 1000      // 限流（请求超速）：熔断 30 分钟
+const PDF_URL_BLOCK_QUOTA_MS = 8 * 60 * 60 * 1000 // 额度（权益已用完）：熔断 8 小时
+
+export function isPdfUrlBlocked(): { blocked: boolean; until: number; reason: string } {
+  if (Date.now() < pdfUrlBlockedUntil) return { blocked: true, until: pdfUrlBlockedUntil, reason: pdfUrlBlockReason }
+  return { blocked: false, until: 0, reason: '' }
+}
+function blockPdfUrl(reason: string, ms: number) {
+  pdfUrlBlockReason = reason
+  pdfUrlBlockedUntil = Math.max(pdfUrlBlockedUntil, Date.now() + ms)
+}
+export function resetPdfUrlBlock() {
+  pdfUrlBlockedUntil = 0
+  pdfUrlBlockReason = ''
+}
+
+// 从直链提取 auth_key 过期时间（秒）。无 auth_key → 返回 0（无法判定，乐观视为可用）
+function pdfUrlAuthExpiry(url: string): number {
+  const m = String(url || '').match(/auth_key=(\d{10})/)
+  return m ? Number(m[1]) : 0
+}
+// 缓存直链是否仍有效：无 auth_key 时乐观可用；有 auth_key 时必须在过期前（留 5 分钟余量）
+function isCachedPdfUrlUsable(url: string): boolean {
+  const exp = pdfUrlAuthExpiry(url)
+  if (!exp) return /^https?:\/\//i.test(String(url || ''))
+  return exp > Math.floor(Date.now() / 1000) + 300
+}
+
+// get_pdf_url 有严格频控，连续调用会返回「请求超速」；做最小间隔限速 + 退避重试
+let lastPdfUrlAt = 0
+const PDF_URL_MIN_INTERVAL_MS = 800
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+// ── 每日新下载预算（21 点任务专用） ────────────────────
+// index.js 注入两个钩子：
+//   downloadGuard：返回是否还允许「新签发」下载（剩额度 > 0）——决定是否消耗月度额度
+//   newDownloadHook：get_pdf_url 成功签发后回调（当日新下载数 +1）
+// 手动精读（refine-batch / ingest）不注入 guard，不受预算限制。
+let downloadGuard: (() => boolean) | null = null
+let newDownloadHook: ((reportId: number) => void) | null = null
+export function setDownloadGuard(fn: (() => boolean) | null) { downloadGuard = fn }
+export function setNewDownloadHook(fn: ((reportId: number) => void) | null) { newDownloadHook = fn }
+
+export async function getFxbaogaoPdfUrl(args: { reportId: number }, attempt = 0): Promise<string> {
   const cacheKey = `u:${args.reportId}`
   const cached = getCached<string>(cacheKey)
   if (cached) return cached
-  const data = await rpcCall<string>('get_pdf_url', { reportId: args.reportId })
-  // data 可能是字符串 URL 或对象
-  let url = ''
-  if (typeof data === 'string') {
-    // 抓 URL
-    const m = data.match(/https?:\/\/[^\s'"<>]+\.pdf\?[^\s'"<>]+/i)
-    url = m ? m[0] : data.replace(/^["']|["']$/g, '')
-  } else if (data && typeof data === 'object') {
-    url = String(data.url || data.pdfUrl || data.downloadUrl || '')
+  // 熔断：快速失败，不再消耗调用次数
+  const blk = isPdfUrlBlocked()
+  if (blk.blocked) throw new Error(`fxbaogao 下载接口暂时受限：${blk.reason}，请稍后再试`)
+  // 每日预算：21 点任务到达上限后，新签发直接失败（cached 命中/复用直链不受影响）
+  if (downloadGuard && !downloadGuard()) {
+    throw new Error('今日新下载预算已用完（19 篇），请明日 21 点任务再下载新研报')
   }
-  setCached(cacheKey, url)
-  return url
+  const wait = PDF_URL_MIN_INTERVAL_MS - (Date.now() - lastPdfUrlAt)
+  if (wait > 0) await sleepMs(wait)
+  try {
+    const data = await rpcCall<any>('get_pdf_url', { reportId: args.reportId })
+    // data 可能是字符串 URL 或对象
+    let url = ''
+    if (typeof data === 'string') {
+      // 抓 URL
+      const m = data.match(/https?:\/\/[^\s'"<>]+/i)
+      url = m ? m[0] : ''
+    } else if (data && typeof data === 'object') {
+      url = String(data.url || data.pdfUrl || data.downloadUrl || '')
+    }
+    lastPdfUrlAt = Date.now()
+    // 校验：必须返回合法 http(s) 直链，否则视为失败（不缓存错误值，留给下游重试）
+    if (!/^https?:\/\/[^\s]+$/i.test(url)) {
+      if (attempt < 2) {
+        await sleepMs(1000 * (attempt + 1))
+        return getFxbaogaoPdfUrl(args, attempt + 1)
+      }
+      throw new Error(`fxbaogao: invalid/empty pdf url: ${String(url || data || '').slice(0, 60)}`)
+    }
+    setCached(cacheKey, url)
+    // 成功签发 = 消耗 1 次下载额度 → 当日计数 +1（21 点任务预算用）
+    if (newDownloadHook) { try { newDownloadHook(Number(args.reportId)) } catch {} }
+    return url
+  } catch (e) {
+    lastPdfUrlAt = Date.now()
+    const msg = String(e?.message || e)
+    // 限流/额度：设置熔断，向上抛清晰错误
+    if (/请求超速|超速|限流|too\s*many|rate\s*limit/i.test(msg)) {
+      blockPdfUrl('下载接口限流（请求超速）', PDF_URL_BLOCK_RATE_MS)
+      throw new Error('fxbaogao 下载接口限流（请求超速），系统已自动暂停下载，请稍后再试')
+    }
+    if (/权益|用完|额度|quota|exhaust/i.test(msg)) {
+      blockPdfUrl('本月下载额度已用尽', PDF_URL_BLOCK_QUOTA_MS)
+      throw new Error('fxbaogao 本月下载额度已用尽，暂时无法下载新 PDF，请下月或升级会员后再试')
+    }
+    if (attempt < 2) {
+      await sleepMs(1000 * (attempt + 1))
+      return getFxbaogaoPdfUrl(args, attempt + 1)
+    }
+    throw e
+  }
+}
+
+// ── 本地磁盘 PDF 缓存 ─────────────────────────────────────
+// 每次成功下载的 PDF 落盘缓存。之后精读/重试同一 reportId 直接读本地，
+// 不再消耗 get_pdf_url 调用次数与月度下载额度。
+// 版权约束：已购研报仅供用户本人使用，缓存目录不入 git（server/.gitignore 已加 data/）。
+const PDF_CACHE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../data/fxbaogao-pdfs')
+function pdfCachePath(reportId: number): string {
+  return path.join(PDF_CACHE_DIR, `${Number(reportId)}.pdf`)
+}
+export function hasCachedPdf(reportId: number): boolean {
+  try { return existsSync(pdfCachePath(reportId)) } catch { return false }
+}
+function readCachedPdf(reportId: number): Buffer | null {
+  try {
+    const p = pdfCachePath(reportId)
+    if (!existsSync(p)) return null
+    const buf = readFileSync(p)
+    if (buf.length < 2000) return null // 太小的视为坏缓存，重新下载
+    return buf
+  } catch { return null }
+}
+export function saveCachedPdf(reportId: number, buf: Buffer) {
+  try {
+    if (!buf || buf.length < 2000) return
+    mkdirSync(PDF_CACHE_DIR, { recursive: true })
+    writeFileSync(pdfCachePath(reportId), buf)
+  } catch {}
 }
 
 // 下载 PDF 到 buffer（供后端解析文本用）
-export async function downloadFxbaogaoPdf(args: { reportId: number }): Promise<Buffer> {
-  const url = await getFxbaogaoPdfUrl(args)
+// 第一优先：本地磁盘缓存（免费）；其次：DB 缓存直链（不消耗 get_pdf_url 额度）；
+// 最后才走 get_pdf_url（消耗额度，有频控/额度熔断兜底）。
+export async function downloadFxbaogaoPdf(args: { reportId: number }, knownUrl = ''): Promise<Buffer> {
+  // 1) 磁盘缓存命中：直接返回，完全不占线上额度
+  const cachedBuf = readCachedPdf(Number(args.reportId))
+  if (cachedBuf) return cachedBuf
+  // 2) 已知直链未过期优先
+  const isKnownUsable = isCachedPdfUrlUsable(knownUrl)
+  let url = isKnownUsable ? knownUrl : ''
+  if (!url) url = await getFxbaogaoPdfUrl(args)
   if (!url) throw new Error('fxbaogao: empty pdf url')
-  const r = await fetch(url, { headers: { 'User-Agent': 'ashare-pyramid-manager/1.0' } })
-  if (!r.ok) throw new Error(`fxbaogao PDF download failed: HTTP ${r.status}`)
-  const ab = await r.arrayBuffer()
-  return Buffer.from(ab)
+  if (!/^https?:\/\//i.test(url)) throw new Error(`fxbaogao: invalid pdf url: ${String(url).slice(0, 60)}`)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetch(url, { headers: { 'User-Agent': 'ashare-pyramid-manager/1.0' } })
+      if (!r.ok) {
+        // 403/404/410：auth_key 过期或链接失效 → 且已知直链不可用时刷新一次
+        if (attempt === 0 && !isKnownUsable && (r.status === 403 || r.status === 404 || r.status === 410)) {
+          url = await getFxbaogaoPdfUrl(args)
+          continue
+        }
+        throw new Error(`fxbaogao PDF download failed: HTTP ${r.status}`)
+      }
+      const ab = await r.arrayBuffer()
+      const buf = Buffer.from(ab)
+      saveCachedPdf(Number(args.reportId), buf) // 3) 下载成功即落盘，此后免费复用
+      return buf
+    } catch (e) {
+      // 已知直链下载时网络失败/失效 → 刷新直链重试一次（限流会在 getFxbaogaoPdfUrl 内熔断）
+      if (attempt === 0 && isKnownUsable) {
+        url = await getFxbaogaoPdfUrl(args)
+        continue
+      }
+      throw e
+    }
+  }
+  throw new Error('fxbaogao: pdf download failed after retry')
 }
 
 // ── 分片同步（全量研报入库） ─────────────────────────────
@@ -310,7 +473,7 @@ export async function extractPdfText(buf: Buffer, maxChars = 24000): Promise<str
 // db 相关的回调由 index.js 注入（保持本文件不 import db.js，避免循环依赖）。
 
 import { refineWithLlm, type LlmExtraction } from './research-report.js'
-import { llmConfigInfo } from './llm.js'
+import { llmConfigInfo, chatJson, isLlmAvailable } from './llm.js'
 
 export interface FxbaogaoRefineItem {
   reportId: number
@@ -319,6 +482,7 @@ export interface FxbaogaoRefineItem {
   pageNum: number
   pubTime: number
   pubTimeStr: string
+  pdfUrl?: string   // 数据库缓存的直链，优先复用（避免 get_pdf_url 频控）
 }
 
 export interface FxbaogaoRefineResult {
@@ -335,6 +499,8 @@ export interface FxbaogaoRefineResult {
   model: string
   pdf_url: string
   report_type?: string  // stock/industry/macro/strategy/minutes/other
+  region?: string       // CN/US/KR/JP/TW/HK/GLOBAL/OTHER
+  perspective?: string  // 产业/金融/供应链/技术/订单/认证/''
   extract?: LlmExtraction
   error?: string
 }
@@ -362,16 +528,16 @@ export async function refineOneFxbaogao(
     let pdfUrl = ''
     try { pdfUrl = await getFxbaogaoPdfUrl({ reportId: id }) } catch {}
     if (pdfUrl && hooks.savePdfUrl) hooks.savePdfUrl(id, pdfUrl).catch(() => {})
-    // 2) 下载 + 抽文本
+    // 2) 下载 + 抽文本（优先复用 DB 缓存直链，失效再刷新，减少 get_pdf_url 频控）
     let rawText = ''
     try {
-      const buf = await downloadFxbaogaoPdf({ reportId: id })
+      const buf = await downloadFxbaogaoPdf({ reportId: id }, item.pdfUrl || '')
       rawText = await extractPdfText(buf, 24000)
     } catch (e: any) {
       base.error = 'pdf_failed:' + String(e?.message || e).slice(0, 120)
     }
     // 3) LLM 提炼（无 key / 失败走 mock 兜底）
-    let llmResult: { tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; report_type?: string; extraction?: LlmExtraction; mode: 'llm' | 'fallback' } | null = null
+    let llmResult: { tldr: string; key_points: string[]; opportunities: string[]; risks: string[]; report_type?: string; region?: string; perspective?: string; extraction?: LlmExtraction; mode: 'llm' | 'fallback' } | null = null
     if (rawText.length > 200) {
       try { llmResult = await refineWithLlm({ raw_text: rawText, title, broker }) } catch {}
     }
@@ -385,6 +551,8 @@ export async function refineOneFxbaogao(
       opportunities: llmResult?.opportunities || [],
       risks: llmResult?.risks || [],
       report_type: llmResult?.report_type || '',
+      region: llmResult?.region || '',
+      perspective: llmResult?.perspective || '',
       extract: llmResult?.extraction || null,
       status: llmResult?.mode === 'llm' ? 'refined-llm' : (rawText.length > 200 ? 'refined-mock' : 'pdf_failed'),
       model: llmResult?.mode === 'llm' ? model : '',
@@ -421,4 +589,64 @@ export async function refineFxbaogaoBatch(
   }
   const ok = results.filter((r) => r.ok).length
   return { ok, failed: results.length - ok, total: results.length }
+}
+
+// ── LLM 标题判定（每日 21 点选题） ─────────────────────────
+// 让 LLM 按标题判断：是否涉及 7 大重点主题、所属地区、类型（行业/宏观）。
+// 只有判定相关的研报才消耗下载额度；LLM 不可用时走关键词兜底（地区/类型沿用启发式值）。
+
+const TITLE_KEYWORD_FALLBACK = /半导体|芯片|集成电路|晶圆|封测|存储|NAND|DRAM|HBM|光刻|EDA|先进制程|稀土|锂矿|钴|镍|铜|铀|稀有金属|关键矿产|航空|航天|卫星|火箭|无人机|大飞机|航空发动机|AI|人工智能|大模型|算力|数据中心|GPU|具身|机器人|人形|智能驾驶|自动驾驶|新能源|光伏|储能|风电|锂电|电池|氢能|充电桩|电力|电网|特高压|核电|电源|先进制造|智能制造|工业母机|机床|激光|3D打印|军工|高端装备|工程机械/i
+
+export interface FxbaogaoTitleJudgment {
+  reportId: number
+  relevant: boolean
+  region: string   // CN/US/KR/JP/TW/HK/GLOBAL/OTHER
+  category: string // industry | macro
+}
+
+export async function judgeFxbaogaoTitlesByLlm(
+  items: Array<{ reportId: number; title: string; dbRegion: string; dbType: string }>,
+): Promise<FxbaogaoTitleJudgment[]> {
+  const fallback = (it: { reportId: number; title: string; dbRegion: string; dbType: string }): FxbaogaoTitleJudgment => ({
+    reportId: it.reportId,
+    relevant: TITLE_KEYWORD_FALLBACK.test(String(it.title || '')),
+    region: it.dbRegion || 'OTHER',
+    category: it.dbType === 'macro' ? 'macro' : 'industry',
+  })
+  if (!isLlmAvailable()) return items.map(fallback)
+  const results: FxbaogaoTitleJudgment[] = []
+  const CHUNK = 50
+  for (let s = 0; s < items.length; s += CHUNK) {
+    const chunk = items.slice(s, s + CHUNK)
+    const ids = chunk.map((it, j) => ({ i: j, id: it.reportId, title: String(it.title || '').slice(0, 80) }))
+    const judged = await chatJson<any>({
+      system: [
+        '你是券商研报选题筛选器。对每篇研报标题做三项判定：',
+        '1) relevant：是否涉及以下 7 大主题之一：半导体全产业链技术（芯片/存储/晶圆/设备材料等）、关键矿产（稀土/锂钴镍铜等）、航空航天（航空/航天/卫星）、AI 人工智能、具身智能机器人、新能源（光伏/储能/风电/锂电/氢能）、电力设施（电网/特高压/核电/电源设备）、先进制造（高端装备/工业母机/智能制造）。只有标题明确相关才 true，只提公司名或泛泛宏观的为 false。',
+        '2) region：研报覆盖地区，取值 CN/US/KR/JP/TW/HK/GLOBAL/OTHER，标题无地区信息则 OTHER。',
+        '3) category：行业研究填 industry，宏观/策略填 macro。',
+        '输出 JSON：{"results":[{"i":0,"relevant":true,"region":"CN","category":"industry"}]}，i 为输入条目序号，全部条目都要输出，不要省略。',
+      ].join('\n'),
+      user: JSON.stringify(ids),
+      jsonHint: true,
+      maxTokens: 4000,
+      temperature: 0.1,
+    })
+    const arr: any[] = Array.isArray(judged?.results) ? judged.results : []
+    for (let j = 0; j < chunk.length; j++) {
+      const it = chunk[j]
+      const r = arr.find((x) => Number(x?.i) === j)
+      if (r && typeof r.relevant === 'boolean') {
+        results.push({
+          reportId: it.reportId,
+          relevant: !!r.relevant,
+          region: String(r.region || it.dbRegion || 'OTHER').toUpperCase(),
+          category: String(r.category || '') === 'macro' ? 'macro' : 'industry',
+        })
+      } else {
+        results.push(fallback(it))
+      }
+    }
+  }
+  return results
 }

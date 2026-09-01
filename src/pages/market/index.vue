@@ -448,7 +448,7 @@ $rf-amber: #ffb86b;
 $rf-orange: rgba(255, 184, 107, 1);
 $rf-cream: #f5ecd9;
 $rf-muted: #a89a82;
-$color-bg: #0d1b2a;
+$color-bg: #0b0b0d;
 $color-card-bg: linear-gradient(180deg, rgba(255, 184, 107, 0.055), rgba(114, 247, 255, 0.025));
 $color-border: rgba(255, 184, 107, 0.24);
 $color-text-primary: #f5ecd9;
@@ -463,9 +463,13 @@ $radius-full: 999px;
 .mk-page {
   min-height: 100vh;
   background: $color-bg;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 48px 48px;
   color: $color-text-primary;
   font-family: -apple-system, 'PingFang SC', sans-serif;
-  padding-bottom: 140rpx;
+  padding-bottom: calc(160rpx + env(safe-area-inset-bottom, 0px));
 }
 
 /* H5：页面作为包含 head(固定) + body(滚动) 的容器，止于 tab 上沿 */
@@ -514,8 +518,8 @@ $radius-full: 999px;
   transition: all 0.18s ease;
 }
 .mk-source-chip.active {
-  background: linear-gradient(180deg, #f4c542, #d89c1c);
-  color: #1a1206;
+  background: linear-gradient(135deg, #ffb86b 0%, #ff7a3d 100%);
+  color: #0b0b0d;
   border-color: transparent;
 }
 
@@ -526,7 +530,7 @@ $radius-full: 999px;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 16rpx 24rpx 24rpx;
+  padding: 16rpx 24rpx calc(140rpx + env(safe-area-inset-bottom, 0px));
 }
 .mk-body::-webkit-scrollbar { width: 5rpx; }
 .mk-body::-webkit-scrollbar-track { background: transparent; }
@@ -555,8 +559,8 @@ $radius-full: 999px;
   justify-content: center;
   height: 72rpx;
   border-radius: $radius-md;
-  background: linear-gradient(180deg, #f4c542, #d89c1c);
-  color: #1a1206;
+  background: linear-gradient(135deg, #ffb86b 0%, #ff7a3d 100%);
+  color: #0b0b0d;
   font-weight: 700;
   font-size: 28rpx;
 }
@@ -661,4 +665,39 @@ $radius-full: 999px;
 .mk-f10-row--head { color: $color-text-secondary; font-weight: 700; background: rgba(255,255,255,0.03); }
 .mk-f10-c { flex: 1; color: $color-text-primary; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mk-f10-c--num { flex: 1; text-align: right; color: $rf-amber; }
+
+// ─────────────────────────────────────────────────────────
+// 折叠屏/平板专属（H5，宽 700~1400px）：整页左右双栏。
+// 左栏 = head（K线/北向/龙虎榜/F10 切换 + 查询），右栏 = 内容。
+// 恢复直板机物理尺寸（px），直板机（< 700px）不受影响。
+// ─────────────────────────────────────────────────────────
+@include fold-wide {
+  .mk-page.h5-mode { flex-direction: row; }
+
+  .mk-head {
+    flex: 0 0 240px;
+    width: 240px;
+    border-right: 1rpx solid $color-border;
+    padding: 16rpx 14rpx 24rpx;
+    overflow-y: auto;
+  }
+  .mk-title { font-size: 20px; }
+  .mk-hint { font-size: 11px; }
+  .mk-source-strip { flex-direction: column; gap: 8rpx; padding: 10rpx 0; }
+  .mk-source-chip { padding: 8rpx 12rpx; font-size: 14px; border-radius: $radius-md; width: 100%; box-sizing: border-box; }
+  .mk-search--head { flex-direction: column; align-items: stretch; gap: 8rpx; padding: 4rpx 0 0; }
+  .mk-input { min-height: 34px; height: 34px; font-size: 13px; }
+  .mk-btn { width: 100%; min-height: 34px; height: 34px; font-size: 13px; }
+
+  .mk-body { flex: 1; min-width: 0; padding: 12px 14px 12px; }
+  .mk-kline-code { font-size: 15px; }
+  .mk-kline-last, .mk-kline-range { font-size: 12px; }
+  .mk-north-label { font-size: 13px; }
+  .mk-north-k { font-size: 11px; }
+  .mk-north-v { font-size: 14px; }
+  .mk-lhb-name { font-size: 14px; }
+  .mk-lhb-row { font-size: 12px; }
+  .mk-err { font-size: 12px; }
+  .mk-empty { font-size: 13px; }
+}
 </style>

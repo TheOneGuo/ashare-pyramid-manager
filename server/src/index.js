@@ -35,7 +35,8 @@ import {
   isFxbaogaoAvailable, fxbaogaoKeyTail,
   searchFxbaogaoReports, getFxbaogaoParagraphs, getFxbaogaoPdfUrl,
   downloadFxbaogaoPdf, extractPdfText, syncFxbaogaoToDb, getSyncProgress,
-  refineFxbaogaoBatch,
+  refineFxbaogaoBatch, isPdfUrlBlocked,
+  setDownloadGuard, setNewDownloadHook, judgeFxbaogaoTitlesByLlm,
 } from './fxbaogao.js';
 import { buildAccount, previewChange, checkWithdraw, TERMS, EVENT_DEPOSIT, EVENT_WITHDRAW, EVENT_FEE_RATE } from './account-ledger.js';
 import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans, removePlan,
@@ -43,6 +44,7 @@ import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans
   upsertStockReport, listStockReports, deleteStockReport,
   upsertFxbaogaoReports, listFxbaogaoReports, getFxbaogaoStats, getFxbaogaoReportById, maxUnrefinedCount,
   updateFxbaogaoPdfUrl, upsertFxbaogaoAi, getFxbaogaoAi, listUnrefinedFxbaogao, markFxbaogaoAiPending, resetStuckFxbaogaoPending, cleanupOldFxbaogao, searchFxbaogaoByStock, isFxbaogaoNoiseOrg,
+  listFxbaogaoDailyCandidates, getPdfDownloadsToday, incrPdfDownloadsToday,
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -79,22 +81,28 @@ const fxJob = {
 function fxbaogaoJobRunning() { return fxJob.running; }
 function fxbaogaoJobStatus() { return { ...fxJob }; }
 
-// 消费未精读队列（limit 限流）——供手动触发，也供定时任务调（定时任务 priority 更高）
-async function startFxbaogaoJobFeed(limit) {
+// 精读一个队列里的研报（共享状态与钩子），供手动触发 / 每日 21 点任务复用
+async function runFxbaogaoJobWith(items, delayMs = 800) {
   if (fxJob.running) return;
+  if (!items || !items.length) return;
+  // 下载接口熔断（请求超速 / 额度用尽）时提前停批，避免继续烧调用次数/额度
+  const blk = isPdfUrlBlocked();
+  if (blk.blocked) {
+    fxJob.lastError = `已暂停精读：${blk.reason}`;
+    console.warn(`[fxbaogao job] skip, pdf-url blocked: ${blk.reason}`);
+    return;
+  }
   fxJob.running = true;
   fxJob.startedAt = Date.now();
   fxJob.ok = fxJob.failed = fxJob.total = 0;
   fxJob.lastError = '';
   try {
-    const items = await listUnrefinedFxbaogao(limit);
-    if (!items.length) return;
     fxJob.total = items.length;
     const res = await refineFxbaogaoBatch(items, {
       markPending: markFxbaogaoAiPending,
       savePdfUrl: updateFxbaogaoPdfUrl,
       saveResult: (r) => upsertFxbaogaoAi({ ...r, report_id: r.reportId }),
-    }, { delayMs: 300 });
+    }, { delayMs });
     fxJob.ok = res.ok;
     fxJob.failed = res.failed;
   } catch (e) {
@@ -106,7 +114,98 @@ async function startFxbaogaoJobFeed(limit) {
   }
 }
 
-// 线上每 15 分钟管线：增量同步最近 1 天 → 精读未读 20 条 → 清理 3 个月外旧数据
+// 手动精读：消费未精读队列（limit 限流）
+async function startFxbaogaoJobFeed(limit) {
+  if (fxJob.running) return;
+  try {
+    const items = await listUnrefinedFxbaogao(limit);
+    await runFxbaogaoJobWith(items, 800);
+  } catch (e) {
+    fxJob.lastError = String(e?.message || e).slice(0, 200);
+  }
+}
+
+// =====================================================
+// 每日 21:00 下载 + 精读任务（新下载预算 19 篇/天）
+// 选题：LLM 按标题判定是否涉及 7 大主题（半导体全产业链技术/关键矿产/航空航天/
+// AI/具身智能/新能源/电力设施/先进制造）的外资研报，按
+// 中国行业→美国行业→韩日台港行业→中国宏观策略→美国宏观策略→韩日台港宏观策略
+// 排序下载，下载完立即精读，次日「全部研报 AI 精读」可见（已精读按最新精读置顶）。
+// =====================================================
+const DAILY_PDF_BUDGET = 19;
+const DAILY_JOB_HOUR = 21;
+let dailyBudgetUsed = 0;
+
+const DAILY_REGION_ORDER = { CN: 0, US: 1, KR: 2, JP: 3, TW: 4, HK: 5, GLOBAL: 6, OTHER: 7 };
+function dailyPriority(j) {
+  const base = String(j?.category) === 'macro' ? 10 : 0; // industry=0, macro=10
+  return base + (DAILY_REGION_ORDER[String(j?.region).toUpperCase()] ?? 7);
+}
+
+async function runDailyFxbaogaoJob() {
+  if (!isFxbaogaoAvailable()) { console.log('[fxbaogao daily] FXBAOGAO_API_KEY 未配置，跳过'); return; }
+  if (fxJob.running) { console.log('[fxbaogao daily] 有精读批次在跑，跳过本轮'); return; }
+  try {
+    const used = await getPdfDownloadsToday();
+    if (used >= DAILY_PDF_BUDGET) {
+      console.log(`[fxbaogao daily] 今日已新下载 ${used}/${DAILY_PDF_BUDGET}，预算用尽，明日 21 点再来`);
+      setDownloadGuard(null); setNewDownloadHook(null);
+      return;
+    }
+    const candidates = await listFxbaogaoDailyCandidates(300);
+    if (!candidates.length) { console.log('[fxbaogao daily] 无外资 行业/宏观 未精读候选'); return; }
+    console.log(`[fxbaogao daily] 候选 ${candidates.length} 篇，LLM 按标题选题…`);
+    const judged = await judgeFxbaogaoTitlesByLlm(
+      candidates.map((c) => ({ reportId: c.reportId, title: c.title, dbRegion: c.region, dbType: c.reportType })),
+    );
+    // 相关研报按 地区+类型层级 → 推荐 → 时间倒序
+    const picked = candidates
+      .map((c, i) => ({ ...c, judgment: judged[i] }))
+      .filter((x) => x.judgment?.relevant)
+      .sort((a, b) =>
+        dailyPriority(a.judgment) - dailyPriority(b.judgment)
+        || Number(b.recommended) - Number(a.recommended)
+        || (b.pubTime || 0) - (a.pubTime || 0),
+      );
+    if (!picked.length) { console.log('[fxbaogao daily] LLM 判定无 7 大主题相关研报，今日不下载'); return; }
+    const take = Math.min(DAILY_PDF_BUDGET - used, picked.length);
+    const items = picked.slice(0, take).map((x) => ({
+      reportId: x.reportId, title: x.title, orgName: x.orgName, pageNum: 0,
+      pubTime: x.pubTime, pubTimeStr: x.pubTimeStr, pdfUrl: x.pdfUrl,
+    }));
+    console.log(`[fxbaogao daily] 今日选用 ${items.length} 篇（剩额 ${DAILY_PDF_BUDGET - used}），开始下载+精读:`);
+    items.forEach((x, i) => console.log(`  ${i + 1}. [${(picked[i].judgment?.region || '-')}/${(picked[i].judgment?.category || '-')}] #${x.reportId} ${String(x.title).slice(0, 48)}`));
+    // 预算钩子：新签发 get_pdf_url 前检查、成功后 +1（磁盘缓存/复用直链不受限）
+    dailyBudgetUsed = used;
+    setDownloadGuard(() => dailyBudgetUsed < DAILY_PDF_BUDGET);
+    setNewDownloadHook((_id) => {
+      dailyBudgetUsed += 1;
+      incrPdfDownloadsToday(1).catch(() => {});
+    });
+    await runFxbaogaoJobWith(items, 1200);
+    console.log(`[fxbaogao daily] 完成：成功精读 ${fxJob.ok}/${items.length} 篇，失败 ${fxJob.failed} 篇`);
+  } catch (e) {
+    console.warn('[fxbaogao daily] error:', String(e?.message || e).slice(0, 200));
+  } finally {
+    setDownloadGuard(null); setNewDownloadHook(null);
+  }
+}
+
+// 自调度：每天 21:00 执行（执行完再排下一天）
+function scheduleDailyFxbaogaoJob(now = new Date()) {
+  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), DAILY_JOB_HOUR, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  const ms = next.getTime() - now.getTime();
+  const pad = (n) => String(n).padStart(2, '0');
+  console.log(`[fxbaogao daily] 定时任务已排期：每天 ${DAILY_JOB_HOUR}:00 下载+精读，下次 ${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())} ${pad(next.getHours())}:${pad(next.getMinutes())}`);
+  setTimeout(async () => {
+    try { await runDailyFxbaogaoJob(); } catch (e) { console.warn('[fxbaogao daily] error:', String(e?.message || e).slice(0, 200)); }
+    scheduleDailyFxbaogaoJob();
+  }, ms);
+}
+
+// 线上每 15 分钟管线：增量同步最近 1 天 + 清理 3 个月外旧数据。
+// 精读/下载已改为每日 21:00 定时任务（runDailyFxbaogaoJob），泵不再乱下载烧额度。
 const FX_PUMP_MS = 15 * 60 * 1000;
 async function pumpFxbaogaoOnline() {
   if (!isFxbaogaoAvailable()) return; // 未配 key 直接跳过
@@ -126,11 +225,7 @@ async function pumpFxbaogaoOnline() {
   } catch (e) {
     console.warn('[fxbaogao pump] sync failed:', e?.message?.slice(0, 120));
   }
-  // 2) 精读未读队列（limit 20，防超时）
-  if (!fxbaogaoJobRunning()) {
-    await startFxbaogaoJobFeed(20);
-  }
-  // 3) 清理最近 3 个月之外的研报
+  // 2) 清理最近 3 个月之外的研报
   const cutoff = Date.now() - 90 * 86400000;
   try {
     const n = await cleanupOldFxbaogao(cutoff);
@@ -760,11 +855,13 @@ app.post('/api/research/fxbaogao/ingest', requireAuth, async (req, res) => {
     } catch {}
     const title = meta?.title || `发现报告 #${id}`
     const broker = meta?.orgName || '外部研报'
-    // 1) PDF → 文本
+    // 1) PDF → 文本（优先复用 DB 缓存直链，失效自动刷新，规避 get_pdf_url 频控）
     let rawText = ''
     let pdfStatus = ''
     try {
-      const buf = await downloadFxbaogaoPdf({ reportId: id })
+      let cachedPdfUrl = ''
+      try { cachedPdfUrl = (await getFxbaogaoReportById(id))?.pdfUrl || '' } catch {}
+      const buf = await downloadFxbaogaoPdf({ reportId: id }, cachedPdfUrl)
       rawText = await extractPdfText(buf, 24000)
       pdfStatus = rawText.length > 200 ? 'ok' : 'too_short'
     } catch (e) {
@@ -781,7 +878,14 @@ app.post('/api/research/fxbaogao/ingest', requireAuth, async (req, res) => {
       title, broker,
       industry: industry || '',
       source_url: viewUrl,
-      raw_text: rawText || `[fxbaogao reportId=${id}，PDF 解析失败：${pdfStatus}]`,
+      raw_text: rawText || (() => {
+        // 下载被限流/额度熔断时给出明确可读原因，否则给出原始原因 + 人工阅读链接
+        const blk = isPdfUrlBlocked();
+        const reason = blk.blocked
+          ? `${blk.reason}，系统已自动暂停下载，请稍后再试`
+          : pdfStatus.replace(/^pdf_failed:/, '') || 'PDF 暂无法下载';
+        return `[fxbaogao reportId=${id}，PDF 解析失败：${reason}。可前往官网人工阅读：${viewUrl}]`;
+      })(),
       llmResult,
     })
     await upsertResearchReport(refined)
@@ -1141,6 +1245,24 @@ app.get('/api/ifind/health', requireAuth, async (_req, res) => {
 // =====================================================
 app.use('/preview', express.static(PREVIEW_DIR, { maxAge: 0, etag: false }));
 
+// 预览页用：探测前端 H5 dev server 实际端口（5173 被占用时 uni 会自动顺延 5174/5175…）
+// 识别真正的 uni-app 页面：返回的 HTML 需带应用挂载点（<div id="app">），
+// 避免误命中同机其他 web 服务（如 TRAE 面板、502 中转页）。
+app.get('/api/frontend', async (_req, res) => {
+  const ports = [5173, 5174, 5175, 5176];
+  for (const p of ports) {
+    try {
+      const r = await fetch(`http://localhost:${p}/`, { signal: AbortSignal.timeout(1500) });
+      if (!r.ok) continue;
+      const html = await r.text();
+      if (/id=["']app["']|<div id="app>|__vite__|__uni/i.test(html)) {
+        return res.json({ ok: true, base: `http://localhost:${p}/` });
+      }
+    } catch { /* 探测下一个端口 */ }
+  }
+  res.json({ ok: false, base: 'http://localhost:5174/' });
+});
+
 // 兼容根路径访问预览页
 app.get('/', (_req, res) => {
   res.sendFile(path.join(PREVIEW_DIR, 'index.html'));
@@ -1247,15 +1369,17 @@ async function main() {
   // 启动后 5s 跑一次，尽快体现跟踪
   setTimeout(runTrackOnce, 5000);
 
-  // 线上 fxbaogao 管线：每 15 分钟增量同步 + AI 精读 + 清理 3 个月外旧数据
+  // 线上 fxbaogao 管线：每 15 分钟增量同步 + 清理 3 个月外旧数据
   // 说明：增量同步用 upsert（幂等），重复拉同一天不会有重复；分片有间隔限速，不会打爆 API。
   setInterval(() => {
     pumpFxbaogaoOnline().catch((e) => console.warn('[fxbaogao pump] error:', e?.message || e));
   }, FX_PUMP_MS);
-  // 启动 30s 后先跑一轮预热的精读
+  // 启动 30s 后先跑一轮预热（同步存量元数据）
   setTimeout(() => {
     pumpFxbaogaoOnline().catch((e) => console.warn('[fxbaogao pump] warmup error:', e?.message || e));
   }, 30_000);
+  // 每日 21:00 下载 + 精读定时任务（新下载预算 19 篇/天，LLM 选题）
+  scheduleDailyFxbaogaoJob();
 }
 
 // =====================================================

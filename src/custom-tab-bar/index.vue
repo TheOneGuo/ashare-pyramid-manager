@@ -77,7 +77,7 @@ onMounted(() => {
   align-items: stretch;
   height: 110rpx;
   padding-bottom: env(safe-area-inset-bottom);
-  background: linear-gradient(180deg, rgba(13, 27, 42, 0.90), rgba(9, 18, 31, 0.98));
+  background: linear-gradient(180deg, rgba(11, 11, 13, 0.96), rgba(5, 5, 7, 0.98));
   backdrop-filter: blur(20rpx);
   -webkit-backdrop-filter: blur(20rpx);
   box-shadow: 0 -10rpx 34rpx rgba(0, 0, 0, 0.45);
@@ -115,8 +115,9 @@ onMounted(() => {
 
 .tabbar__label {
   font-size: 24rpx;
-  font-weight: 600;
+  font-weight: 400;
   letter-spacing: 2rpx;
+  font-family: "Noto Serif SC", "Songti SC", "SimSun", serif;
   transition: color 0.18s ease;
 }
 
