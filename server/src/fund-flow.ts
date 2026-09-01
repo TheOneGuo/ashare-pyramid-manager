@@ -12,7 +12,7 @@
 //        注意：FUND_INFLOW/NET_DEAL_AMT 自 2024-08 披露改制后为 null（交易所不再披露净买入）。
 //
 // 口径事实（已核实，页面如实标注，绝不标"示意"）：
-//  - 沪深港通行业级持仓（日度/季度）自 2024-08-16 起交易所停止披露 → 超级外资无行业分布，
+//  - 沪深港通行业级持仓（日度/季度）自 2024-08-16 起交易所停止披露 → 海外资金无行业分布，
 //    仅保留交易所仍公开的日度成交总额/笔数序列。
 //  - 公募基金行业配置（季报）与汇金系持仓（季报前十大持有人）无公开可编程接口
 //    → 以真实的主力净流入 5日/20日 作为代理观察口径，页面明确标注"代理口径"。
@@ -26,7 +26,7 @@ export type FundType = 'joint' | 'public_fund' | 'stabilization' | 'foreign';
 
 export interface FundNode {
   type: FundType;
-  name: string; // 共同增仓/公募基金/超级平准/超级外资
+  name: string; // 共同增仓/公募基金/平准基金/海外资金
   emoji: string; // 🔀 / 💧 / 🌊 / 🔥
   colorKey: 'joint' | 'public' | 'stab' | 'foreign'; // → $fund-*（已映射到既有色板）
   totalPct: number; // 该口径全行业净流入合计（亿）
@@ -84,8 +84,8 @@ export interface FundFlowResp {
 const FUND_META: { type: FundType; name: string; emoji: string; colorKey: 'joint' | 'public' | 'stab' | 'foreign' }[] = [
   { type: 'joint', name: '共同增仓', emoji: '🔀', colorKey: 'joint' },
   { type: 'public_fund', name: '公募基金', emoji: '💧', colorKey: 'public' },
-  { type: 'stabilization', name: '超级平准', emoji: '🌊', colorKey: 'stab' },
-  { type: 'foreign', name: '超级外资', emoji: '🔥', colorKey: 'foreign' },
+  { type: 'stabilization', name: '平准基金', emoji: '🌊', colorKey: 'stab' },
+  { type: 'foreign', name: '海外资金', emoji: '🔥', colorKey: 'foreign' },
 ];
 
 export const FUND_METRIC: Record<FundType, MetricInfo> = {

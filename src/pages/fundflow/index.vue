@@ -17,7 +17,7 @@
             <DateBanner :metric="activeMetric" :as-of="data.asOf" />
             <SubTabs :active-type="activeType" @change="onTabChange" />
           </view>
-          <!-- 超级外资：行业级北向持仓已停披 → 展示交易所仍公开的日度成交热度 -->
+          <!-- 海外资金：行业级北向持仓已停披 → 展示交易所仍公开的日度成交热度 -->
           <NorthPanel v-if="activeType === 'foreign' && data.north" :north="data.north" :notice="activeMetric?.notice" />
           <view v-else-if="activeType === 'foreign'" class="ff-state"><text>北向日度数据暂不可用</text></view>
           <SankeyChart v-else :sankey="data.sankey" :active-type="activeType" />

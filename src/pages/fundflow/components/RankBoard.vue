@@ -9,7 +9,7 @@
       <text class="board__total" :class="totalClass">{{ fmtFlow(node.totalPct) }}</text>
     </view>
 
-    <!-- 超级外资：北向日度成交热度榜（行业级持仓已停披，如实展示交易所仍公开数据） -->
+    <!-- 海外资金：北向日度成交热度榜（行业级持仓已停披，如实展示交易所仍公开数据） -->
     <template v-if="node.type === 'foreign'">
       <view v-if="north && north.series.length" class="board__rows">
         <view v-for="(d, i) in shownNorth" :key="d.date" class="board__row">

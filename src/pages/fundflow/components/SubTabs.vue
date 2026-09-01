@@ -22,8 +22,8 @@ const emit = defineEmits<{ (e: 'change', type: FundType): void }>()
 const tabs: { type: FundType; name: string; emoji: string }[] = [
   { type: 'joint', name: '共同增仓', emoji: '🔀' },
   { type: 'public_fund', name: '公募基金', emoji: '💧' },
-  { type: 'stabilization', name: '超级平准', emoji: '🌊' },
-  { type: 'foreign', name: '超级外资', emoji: '🔥' },
+  { type: 'stabilization', name: '平准基金', emoji: '🌊' },
+  { type: 'foreign', name: '海外资金', emoji: '🔥' },
 ]
 
 function onTap(type: FundType) {

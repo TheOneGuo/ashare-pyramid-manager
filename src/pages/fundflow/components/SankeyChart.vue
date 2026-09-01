@@ -1,46 +1,14 @@
 <template>
-  <view class="sankey-wrap">
-    <svg
-      class="sankey"
-      :viewBox="`0 0 ${VB_W} ${VB_H}`"
-      preserveAspectRatio="xMidYMid meet"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <!-- 彩带：带色只看 fund；切 tab 高亮过渡 -->
-      <path
-        v-for="(e, i) in layout.edgeList"
-        :key="'e' + i"
-        :d="e.d"
-        :fill="e.color"
-        :opacity="e.opacity"
-        class="sankey__edge"
-      />
-
-      <!-- 左列：4 类资金节点 -->
-      <g v-for="(n, i) in layout.leftNodes" :key="'L' + i">
-        <rect :x="n.x" :y="n.y" :width="n.w" :height="n.h" rx="8"
-              :fill="n.color" fill-opacity="0.16" :stroke="n.color" stroke-opacity="0.55" />
-        <text :x="n.x + n.w / 2" :y="n.y + n.h / 2 - 3" text-anchor="middle" class="sankey__node">{{ n.emoji }} {{ trunc(n.name, 4) }}</text>
-        <text :x="n.x + n.w / 2" :y="n.y + n.h / 2 + 15" text-anchor="middle"
-              :class="['sankey__chip', pctClass(n.totalPct)]">{{ pctText(n.totalPct) }}</text>
-      </g>
-
-      <!-- 右列：板块节点 + 右侧涨跌 chip -->
-      <g v-for="(n, i) in layout.rightNodes" :key="'R' + i">
-        <rect :x="n.x" :y="n.y" :width="n.w" :height="n.h" rx="8"
-              fill="rgba(255,184,107,0.10)" stroke="rgba(255,184,107,0.30)" />
-        <text :x="n.x + n.w / 2" :y="n.y + n.h / 2 + 5" text-anchor="middle" class="sankey__node">
-          <title>{{ n.name }}</title>{{ trunc(n.name, 5) }}
-        </text>
-        <text :x="n.x + n.w + 8" :y="n.y + n.h / 2 + 5" text-anchor="start"
-              :class="['sankey__chip', pctClass(n.pct)]">{{ pctText(n.pct) }}</text>
-      </g>
-    </svg>
-  </view>
+  <!--
+    uni-app H5 下 vue 模板里的 <text> 会被编译为跨端 Text 组件（渲染为 <span>），
+    不是 SVG <text>，导致 SVG 内部文字不可见。这里改用 v-html 注入原生 SVG 字符串，
+    保留 SVG 矢量 + 文字 + emoji 全部正常。
+  -->
+  <view class="sankey-wrap" v-html="svgHtml" :key="renderKey"></view>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { FundFlowResp, FundType, SectorNode, FundNode } from '@/api/fundflow'
 
 const props = defineProps<{
@@ -58,6 +26,10 @@ const FUND_COLORS: Record<string, string> = {
 }
 const UP = '#e2553b' // 红涨（与其他 tab 一致）
 const DOWN = '#26a86b' // 绿跌（与其他 tab 一致）
+const TEXT_FILL = '#f5ecd9'
+const FONT_FAMILY = "-apple-system, 'PingFang SC', sans-serif"
+const RECT_FILL = 'rgba(255,184,107,0.10)'
+const RECT_STROKE = 'rgba(255,184,107,0.30)'
 
 const VB_W = 690
 const VB_H = 400
@@ -82,6 +54,18 @@ function ribbon(x1: number, x2: number, cx: number, y1: number, y2: number, w: n
     `L ${x2},${(y2 + w2).toFixed(2)} ` +
     `C ${cx},${(y2 + w2).toFixed(2)} ${cx},${(y1 + w2).toFixed(2)} ${x1},${(y1 + w2).toFixed(2)} Z`
   )
+}
+function pctClassFill(v: number): string {
+  return v >= 0 ? UP : DOWN
+}
+function fmtFlow(v: number): string {
+  return `${v >= 0 ? '+' : ''}${v.toFixed(2)}亿`
+}
+function trunc(name: string, n: number): string {
+  return name.length > n ? name.slice(0, n) + '…' : name
+}
+function xmlEscape(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 const layout = computed(() => {
@@ -124,15 +108,46 @@ const layout = computed(() => {
   return { leftNodes, rightNodes, edgeList }
 })
 
-function pctClass(v: number): string {
-  return v >= 0 ? 'is-up' : 'is-down'
-}
-function pctText(v: number): string {
-  return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'
-}
-function trunc(name: string, n: number): string {
-  return name.length > n ? name.slice(0, n) + '…' : name
-}
+// 序列化整个 SVG 为字符串（避开 uni-app H5 把 <text> 编译为 Text 组件的坑）
+const svgHtml = computed(() => {
+  const l = layout.value
+  const parts: string[] = []
+  parts.push(
+    `<svg class="sankey" viewBox="0 0 ${VB_W} ${VB_H}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">`,
+  )
+  // 彩带
+  for (const e of l.edgeList) {
+    parts.push(
+      `<path d="${e.d}" fill="${e.color}" opacity="${e.opacity}"/>`,
+    )
+  }
+  // 左列：4 类资金节点 + 名称 + 净流入 chip
+  for (const n of l.leftNodes) {
+    parts.push(
+      `<g>`,
+      `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="8" fill="${n.color}" fill-opacity="0.16" stroke="${n.color}" stroke-opacity="0.55"/>`,
+      `<text x="${n.x + n.w / 2}" y="${n.y + n.h / 2 - 3}" text-anchor="middle" font-size="13" font-weight="500" font-family='${FONT_FAMILY}' fill="${TEXT_FILL}">${xmlEscape(n.emoji + ' ' + trunc(n.name, 4))}</text>`,
+      `<text x="${n.x + n.w / 2}" y="${n.y + n.h / 2 + 15}" text-anchor="middle" font-size="12" font-weight="700" font-family='${FONT_FAMILY}' fill="${pctClassFill(n.totalPct)}">${xmlEscape(fmtFlow(n.totalPct))}</text>`,
+      `</g>`,
+    )
+  }
+  // 右列：板块节点 + 名称 + 涨跌 chip
+  for (const n of l.rightNodes) {
+    parts.push(
+      `<g>`,
+      `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="8" fill="${RECT_FILL}" stroke="${RECT_STROKE}"/>`,
+      `<text x="${n.x + n.w / 2}" y="${n.y + n.h / 2 + 5}" text-anchor="middle" font-size="13" font-weight="500" font-family='${FONT_FAMILY}' fill="${TEXT_FILL}"><title>${xmlEscape(n.name)}</title>${xmlEscape(trunc(n.name, 5))}</text>`,
+      `<text x="${n.x + n.w + 8}" y="${n.y + n.h / 2 + 5}" text-anchor="start" font-size="12" font-weight="700" font-family='${FONT_FAMILY}' fill="${pctClassFill(n.pct)}">${xmlEscape(fmtFlow(n.pct))}</text>`,
+      `</g>`,
+    )
+  }
+  parts.push(`</svg>`)
+  return parts.join('')
+})
+
+// 让 activeType 切换时 SVG 重新挂载（便于过渡/重置）
+const renderKey = ref(0)
+watch(() => props.activeType, () => { renderKey.value++ })
 </script>
 
 <style lang="scss" scoped>
@@ -144,26 +159,10 @@ function trunc(name: string, n: number): string {
   padding: $spacing-sm;
   box-sizing: border-box;
 }
+// v-html 注入：<text> 的 font/fill 已内联到 SVG 属性，仅保留 .sankey 容器样式
 .sankey {
   display: block;
   width: 100%;
   height: auto;
 }
-.sankey__edge {
-  transition: opacity 0.25s ease;
-}
-.sankey__node {
-  fill: #f5ecd9;
-  font-size: 13px;
-  font-weight: 500;
-  font-family: -apple-system, 'PingFang SC', sans-serif;
-}
-.sankey__chip {
-  font-size: 12px;
-  font-weight: 700;
-  font-family: -apple-system, 'PingFang SC', sans-serif;
-}
-// 红涨绿跌（chip 只看符号，与 fund 颜色无关；与其他 tab 色板一致）
-.is-up { fill: #e2553b; }
-.is-down { fill: #26a86b; }
 </style>
