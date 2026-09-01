@@ -323,6 +323,80 @@ def north_daily(limit: int = Query(15, description="返回条数")):
             raise HTTPException(status_code=502, detail=f"akshare:{e} datacenter:{e2}")
 
 
+# 机构持仓报告期候选（新→旧）。季报披露存在滞后，逐个回退到有数据的报告期。
+_HOLD_PERIODS = ["20260630", "20260331", "20251231", "20250630"]
+
+
+@app.get("/hold")
+def hold(
+    kind: str = Query("fund", description="fund=基金持仓 / qfii=QFII持仓 / sb=社保持仓"),
+    limit: int = Query(60, description="返回条数上限"),
+):
+    """机构持仓个股（资金流向「股票中意榜」数据源）。
+
+    基于 akshare stock_report_fund_hold（新浪源，本机实测可达）：
+    返回股票代码/简称/持有家数/持股总数/持股市值/持股变化(增仓|减仓|新进)/变动数值/变动比例。
+    报告期为季报口径（滞后披露，响应内回传 report_date 供前端如实标注）。
+    """
+    sym_map = {"fund": "基金持仓", "qfii": "QFII持仓", "sb": "社保持仓"}
+    if kind not in sym_map:
+        raise HTTPException(status_code=400, detail=f"unknown kind: {kind}")
+    symbol = sym_map[kind]
+
+    def _prio(x):
+        s = str(x)
+        if s == "新进":
+            return 0
+        if s == "增仓":
+            return 1
+        if s == "不变":
+            return 2
+        if s == "减仓":
+            return 3
+        return 4
+
+    last_err = None
+    for period in _HOLD_PERIODS:
+        try:
+            df = ak.stock_report_fund_hold(symbol=symbol, date=period)
+            if df is None or len(df) == 0:
+                continue
+            df = df.rename(columns=lambda c: str(c).strip() if isinstance(c, str) else c).copy()
+            # 数据完整度：该报告期若「持股变化」列几乎全空（新报告期常见），回退到上一期
+            chg_col = "持股变化"
+            if chg_col in df.columns:
+                notna_ratio = df[chg_col].notna().sum() / max(1, len(df))
+            else:
+                notna_ratio = 0.0
+            if notna_ratio < 0.3:
+                logger.warning("hold %s @%s 持股变化缺失(%.0f%%), 回退上一报告期", kind, period, notna_ratio * 100)
+                continue
+            # 增仓/新进优先，其次按变动数值绝对值降序（更能代表"中意"）
+            try:
+                df["_prio"] = df[chg_col].map(_prio)
+                df["_chg"] = pd.to_numeric(df.get("持股变动数值"), errors="coerce").fillna(0).abs()
+                df = df.sort_values(["_prio", "_chg"], ascending=[True, False]).drop(columns=["_prio", "_chg"])
+            except Exception:
+                logger.warning("hold sort fallback for %s/%s", kind, period)
+                df = df.sort_values("持股市值", ascending=False)
+            # 注意：此处取「前」limit 条（_df_to_records 的 limit 取末尾，适用于升序原始数据）
+            items = _sanitize(df.head(limit).to_dict(orient="records"))
+            return {
+                "ok": True,
+                "kind": kind,
+                "symbol": symbol,
+                "report_date": period,
+                "source": "akshare-sina",
+                "count": len(items),
+                "items": items,
+            }
+        except Exception as e:
+            last_err = e
+            logger.warning("hold %s @%s failed: %s", kind, period, e)
+    logger.exception("hold all periods failed")
+    raise HTTPException(status_code=502, detail=str(last_err))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8800, log_level="info")

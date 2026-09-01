@@ -46,11 +46,14 @@
       </view>
 
       <view v-if="stocks.length" class="board__stock">
-        <text class="board__stock-label">股票中意 · 净流入前列行业领涨股</text>
-        <view v-for="s in stocks.slice(0, 3)" :key="s.code" class="board__stock-row">
-          <text class="board__stock-name">{{ s.name }}</text>
-          <text class="board__stock-sector">{{ s.sector }}</text>
-          <text class="board__stock-pct" :class="s.pct >= 0 ? 'is-up' : 'is-down'">{{ fmtPct(s.pct) }}</text>
+        <text class="board__stock-label">股票中意榜</text>
+        <view v-for="s in stocks.slice(0, 5)" :key="s.code" class="board__stock-row">
+          <view class="board__stock-main">
+            <text class="board__stock-name">{{ s.name }}</text>
+            <text v-if="s.sector && s.sector !== '—'" class="board__stock-sector">{{ s.sector }}</text>
+          </view>
+          <text v-if="s.meta" class="board__stock-meta">{{ s.meta }}</text>
+          <text v-else class="board__stock-pct" :class="s.pct >= 0 ? 'is-up' : 'is-down'">{{ fmtPct(s.pct) }}</text>
         </view>
       </view>
     </template>
@@ -181,9 +184,11 @@ $radius-md: 14rpx;
 .board__stock { margin-top: 10rpx; padding-top: 10rpx; border-top: 1rpx solid rgba(255, 184, 107, 0.16); }
 .board__stock-label { display: block; font-size: 22rpx; color: $rf-amber; font-weight: 600; margin-bottom: 4rpx; }
 .board__stock-row { display: flex; align-items: center; gap: 12rpx; padding: 6rpx 4rpx; }
+.board__stock-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .board__stock-name { font-size: 26rpx; color: $color-text-primary; font-weight: 600; }
-.board__stock-sector { font-size: 22rpx; color: $color-text-secondary; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.board__stock-pct { font-size: 24rpx; font-weight: 700; }
+.board__stock-sector { font-size: 20rpx; color: $color-text-secondary; }
+.board__stock-meta { font-size: 22rpx; color: $color-text-secondary; flex: 0 0 auto; text-align: right; }
+.board__stock-pct { font-size: 24rpx; font-weight: 700; flex: 0 0 auto; }
 
 .board__more {
   margin-top: 12rpx;

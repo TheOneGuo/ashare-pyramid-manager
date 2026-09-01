@@ -24,8 +24,9 @@ export interface StockItem {
   code: string
   name: string
   sector: string
-  pct: number // 领涨股当日涨跌幅 %
+  pct: number // 领涨股涨跌幅 %；持仓股为 0（看 meta）
   rank: number
+  meta?: string // 持股说明（报告期 · 增仓/新进/持股家数）
 }
 export interface SankeyEdge {
   fund: FundType
