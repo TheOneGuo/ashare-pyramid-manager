@@ -10,6 +10,8 @@
         (coverSupport ? ', viewport-fit=cover' : '') + '" />')
     </script>
     <title></title>
+    <!-- 空 data: 图标，避免浏览器自动请求 /favicon.ico 产生 404 控制台报错 -->
+    <link rel="icon" href="data:," />
     <!--preload-links-->
     <!--app-context-->
   </head>

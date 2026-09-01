@@ -3,7 +3,8 @@
     <TabBarComp v-if="isH5" />
 
     <view class="ff-body">
-      <view class="ff-layout">
+      <!-- 数据就绪才渲染主体：避免 data 为 null 时模板读取 data.sankey / data.funds 抛 TypeError -->
+      <view v-if="data" class="ff-layout">
         <!-- 左栏：标题 + 日期 + 资金子 tab + 桑基图 + CTA -->
         <view class="col-left">
           <view class="ff-sticky">
@@ -22,12 +23,10 @@
         </view>
       </view>
 
-      <!-- 加载态 -->
-      <view v-if="loading && !data" class="ff-state"><text>加载资金流向…</text></view>
-      <!-- 错误态 -->
-      <view v-else-if="error" class="ff-state ff-state--error" @tap="retry">
-        <text>加载失败 · 点击重试</text>
-        <text class="ff-state-hint">{{ error }}</text>
+      <!-- 加载态 / 错误态（data 未就绪时显示） -->
+      <view v-else class="ff-state" :class="{ 'ff-state--error': error }" @tap="retry">
+        <text>{{ error ? '加载失败 · 点击重试' : '加载资金流向…' }}</text>
+        <text v-if="error" class="ff-state-hint">{{ error }}</text>
       </view>
     </view>
   </view>
