@@ -9,11 +9,6 @@
     >
       <text class="subtabs__emoji">{{ t.emoji }}</text>
       <text class="subtabs__label">{{ t.name }}</text>
-      <view class="subtabs__underline" />
-    </view>
-    <view class="subtabs__item subtabs__item--more" @tap="onMore">
-      <text class="subtabs__label">更多</text>
-      <text class="subtabs__caret">▾</text>
     </view>
   </view>
 </template>
@@ -35,62 +30,48 @@ function onTap(type: FundType) {
   if (type === props.activeType) return
   emit('change', type)
 }
-function onMore() {
-  uni.showToast({ title: '更多资金类型开发中', icon: 'none' })
-}
 </script>
 
 <style lang="scss" scoped>
+/* 与 market 页 mk-source-chip 同款胶囊切换（金色系，无新色） */
+$color-card-bg: linear-gradient(180deg, rgba(255, 184, 107, 0.055), rgba(114, 247, 255, 0.025));
+$color-border: rgba(255, 184, 107, 0.24);
+$color-text-primary: #f5ecd9;
+$color-text-secondary: #a89a82;
+$radius-full: 999rpx;
+
 .subtabs {
   display: flex;
   align-items: stretch;
-  gap: 8rpx;
-  padding: 6rpx 2rpx 10rpx;
+  gap: 12rpx;
+  padding: 6rpx 2rpx 12rpx;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
 .subtabs::-webkit-scrollbar { display: none; }
 .subtabs__item {
-  position: relative;
   flex: 1 1 0;
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6rpx;
-  padding: 16rpx 8rpx;
-  border-radius: $radius-base;
-  background: $app-card-bg;
-  border: 1rpx solid $app-border;
-  color: $app-text-muted;
-  transition: color 0.2s, background 0.2s, border-color 0.2s;
+  padding: 12rpx 8rpx;
+  border-radius: $radius-full;
+  background: $color-card-bg;
+  border: 1rpx solid $color-border;
+  color: $color-text-secondary;
+  font-size: 24rpx;
+  font-weight: 600;
+  transition: all 0.18s ease;
   box-sizing: border-box;
 }
 .subtabs__item.is-active {
-  color: $app-text;
-  border-color: rgba(212, 175, 55, 0.55);
-  background: linear-gradient(180deg, rgba(212, 175, 55, 0.16), rgba(212, 175, 55, 0.05));
+  background: linear-gradient(135deg, #ffb86b 0%, #ff7a3d 100%);
+  color: #0b0b0d;
+  border-color: transparent;
 }
 .subtabs__emoji { font-size: 26rpx; line-height: 1; }
-.subtabs__label { font-size: 24rpx; font-weight: 500; white-space: nowrap; }
-.subtabs__item--more { flex: 0 0 auto; padding: 16rpx 18rpx; }
-.subtabs__caret { font-size: 20rpx; color: $app-text-muted; }
-// 金色下划线指示（动效 <300ms）
-.subtabs__underline {
-  position: absolute;
-  left: 50%;
-  bottom: 4rpx;
-  width: 40rpx;
-  height: 4rpx;
-  border-radius: 4rpx;
-  background: linear-gradient(90deg, #fff4c0, #d89c1c);
-  opacity: 0;
-  transform: translateX(-50%) scaleX(0.3);
-  transition: opacity 0.22s ease, transform 0.22s ease;
-}
-.subtabs__item.is-active .subtabs__underline {
-  opacity: 1;
-  transform: translateX(-50%) scaleX(1);
-}
+.subtabs__label { font-size: 24rpx; white-space: nowrap; }
 </style>

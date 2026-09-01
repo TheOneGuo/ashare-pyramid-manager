@@ -16,11 +16,12 @@ $app-down:        #00B578;   // A 股绿跌
 $app-warn:        #F0AD4E;
 $app-error:       #DD524D;
 
-// 资金流向四类资金色（与 SankeyChart SVG 内联常量同步，见 components/SankeyChart.vue）
-$fund-joint:   #D4AF37;  // 共同增仓（金，复用主金）
-$fund-public:   #F0AD4E;  // 公募基金（琥珀）
-$fund-stab:    #26D0CE;  // 超级平准（青）
-$fund-foreign: #FF7A45;  // 超级外资（橙红）
+// 资金流向四类资金色 —— 全部映射到项目既有色板（不得引入新色）：
+// 金 #f4c542 / 青 #72f7ff / 暖灰 #d3c3ad / 橙红 #ff7a3d（与 SankeyChart.vue SVG 内联常量同步）
+$fund-joint:   #f4c542;  // 共同增仓（金，滚动条/高亮主金）
+$fund-public:   #72f7ff;  // 公募基金（青）
+$fund-stab:    #d3c3ad;  // 超级平准（暖灰）
+$fund-foreign: #ff7a3d;  // 超级外资（橙红）
 
 // 圆角
 $radius-sm:   8rpx;

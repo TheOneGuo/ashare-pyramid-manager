@@ -2,11 +2,15 @@
 # 用法：在 akshare-service 目录下执行  .\start.ps1
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$venv = Join-Path $root ".venv"
+# 优先 .venv313（受管 Python 3.13.12 重建，沙箱内 akshare 1.18.94 实测可用）；旧 .venv 兜底
+$venv = Join-Path $root ".venv313"
 if (-not (Test-Path (Join-Path $venv "Scripts/python.exe"))) {
-  Write-Host "未找到 .venv，请先创建并安装依赖：" -ForegroundColor Yellow
-  Write-Host "  python -m venv .venv"
-  Write-Host "  .\.venv\Scripts\python.exe -m pip install akshare fastapi uvicorn"
+  $venv = Join-Path $root ".venv"
+}
+if (-not (Test-Path (Join-Path $venv "Scripts/python.exe"))) {
+  Write-Host "未找到 .venv / .venv313，请先创建并安装依赖：" -ForegroundColor Yellow
+  Write-Host "  python -m venv .venv313"
+  Write-Host "  .\.venv313\Scripts\python.exe -m pip install akshare fastapi uvicorn requests"
   exit 1
 }
 Write-Host "启动 akshare-service on http://127.0.0.1:8800 ..."

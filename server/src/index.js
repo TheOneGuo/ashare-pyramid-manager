@@ -38,7 +38,7 @@ import {
   refineFxbaogaoBatch, isPdfUrlBlocked,
   setDownloadGuard, setNewDownloadHook, judgeFxbaogaoTitlesByLlm,
 } from './fxbaogao.js';
-import { buildFundFlow } from './fund-flow.js';
+import { buildFundFlow, buildFundFlowReal } from './fund-flow.js';
 import { buildAccount, previewChange, checkWithdraw, TERMS, EVENT_DEPOSIT, EVENT_WITHDRAW, EVENT_FEE_RATE } from './account-ledger.js';
 import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans, removePlan,
   upsertResearchReport, listResearchReports, listResearchReportsFiltered, countResearchReportsGrouped, deleteResearchReport,
@@ -836,23 +836,32 @@ app.get('/api/research/fxbaogao/pdf-url', async (req, res) => {
 })
 
 // ============================================================
-// 资金流向（资金动态）：4 类资金 → 板块 桑基图 + 板块/个股榜
+// 资金流向（资金动态）：真实数据（腾讯行业板块主力净流入 + 东财北向日度成交）
 // ============================================================
-const FUND_FLOW_MODE = String(process.env.FUND_FLOW_MODE || 'mock').toLowerCase();
+const FUND_FLOW_MODE = String(process.env.FUND_FLOW_MODE || 'real').toLowerCase();
 app.get('/api/fundflow', (req, res) => {
-  // 预留 eastmoney/partner 真实数据源；本期仅 mock
-  if (FUND_FLOW_MODE !== 'mock') {
-    return res.status(501).json({ ok: false, error: `FUND_FLOW_MODE=${FUND_FLOW_MODE} 未实现（预留 eastmoney/partner）` });
+  // 仅显式 FUND_FLOW_MODE=mock 时走固定种子 mock（开发调试用）；真实模式失败绝不静默回 mock
+  if (FUND_FLOW_MODE === 'mock') {
+    const hit = getCached('fundflow', req);
+    if (hit) return res.json(hit);
+    try {
+      const data = buildFundFlow({});
+      setCached('fundflow', req, data);
+      return res.json(data);
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e).slice(0, 200) });
+    }
   }
   const hit = getCached('fundflow', req);
   if (hit) return res.json(hit);
-  try {
-    const data = buildFundFlow({});
-    setCached('fundflow', req, data);
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e).slice(0, 200) });
-  }
+  buildFundFlowReal()
+    .then((data) => {
+      setCached('fundflow', req, data);
+      res.json(data);
+    })
+    .catch((e) => {
+      res.status(502).json({ ok: false, source: 'real', error: String(e?.message || e).slice(0, 200) });
+    });
 })
 
 // 4) 一键 AI 精读入研报库：下载 PDF → 抽文本 → LLM 提炼 → 入 research_reports

@@ -2,24 +2,38 @@
   <view class="ff-page" :class="{ 'h5-mode': isH5 }">
     <TabBarComp v-if="isH5" />
 
+    <!-- head 固定区（对齐持仓/行情页）：标题 + 提示 -->
+    <view class="ff-head">
+      <text class="ff-title">资金流向</text>
+      <text class="ff-hint">行业主力净流入 · 北向成交 · 板块增仓榜（真实数据）</text>
+    </view>
+
     <view class="ff-body">
-      <!-- 数据就绪才渲染主体：避免 data 为 null 时模板读取 data.sankey / data.funds 抛 TypeError -->
+      <!-- 数据就绪才渲染主体：避免 data 为 null 时模板读取 data.sankey 抛 TypeError -->
       <view v-if="data" class="ff-layout">
-        <!-- 左栏：标题 + 日期 + 资金子 tab + 桑基图 + CTA -->
+        <!-- 左栏：口径说明 + 资金子 tab + 桑基图 / 北向面板 -->
         <view class="col-left">
           <view class="ff-sticky">
-            <HeroCard />
-            <DateBanner :asOf="data?.asOf || ''" />
-            <SubTabs :activeType="activeType" @change="onTabChange" />
+            <DateBanner :metric="activeMetric" :as-of="data.asOf" />
+            <SubTabs :active-type="activeType" @change="onTabChange" />
           </view>
-          <SankeyChart :sankey="data.sankey" :activeType="activeType" />
-          <SankeyCTA />
+          <!-- 超级外资：行业级北向持仓已停披 → 展示交易所仍公开的日度成交热度 -->
+          <NorthPanel v-if="activeType === 'foreign' && data.north" :north="data.north" :notice="activeMetric?.notice" />
+          <view v-else-if="activeType === 'foreign'" class="ff-state"><text>北向日度数据暂不可用</text></view>
+          <SankeyChart v-else :sankey="data.sankey" :active-type="activeType" />
         </view>
 
-        <!-- 右栏：板块增仓榜 + 股票中意榜 -->
+        <!-- 右栏：四类资金分区榜（每类一张卡，top3 → 更多 → top10） -->
         <view class="col-right">
-          <RankBoard kind="sector" title="板块增仓榜" :data="data" :activeType="activeType" />
-          <RankBoard kind="stock" title="股票中意榜" :data="data" :activeType="activeType" />
+          <RankBoard
+            v-for="f in data.funds"
+            :key="f.type"
+            :node="f"
+            :metric="data.metric[f.type]"
+            :sectors="data.sectors[f.type]"
+            :stocks="data.stocks[f.type]"
+            :north="data.north"
+          />
         </view>
       </view>
 
@@ -33,16 +47,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { onShow, onPullDownRefresh } from '@dcloudio/uni-app'
+import { ref, computed, onMounted } from 'vue'
+import { onShow } from '@dcloudio/uni-app'
 import TabBarComp from '@/custom-tab-bar/index.vue'
 import { fetchFundFlow, type FundFlowResp, type FundType } from '@/api/fundflow'
-import HeroCard from './components/HeroCard.vue'
 import DateBanner from './components/DateBanner.vue'
 import SubTabs from './components/SubTabs.vue'
 import SankeyChart from './components/SankeyChart.vue'
-import SankeyCTA from './components/SankeyCTA.vue'
 import RankBoard from './components/RankBoard.vue'
+import NorthPanel from './components/NorthPanel.vue'
 
 const isH5 = ref(typeof window !== 'undefined')
 
@@ -52,6 +65,8 @@ const loading = ref(false)
 const error = ref('')
 const activeType = ref<FundType>('joint')
 
+const activeMetric = computed(() => (data.value ? data.value.metric[activeType.value] : undefined))
+
 async function load() {
   loading.value = true
   error.value = ''
@@ -59,7 +74,6 @@ async function load() {
     const r = await fetchFundFlow()
     if (!r?.ok) throw new Error(r?.error || '加载失败')
     data.value = r
-    // 刷新后若 URL 带 type 查询，应用选中
     const q = getQueryType()
     if (q && r.funds.some((f) => f.type === q)) activeType.value = q
   } catch (e: any) {
@@ -105,15 +119,28 @@ onMounted(() => {
 onShow(() => {
   if (!data.value && !loading.value) load()
 })
-onPullDownRefresh(() => {
-  load().finally(() => uni.stopPullDownRefresh())
-})
 </script>
 
 <style lang="scss" scoped>
+/* 与 market/portfolio 页一致的金色系（不引入新色） */
+$color-bg: #0b0b0d;
+$color-card-bg: linear-gradient(180deg, rgba(255, 184, 107, 0.055), rgba(114, 247, 255, 0.025));
+$color-border: rgba(255, 184, 107, 0.24);
+$color-text-primary: #f5ecd9;
+$color-text-secondary: #a89a82;
+$color-text-warm: #d3c3ad;
+$rf-amber: #ffb86b;
+$radius-lg: 20rpx;
+
 .ff-page {
   min-height: 100vh;
-  background: $app-bg;
+  background: $color-bg;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 48px 48px;
+  color: $color-text-primary;
+  font-family: -apple-system, 'PingFang SC', sans-serif;
   padding-bottom: calc(160rpx + env(safe-area-inset-bottom, 0px));
 }
 .ff-page.h5-mode {
@@ -123,15 +150,49 @@ onPullDownRefresh(() => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding-bottom: 0;
 }
+/* head 固定区（对齐持仓/行情页） */
+.ff-head {
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: $color-bg;
+  padding: 16rpx 24rpx 8rpx;
+}
+.ff-title {
+  display: block;
+  font-size: 44rpx;
+  font-weight: 700;
+  color: $color-text-primary;
+  letter-spacing: 1rpx;
+}
+.ff-hint {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: $color-text-secondary;
+  letter-spacing: 1rpx;
+}
+
+/* body 滚动区（金色滚动条，与其他 tab 一致） */
 .ff-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
-  padding: 0 $spacing-base calc(140rpx + env(safe-area-inset-bottom, 0px));
+  padding: 8rpx 24rpx calc(140rpx + env(safe-area-inset-bottom, 0px));
 }
+.ff-body::-webkit-scrollbar { width: 5rpx; }
+.ff-body::-webkit-scrollbar-track { background: transparent; }
+.ff-body::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #fff4c0 0%, #f4c542 50%, #d89c1c 100%);
+  border-radius: 6rpx;
+}
+.ff-body { scrollbar-width: thin; scrollbar-color: #d89c1c transparent; }
+
 .ff-layout {
   display: flex;
   flex-direction: column;
@@ -144,12 +205,12 @@ onPullDownRefresh(() => {
 .ff-state {
   padding: 120rpx 20rpx;
   text-align: center;
-  color: $app-text-muted;
+  color: $color-text-secondary;
   font-size: 26rpx;
   line-height: 1.7;
 }
-.ff-state--error { color: $app-error; }
-.ff-state-hint { display: block; margin-top: 8rpx; font-size: 22rpx; color: $app-text-muted; }
+.ff-state--error { color: #e2553b; }
+.ff-state-hint { display: block; margin-top: 8rpx; font-size: 22rpx; color: $color-text-secondary; }
 
 // ─────────────────────────────────────────────
 // 折叠屏 / 平板双栏（H5，宽 700~1400px）：左栏 58% + 右栏 42%
@@ -157,6 +218,15 @@ onPullDownRefresh(() => {
 // ─────────────────────────────────────────────
 @include fold-wide {
   .ff-page.h5-mode { flex-direction: row; }
+  .ff-head {
+    flex: 0 0 240px;
+    width: 240px;
+    border-right: 1rpx solid $color-border;
+    padding: 16rpx 14rpx 24rpx;
+    overflow-y: auto;
+  }
+  .ff-title { font-size: 20px; }
+  .ff-hint { font-size: 11px; }
   .ff-body {
     flex: 1;
     min-width: 0;
@@ -174,7 +244,6 @@ onPullDownRefresh(() => {
   }
   .col-left { flex: 0 0 58%; max-width: 58%; overflow-y: auto; min-height: 0; }
   .col-right { flex: 1 1 42%; max-width: 42%; overflow-y: auto; min-height: 0; }
-  // 左栏头（标题/日期/子 tab）在折叠屏下吸顶
-  .ff-sticky { position: sticky; top: 0; background: $app-bg; z-index: 5; padding-bottom: 8rpx; }
+  .ff-sticky { position: sticky; top: 0; background: $color-bg; z-index: 5; padding-bottom: 8rpx; }
 }
 </style>

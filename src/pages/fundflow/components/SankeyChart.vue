@@ -28,7 +28,7 @@
       <!-- 右列：板块节点 + 右侧涨跌 chip -->
       <g v-for="(n, i) in layout.rightNodes" :key="'R' + i">
         <rect :x="n.x" :y="n.y" :width="n.w" :height="n.h" rx="8"
-              fill="#152739" stroke="rgba(255,255,255,0.12)" />
+              fill="rgba(255,184,107,0.10)" stroke="rgba(255,184,107,0.30)" />
         <text :x="n.x + n.w / 2" :y="n.y + n.h / 2 + 5" text-anchor="middle" class="sankey__node">
           <title>{{ n.name }}</title>{{ trunc(n.name, 5) }}
         </text>
@@ -49,14 +49,15 @@ const props = defineProps<{
 }>()
 
 // ⚠️ 与 src/styles/theme.scss 的 $fund-* 同步（SVG 内联，无法用 SCSS 变量）
+// 四色全部取自项目既有色板（金/青/暖灰/橙红），不引入新色
 const FUND_COLORS: Record<string, string> = {
-  joint: '#D4AF37',
-  public: '#F0AD4E',
-  stab: '#26D0CE',
-  foreign: '#FF7A45',
+  joint: '#f4c542',
+  public: '#72f7ff',
+  stab: '#d3c3ad',
+  foreign: '#ff7a3d',
 }
-const UP = '#FF4D4F' // 红涨（$app-up）
-const DOWN = '#00B578' // 绿跌（$app-down）
+const UP = '#e2553b' // 红涨（与其他 tab 一致）
+const DOWN = '#26a86b' // 绿跌（与其他 tab 一致）
 
 const VB_W = 690
 const VB_H = 400
@@ -137,9 +138,9 @@ function trunc(name: string, n: number): string {
 <style lang="scss" scoped>
 .sankey-wrap {
   width: 100%;
-  background: $app-card-bg;
-  border: 1rpx solid $app-border;
-  border-radius: $radius-lg;
+  background: linear-gradient(180deg, rgba(255, 184, 107, 0.055), rgba(114, 247, 255, 0.025));
+  border: 1rpx solid rgba(255, 184, 107, 0.24);
+  border-radius: 20rpx;
   padding: $spacing-sm;
   box-sizing: border-box;
 }
@@ -152,17 +153,17 @@ function trunc(name: string, n: number): string {
   transition: opacity 0.25s ease;
 }
 .sankey__node {
-  fill: $app-text;
+  fill: #f5ecd9;
   font-size: 13px;
   font-weight: 500;
-  font-family: system-ui, sans-serif;
+  font-family: -apple-system, 'PingFang SC', sans-serif;
 }
 .sankey__chip {
   font-size: 12px;
   font-weight: 700;
-  font-family: system-ui, sans-serif;
+  font-family: -apple-system, 'PingFang SC', sans-serif;
 }
-// 红涨绿跌（chip 只看符号，与 fund 颜色无关）
-.is-up { fill: $app-up; }
-.is-down { fill: $app-down; }
+// 红涨绿跌（chip 只看符号，与 fund 颜色无关；与其他 tab 色板一致）
+.is-up { fill: #e2553b; }
+.is-down { fill: #26a86b; }
 </style>
