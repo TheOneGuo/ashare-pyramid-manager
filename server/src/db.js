@@ -1425,10 +1425,15 @@ export async function upsertFxbaogaoAi({ report_id, title, broker, source_url, r
       now,
     ],
   });
-  // 同步标记索引表 ai_status = 2（已精读）；report_type/region/perspective 用 LLM 权威值覆盖启发式
+  // 索引表状态：只有真正的 LLM 提炼（refined-llm）才算「已精读」(2)。
+  // refined-mock 是 LLM 调用失败的兜底产物（只有原文、tldr 为空），必须留在待精读队列里等重试；
+  // 否则一次渠道抖动（例：中转站 503 model_not_found）就把这篇永久标记成已精读、再也不会重试。
+  const aiStatus = String(status || '') === 'refined-llm' ? 2 : 0;
+  // report_type/region/perspective 用 LLM 权威值覆盖启发式回填值；但 LLM 没给值（含 mock 路径）时
+  // 必须保留原值，不能用空串覆盖——否则每次进程重启都要重跑一遍 backfill（实测每次刷 1005 行）。
   await client.execute({
-    sql: `UPDATE fxbaogao_reports SET ai_status=2, report_type=?, region=?, perspective=? WHERE report_id=?`,
-    args: [String(report_type || '').slice(0, 20), String(region || '').slice(0, 10), String(perspective || '').slice(0, 20), Number(report_id)],
+    sql: `UPDATE fxbaogao_reports SET ai_status=?, report_type=COALESCE(NULLIF(?,''), report_type), region=COALESCE(NULLIF(?,''), region), perspective=COALESCE(NULLIF(?,''), perspective) WHERE report_id=?`,
+    args: [aiStatus, String(report_type || '').slice(0, 20), String(region || '').slice(0, 10), String(perspective || '').slice(0, 20), Number(report_id)],
   });
 }
 
@@ -1616,6 +1621,44 @@ export async function incrPdfDownloadsToday(n = 1) {
     });
   } catch (e) {
     console.warn('[db] incrPdfDownloadsToday:', String(e?.message || '').slice(0, 80));
+  }
+}
+
+// ── 每日任务「今天是否已跑过」标记 ─────────────────────
+// 复用 fxbaogao_daily_download 的 day 主键作为标记行：任务跑完时确保当天有行（cnt 保持 0）。
+// 若当天有新下载，行本来就会被 incrPdfDownloadsToday 建出来，这里 ON CONFLICT DO NOTHING 不会动它。
+// 之所以在「跑完」而不是「开始」时落标记：跑完才落 → 任务中途崩溃（tsx --watch 热重启等）
+// 下一轮看门狗能自动补跑；代价是崩溃会重试，故 index.js 侧加了 30 分钟最小重试间隔。
+export async function hasRunDailyJobToday() {
+  try {
+    const r = await client.execute({ sql: `SELECT 1 AS x FROM fxbaogao_daily_download WHERE day=? LIMIT 1`, args: [localDayKey()] });
+    return r.rows.length > 0;
+  } catch { return false; }
+}
+export async function markDailyJobDone() {
+  try {
+    await client.execute({
+      sql: `INSERT INTO fxbaogao_daily_download(day,cnt) VALUES(?,0) ON CONFLICT(day) DO NOTHING`,
+      args: [localDayKey()],
+    });
+  } catch (e) {
+    console.warn('[db] markDailyJobDone:', String(e?.message || '').slice(0, 80));
+  }
+}
+
+// 一次性自愈：把「只有 mock 兜底、没有真提炼」的研报退回待精读队列。
+// 仅在本函数的判据成立时才动（fxbaogao_ai.status='refined-mock' 且索引表 ai_status=2），
+// 修复落库后新产生的 mock 行 ai_status 已经是 0，所以正常情况下第二次调用返回 0。
+export async function requeueMockRefinements() {
+  try {
+    const r = await client.execute(
+      `UPDATE fxbaogao_reports SET ai_status=0
+       WHERE ai_status=2 AND report_id IN (SELECT report_id FROM fxbaogao_ai WHERE status='refined-mock')`,
+    );
+    return r.rowsAffected || 0;
+  } catch (e) {
+    console.warn('[db] requeueMockRefinements:', String(e?.message || '').slice(0, 80));
+    return 0;
   }
 }
 

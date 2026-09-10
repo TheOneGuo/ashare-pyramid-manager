@@ -558,8 +558,11 @@ export async function refineOneFxbaogao(
       model: llmResult?.mode === 'llm' ? model : '',
     }
     if (refined.status === 'refined-llm' || refined.status === 'refined-mock') {
+      // mock 也落库：目的是保住已抽取的原文，重试时不必再下载 PDF。
+      // 但它不算「成功」——db 侧 upsertFxbaogaoAi 只在 refined-llm 时写 ai_status=2，
+      // mock 会留在待精读队列里等下一轮重试，并且不计入「成功精读 N 篇」。
       await hooks.saveResult({ ...refined, source_url: viewUrl })
-      return { ok: true, ...refined, pdf_url: pdfUrl }
+      return { ok: refined.status === 'refined-llm', ...refined, pdf_url: pdfUrl }
     }
     return { ok: false, ...refined, pdf_url: pdfUrl }
   } catch (e: any) {

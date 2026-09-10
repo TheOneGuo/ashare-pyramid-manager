@@ -412,6 +412,7 @@ export async function handleResearch(body: {
 // 没有 LLM key 时返回 null（让上层走 mock 兜底）
 // ============================================================================
 import { chatJson, isLlmAvailable } from './llm.js'
+import { retryWithTimeout } from './write-guard.js'
 
 const REFINED_SYSTEM = `你是「节节高」研报精读助手，把卖方/外资研报正文提炼成结构化要点。要求：
 - 中文输出，简洁专业，不要客套
@@ -472,13 +473,28 @@ export async function refineWithLlm(input: {
 {"tldr":"...", "key_points":["..."], "opportunities":["..."], "risks":["..."], "report_type":"stock|industry|macro|strategy|minutes|other",
  "region":"CN|US|KR|JP|TW|HK|GLOBAL|OTHER", "perspective":"产业|金融|供应链|技术|订单|认证|",
  "extraction":{"stocks":[{"code":"6位代码","name":"公司名"}], "industry":"...", "suppliers":["..."], "buyers":["..."], "regulations":["..."], "raw_materials":["..."], "origin_risks":["..."], "orders":["..."], "certifications":["..."], "financials":["..."], "key_persons":["..."]}}`
-  const result = await chatJson<{ tldr?: string; key_points?: string[]; opportunities?: string[]; risks?: string[]; report_type?: string; region?: string; perspective?: string; extraction?: LlmExtraction }>({
+  // 单篇实测 30~40s（18000 字正文 + 结构化抽取 + 提取 extraction）。
+  // 中转站会偶发 503（「分组下模型无可用渠道」）或返回被截断的 JSON；这两种情况
+  // chatJson 都只 console.warn 后 return null（不抛错），所以必须把 null 也当失败重试，
+  // 否则一次抖动就直接降级成 refined-mock（只存原文、tldr 为空），白白丢掉一篇的提炼。
+  const attempt = () => chatJson<{ tldr?: string; key_points?: string[]; opportunities?: string[]; risks?: string[]; report_type?: string; region?: string; perspective?: string; extraction?: LlmExtraction }>({
     system: REFINED_SYSTEM,
     user,
     jsonHint: true,
     maxTokens: 3200,
     temperature: 0.2,
+  }).then((v) => {
+    if (!v || typeof v !== 'object') throw new Error('llm_empty_or_unparsable')
+    return v
   })
+  const r = await retryWithTimeout(attempt, {
+    delays: [0, 3000, 8000],
+    timeoutMs: 90_000,
+    label: 'llm_refine',
+    onError: (e: any, i: number) => console.warn(`[llm] 精读第 ${i + 1} 次尝试失败：${String(e?.message || e).slice(0, 120)}`),
+  })
+  if (!r.ok) return null
+  const result = r.value
   if (!result || typeof result !== 'object') return null
   const pickStr = (v: any) => String(v || '').trim()
   const pickList = (v: any): string[] => Array.isArray(v) ? v.map((x) => String(x || '').trim()).filter((x) => x.length > 0).slice(0, 8) : []

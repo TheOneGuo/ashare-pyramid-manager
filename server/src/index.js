@@ -46,6 +46,7 @@ import { listLedgerEvents, appendLedgerEvent, clearLedger, upsertPlan, listPlans
   upsertFxbaogaoReports, listFxbaogaoReports, getFxbaogaoStats, getFxbaogaoReportById, maxUnrefinedCount,
   updateFxbaogaoPdfUrl, upsertFxbaogaoAi, getFxbaogaoAi, listUnrefinedFxbaogao, markFxbaogaoAiPending, resetStuckFxbaogaoPending, cleanupOldFxbaogao, searchFxbaogaoByStock, isFxbaogaoNoiseOrg,
   listFxbaogaoDailyCandidates, getPdfDownloadsToday, incrPdfDownloadsToday,
+  hasRunDailyJobToday, markDailyJobDone,
 } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -176,18 +177,20 @@ function dailyPriority(j) {
   return base + (DAILY_REGION_ORDER[String(j?.region).toUpperCase()] ?? 7);
 }
 
+// 返回值语义：true = 今天这一轮已完成（不论是否真有产出），看门狗据此落「今日已跑」标记；
+// false = 本轮没完成（配置缺失 / 已有批次在跑 / 抛错），看门狗会在最小间隔后重试。
 async function runDailyFxbaogaoJob() {
-  if (!isFxbaogaoAvailable()) { console.log('[fxbaogao daily] FXBAOGAO_API_KEY 未配置，跳过'); return; }
-  if (fxJob.running) { console.log('[fxbaogao daily] 有精读批次在跑，跳过本轮'); return; }
+  if (!isFxbaogaoAvailable()) { console.log('[fxbaogao daily] FXBAOGAO_API_KEY 未配置，跳过'); return false; }
+  if (fxJob.running) { console.log('[fxbaogao daily] 有精读批次在跑，跳过本轮'); return false; }
   try {
     const used = await getPdfDownloadsToday();
     if (used >= DAILY_PDF_BUDGET) {
       console.log(`[fxbaogao daily] 今日已新下载 ${used}/${DAILY_PDF_BUDGET}，预算用尽，明日 21 点再来`);
       setDownloadGuard(null); setNewDownloadHook(null);
-      return;
+      return true;
     }
     const candidates = await listFxbaogaoDailyCandidates(300);
-    if (!candidates.length) { console.log('[fxbaogao daily] 无外资 行业/宏观 未精读候选'); return; }
+    if (!candidates.length) { console.log('[fxbaogao daily] 无外资 行业/宏观 未精读候选'); return true; }
     console.log(`[fxbaogao daily] 候选 ${candidates.length} 篇，LLM 按标题选题…`);
     const judged = await judgeFxbaogaoTitlesByLlm(
       candidates.map((c) => ({ reportId: c.reportId, title: c.title, dbRegion: c.region, dbType: c.reportType })),
@@ -201,7 +204,7 @@ async function runDailyFxbaogaoJob() {
         || Number(b.recommended) - Number(a.recommended)
         || (b.pubTime || 0) - (a.pubTime || 0),
       );
-    if (!picked.length) { console.log('[fxbaogao daily] LLM 判定无 8 大主题相关研报，今日不下载'); return; }
+    if (!picked.length) { console.log('[fxbaogao daily] LLM 判定无 8 大主题相关研报，今日不下载'); return true; }
     const take = Math.min(DAILY_PDF_BUDGET - used, picked.length);
     const items = picked.slice(0, take).map((x) => ({
       reportId: x.reportId, title: x.title, orgName: x.orgName, pageNum: 0,
@@ -218,24 +221,54 @@ async function runDailyFxbaogaoJob() {
     });
     await runFxbaogaoJobWith(items, 1200);
     console.log(`[fxbaogao daily] 完成：成功精读 ${fxJob.ok}/${items.length} 篇，失败 ${fxJob.failed} 篇`);
+    return true;
   } catch (e) {
     console.warn('[fxbaogao daily] error:', String(e?.message || e).slice(0, 200));
+    return false;
   } finally {
     setDownloadGuard(null); setNewDownloadHook(null);
   }
 }
 
-// 自调度：每天 21:00 执行（执行完再排下一天）
-function scheduleDailyFxbaogaoJob(now = new Date()) {
-  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), DAILY_JOB_HOUR, 0, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
-  const ms = next.getTime() - now.getTime();
-  const pad = (n) => String(n).padStart(2, '0');
-  console.log(`[fxbaogao daily] 定时任务已排期：每天 ${DAILY_JOB_HOUR}:00 下载+精读，下次 ${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())} ${pad(next.getHours())}:${pad(next.getMinutes())}`);
-  setTimeout(async () => {
-    try { await runDailyFxbaogaoJob(); } catch (e) { console.warn('[fxbaogao daily] error:', String(e?.message || e).slice(0, 200)); }
-    scheduleDailyFxbaogaoJob();
-  }, ms);
+// 每日任务看门狗。
+// 为什么不用「一次 setTimeout 排到 21:00」：进程重启就重新排队，而 `next <= now` 会把今天的
+// 21:00 直接推成明天 —— 于是「机器睡了 / dev server 重启过」就整天不跑，且没有任何补跑机制。
+// 实测 tsx --watch 在 30 分钟内重启 6 次，靠单次 setTimeout 命中 21:00 完全靠运气。
+// 改为每 15 分钟自检一次：过了 21 点 && 今天还没跑过 → 立即补跑（重启后也能自愈）。
+// 注意「未跑过」的判据落在库里（hasRunDailyJobToday：当天在 fxbaogao_daily_download 有无行），
+// 不能用进程内变量 —— 那正是被重启清掉的东西。
+// 重试代价保护：30 分钟最小间隔，避免任务反复崩溃时每轮都重跑 LLM 选题（正常情况一天只跑 1 次）。
+const DAILY_JOB_CHECK_MS = 15 * 60 * 1000;
+const DAILY_RETRY_MIN_GAP_MS = 30 * 60 * 1000;
+let lastDailyAttemptAt = 0;
+const pad2 = (n) => String(n).padStart(2, '0');
+
+async function checkDailyFxbaogaoJob() {
+  if (!isFxbaogaoAvailable()) return;
+  if (new Date().getHours() < DAILY_JOB_HOUR) return;
+  if (fxbaogaoJobRunning()) return;
+  if (Date.now() - lastDailyAttemptAt < DAILY_RETRY_MIN_GAP_MS) return;
+  try {
+    if (await hasRunDailyJobToday()) return;
+  } catch { return; }
+  lastDailyAttemptAt = Date.now();
+  const d = new Date();
+  console.log(`[fxbaogao daily] 看门狗触发 ${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} 的下载+精读（进程错过 ${DAILY_JOB_HOUR}:00 时自愈补跑）`);
+  let done = false;
+  try {
+    done = await runDailyFxbaogaoJob();
+  } catch (e) {
+    console.warn('[fxbaogao daily] error:', String(e?.message || e).slice(0, 200));
+  }
+  if (done) await markDailyJobDone();
+}
+
+function startDailyFxbaogaoJobWatchdog() {
+  console.log(`[fxbaogao daily] 看门狗已启动：每 ${DAILY_JOB_CHECK_MS / 60000} 分钟自检，${DAILY_JOB_HOUR}:00 后当天未跑则补跑（下载预算 ${DAILY_PDF_BUDGET} 篇/天）`);
+  checkDailyFxbaogaoJob().catch((e) => console.warn('[fxbaogao daily] watchdog error:', e?.message || e));
+  setInterval(() => {
+    checkDailyFxbaogaoJob().catch((e) => console.warn('[fxbaogao daily] watchdog error:', e?.message || e));
+  }, DAILY_JOB_CHECK_MS);
 }
 
 // 线上每 15 分钟管线：增量同步最近 1 天 + 清理 3 个月外旧数据。
@@ -821,7 +854,18 @@ app.get('/api/research/fxbaogao/summary', async (_req, res) => {
   try {
     const stats = await getFxbaogaoStats().catch(() => ({ total: 0, latestPubTime: 0 }))
     const unrefined = await listUnrefinedFxbaogao(1)
-    res.json({ ok: true, ...stats, unrefinedCount: unrefined.length >= 0 ? (await maxUnrefinedCount()) : 0, aiStatus: fxbaogaoJobStatus() })
+    // dailyJob：回答「今天这一轮下载+精读到底跑没跑」——ranToday 来自库（进程重启不丢），
+    // downloadsToday/budget 反映当日下载额度消耗（cnt 只在「新签发 PDF 直链」时递增）。
+    const [ranToday, downloadsToday] = await Promise.all([
+      hasRunDailyJobToday().catch(() => false),
+      getPdfDownloadsToday().catch(() => 0),
+    ])
+    res.json({
+      ok: true, ...stats,
+      unrefinedCount: unrefined.length >= 0 ? (await maxUnrefinedCount()) : 0,
+      aiStatus: fxbaogaoJobStatus(),
+      dailyJob: { ranToday, downloadsToday, budget: DAILY_PDF_BUDGET, hour: DAILY_JOB_HOUR },
+    })
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message || '读取失败' })
   }
@@ -1485,8 +1529,8 @@ async function main() {
   setTimeout(() => {
     pumpFxbaogaoOnline().catch((e) => console.warn('[fxbaogao pump] warmup error:', e?.message || e));
   }, 30_000);
-  // 每日 21:00 下载 + 精读定时任务（新下载预算 19 篇/天，LLM 选题）
-  scheduleDailyFxbaogaoJob();
+  // 每日 21:00 下载 + 精读（看门狗自检：进程重启 / 错过时间点会自动补跑当天任务）
+  startDailyFxbaogaoJobWatchdog();
 }
 
 // =====================================================
