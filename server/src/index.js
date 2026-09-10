@@ -53,8 +53,8 @@ const PORT = Number(process.env.PORT || 9999);
 const MODE = (process.env.NEWS_SOURCE_MODE || 'real').toLowerCase();
 const PREVIEW_DIR = path.resolve(__dirname, '../../preview');
 
-// 「全部」快讯源：新浪 7×24（国内直连主源）+ 电报三源（代理可用时补充）
-const TELEGRAM_CHANNELS = ['sina_724', 'FinanceNewsDaily', 'jin10data', 'cnwallstreet'];
+// 「全部」快讯源：新浪 7×24（国内直连主源）+ 电报源（代理可用时补充）
+const TELEGRAM_CHANNELS = ['sina_724', 'FinanceNewsDaily', 'jin10data', 'cnwallstreet', 'ywcqdz'];
 
 const app = express();
 
@@ -272,7 +272,7 @@ app.get('/api/news', async (req, res) => {
         const codes = holdings.map((h) => h.stock_code);
         return fetchNews({ limit, since, holding_codes: codes });
       }
-      // 全部：新浪 7×24 主源 + 电报三源（代理可用时补充）
+      // 全部：新浪 7×24 主源 + 电报源（代理可用时补充）
       return fetchNews({ limit, since, channels: TELEGRAM_CHANNELS });
     };
     let items;

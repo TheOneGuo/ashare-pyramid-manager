@@ -1,7 +1,7 @@
 // news-collector.js — 整合多个新闻源，按 4 档频率策略调度
 //
 // 数据源：
-//  1. 电报 RSS（7×24 全市场中文快讯，金十/华尔街见闻/财经Daily）
+//  1. 电报 RSS（7×24 全市场中文快讯，金十/华尔街见闻/财经Daily/格隆汇）
 //  2. 东方财富公告（仅采集「持仓标的」的公告）
 //  3. 东方财富个股新闻（仅采集「持仓标的」的相关新闻）
 //
@@ -85,6 +85,12 @@ function mockNewsForChannel(channelMeta) {
       { title: `【华尔街见闻】${ts} A股午后冲高回落 创业板指收红`, summary: '今日 A 股三大指数走势分化，创业板指收红，沪指小幅下跌。', link: 'https://t.me/cnwallstreet/1', published_at: now - 120_000 },
     ];
   }
+  if (channel === 'ywcqdz') {
+    return [
+      { title: `【格隆汇】${ts} 港股通标的名单调整今日生效 多只科技股获纳入`, summary: '格隆汇快讯：港股通标的名单调整今日生效，多只科技股获纳入，相关标的成交活跃。', link: 'https://t.me/ywcqdz/1', published_at: now - 45_000 },
+      { title: `【格隆汇】${ts} 南向资金今日净买入超50亿港元`, summary: '格隆汇快讯：南向资金今日净买入超50亿港元，连续多日净流入。', link: 'https://t.me/ywcqdz/2', published_at: now - 3 * 60_000 },
+    ];
+  }
   // FinanceNewsDaily
   return [
     { title: `【财经Daily】${ts} 北向资金今日净流入30亿元`, summary: '北向资金今日净流入30亿元，主要流入白酒、新能源板块。', link: 'https://t.me/FinanceNewsDaily/1', published_at: now - 30_000 },
@@ -146,7 +152,7 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
   }
 
   // =====================================================
-  // 1) 电报 3 源（需代理 NEWS_PROXY_URL；失败不影响 sina 主源）
+  // 1) 电报多源（见 telegram-rss.js 的 CHANNELS；需代理 NEWS_PROXY_URL；失败不影响 sina 主源）
   // =====================================================
   for (const channelMeta of CHANNELS) {
     summary.telegram.refreshed++;

@@ -1,6 +1,6 @@
 // telegram-rss.js — 移植自原项目 telegram_news.py
 // 数据源：Telegram 公开频道 RSS（通过 RSSHub 代理 + t.me/s/ HTML 兜底）
-// 频道：FinanceNewsDaily / 金十数据 (jin10data) / 华尔街见闻 (cnwallstreet)
+// 频道：FinanceNewsDaily / 金十数据 (jin10data) / 华尔街见闻 (cnwallstreet) / 格隆汇 (ywcqdz)
 //
 // 关键点：
 // - 7×24 全市场财经快讯（中文）
@@ -19,6 +19,7 @@ const CHANNELS = [
   { channel: 'FinanceNewsDaily', name: '财经Daily' },
   { channel: 'jin10data', name: '金十数据' },
   { channel: 'cnwallstreet', name: '华尔街见闻' },
+  { channel: 'ywcqdz', name: '格隆汇' },
 ];
 
 // 懒创建代理 dispatcher（无代理环境保持直连，行为不变）
