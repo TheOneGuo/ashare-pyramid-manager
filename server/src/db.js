@@ -14,6 +14,7 @@
 import { createClient } from '@libsql/client';
 import { matchHoldingProfile } from './holding-profiles.js';
 import { createTursoFetch, tursoProxyInfo } from './turso-fetch.js';
+import { shapeNewsFeed } from './news-relevance.js';
 import 'dotenv/config';
 
 const url = process.env.TURSO_DATABASE_URL?.trim();
@@ -445,16 +446,61 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
   }
 
   // 默认 / 全部：可由 channels 限定（如仅电报三源）
+  const r = await client.execute(buildAllNewsQuery({ since, channels, cap }));
+  return r.rows.map(mapNewsRow);
+}
+
+/** 拼装「全部流」的取数语句（fetchNews 与 fetchNewsFeed 共用，避免两处 SQL 走偏）
+ * perChannel > 0 时用窗口函数按源各取前 N 条：保证低频源（格隆汇 ~20 条/日）
+ * 一定进入候选池 —— 只取「全局最新 180 条」时它会被新浪（~2000 条/日）挤光。
+ */
+function buildAllNewsQuery({ since, channels, cap, perChannel = 0 }) {
+  const hasCh = Array.isArray(channels) && channels.length > 0;
+  const chClause = hasCh ? ` AND source_channel IN (${channels.map(() => '?').join(',')})` : '';
+
+  if (perChannel > 0) {
+    const inner = `SELECT ${NEWS_COLS},
+        ROW_NUMBER() OVER (PARTITION BY source_channel ORDER BY published_at DESC) AS rn
+      FROM news_items WHERE published_at >= ?${chClause}`;
+    return {
+      sql: `SELECT ${NEWS_COLS} FROM (${inner}) WHERE rn <= ? ORDER BY published_at DESC`,
+      args: hasCh ? [since, ...channels, perChannel] : [since, perChannel],
+    };
+  }
+
   let sql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ?`;
   const args = [since];
-  if (Array.isArray(channels) && channels.length > 0) {
-    sql += ` AND source_channel IN (${channels.map(() => '?').join(',')})`;
+  if (hasCh) {
+    sql += chClause;
     args.push(...channels);
   }
   sql += ` ORDER BY published_at DESC LIMIT ?`;
   args.push(cap);
-  const r = await client.execute({ sql, args });
-  return r.rows.map(mapNewsRow);
+  return { sql, args };
+}
+
+/**
+ * 「全部」财经快讯流：相关性过滤 + 跨源近似去重 + 每源配额（见 news-relevance.js）
+ *
+ * 与 fetchNews 的区别：按源各取一批（不是全局 top-N）再收敛到 limit，
+ * 否则低频源根本没机会进候选池。filter=false 时等价旧行为（?raw=1）。
+ * @returns {{items: any[], stats: object}}
+ */
+export async function fetchNewsFeed({ limit = 30, since = 0, channels = null, filter = true } = {}) {
+  const cap = Math.min(200, Math.max(1, limit));
+
+  if (!filter) {
+    const r = await client.execute(buildAllNewsQuery({ since, channels, cap }));
+    return shapeNewsFeed(r.rows.map(mapNewsRow), { limit: cap, filter: false });
+  }
+
+  // 时间下界：让 idx_news_pub 索引生效（窗口函数否则要扫全表排序）。
+  // 清理策略本就只留 24h，48h 下界不会漏掉任何可见内容。
+  const floor = Math.max(Number(since) || 0, Date.now() - 48 * 3600_000);
+  // 每源取数上限：放大 1.8 倍以补偿过滤/去重造成的损耗（保证最终能填满 limit）
+  const perChannel = Math.min(80, Math.max(12, Math.ceil(cap * 1.8)));
+  const r = await client.execute(buildAllNewsQuery({ since: floor, channels, cap: 0, perChannel }));
+  return shapeNewsFeed(r.rows.map(mapNewsRow), { limit: cap, filter: true });
 }
 
 function safeJson(s) { try { return JSON.parse(s); } catch { return {}; } }

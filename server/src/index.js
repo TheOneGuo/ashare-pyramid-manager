@@ -21,7 +21,7 @@ import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initDb, getMode, fetchNews, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, updatePlanPrice, ROLE_LABELS } from './db.js';
+import { initDb, getMode, fetchNews, fetchNewsFeed, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, updatePlanPrice, ROLE_LABELS } from './db.js';
 import { enrichHolding, importFromText, importFromFile, fetchQuote } from './stock-service.js';
 import { registerCorsAndParse, requireAuth, ifindRateLimit } from './middleware.js';
 import { getProvider } from './providers/index.js';
@@ -309,6 +309,8 @@ app.get('/api/news', async (req, res) => {
     const limit = Number.isFinite(limitRaw) ? Math.min(200, Math.max(1, limitRaw)) : 30;
     const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
     const holding = req.query.holding === '1' || req.query.holding === 'true';
+    // 默认开启相关性过滤/去重/配额；?raw=1 返回未过滤原始流（排查误杀、对账用）
+    const filter = !(req.query.raw === '1' || req.query.raw === 'true');
 
     // 内存缓存命中直接返回：Turso 海外链路抖动的窗口里，靠它保证快讯页秒开、不报错
     const cachedPayload = getCached('news', req);
@@ -318,10 +320,11 @@ app.get('/api/news', async (req, res) => {
       if (holding) {
         const holdings = await listHoldingsSafe(3000);
         const codes = holdings.map((h) => h.stock_code);
-        return fetchNews({ limit, since, holding_codes: codes });
+        const rows = await fetchNews({ limit, since, holding_codes: codes });
+        return { items: rows, stats: { scope: 'holding', raw: rows.length } };
       }
-      // 全部：新浪 7×24 主源 + 电报源（代理可用时补充）
-      return fetchNews({ limit, since, channels: TELEGRAM_CHANNELS });
+      // 全部：新浪 7×24 主源 + 电报源；默认做相关性过滤/去重/每源配额（?raw=1 可绕过）
+      return fetchNewsFeed({ limit, since, channels: TELEGRAM_CHANNELS, filter });
     };
 
     let items = null;
@@ -337,8 +340,8 @@ app.get('/api/news', async (req, res) => {
       }
     }
 
-    if (items) {
-      const payload = { ok: true, count: items.length, items };
+    if (items?.items) {
+      const payload = { ok: true, count: items.items.length, items: items.items, stats: items.stats };
       setCached('news', req, payload);
       return res.json(payload);
     }
