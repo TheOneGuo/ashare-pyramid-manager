@@ -13,6 +13,9 @@ data/
 *.sqlite-journal
 dev.sqlite
 
+# 写路径 spool（Turso 抖动时暂存待补写的采集批次，本地运行态，不入仓）
+.spool/
+
 # 日志
 *.log
 logs/

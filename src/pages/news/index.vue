@@ -62,9 +62,9 @@
 
     <view v-else-if="visibleItems.length === 0" class="news-empty">
       <text v-if="activeScope === 'holding'">
-        {{ holdingCount === 0 ? '尚未添加持仓（持仓分析页可管理），目前没有"持仓标的相关"快讯。' : '当前持仓标的相关暂无 24 小时内的快讯，可下拉刷新试试。' }}
+        {{ holdingCount === 0 ? '尚未添加持仓（持仓分析页可管理），目前没有"持仓标的相关"快讯。' : '最新信息正在拉取中，需要等 1–2 分钟…' }}
       </text>
-      <text v-else>最近 24 小时暂时没有可展示的重要快讯，下拉试试。</text>
+      <text v-else>最新信息正在拉取中，需要等 1–2 分钟…</text>
     </view>
 
     <view class="news-list">
@@ -152,7 +152,7 @@ async function loadHoldings() {
     // #ifdef H5
     console.log('[news] GET', `${API_BASE}/api/holdings`)
     // #endif
-    const res = await uni.request({ url: `${API_BASE}/api/holdings`, method: 'GET', timeout: 5000 })
+    const res = await uni.request({ url: `${API_BASE}/api/holdings`, method: 'GET', timeout: 12000 })
     const data: any = (res as any).data
     if (data && data.ok && Array.isArray(data.items)) {
       holdings.value = data.items.map((h: any) => ({
@@ -232,6 +232,16 @@ function detectMatchedHoldings(item: NewsItem): string[] {
   return Array.from(new Set(hits))
 }
 
+// ── 链路韧性：Turso 海外直连偶发卡顿，后端可能返回空列表(warming)或前端超时。
+// 处理原则：不把内部错误当快讯卡片展示，而是保持"拉取中"提示并自动重试。 ──
+const RETRY_MS = 12000
+let retryTimer: any = null
+function clearRetry() { if (retryTimer) { clearTimeout(retryTimer); retryTimer = null } }
+function scheduleRetry(scope: 'all' | 'holding') {
+  if (retryTimer) return
+  retryTimer = setTimeout(() => { retryTimer = null; fetchNews(false, scope) }, RETRY_MS)
+}
+
 async function fetchNews(showLoading = true, scope: 'all' | 'holding' | null = null) {
   const useScope = scope || activeScope.value
   if (showLoading) loading.value = true
@@ -242,30 +252,23 @@ async function fetchNews(showLoading = true, scope: 'all' | 'holding' | null = n
     // #ifdef H5
     console.log('[news] GET', url)
     // #endif
-    const res = await uni.request({ url, method: 'GET', timeout: 8000 })
+    // 超时放宽到 20s：后端读 Turso 偶发变慢，8s 会在数据返回前先超时报错
+    const res = await uni.request({ url, method: 'GET', timeout: 20000 })
     const data: any = (res as any).data
     if (data && data.ok && Array.isArray(data.items)) {
       items.value = data.items.map((it: RawNews) => mapItem(it))
       if (useScope === 'holding') holdingTotal.value = data.count ?? data.items.length
+      // 后端在做预热(warming)或暂时还没数据 → 稍后自动再拉，直到有内容
+      if (data.warming || items.value.length === 0) scheduleRetry(useScope)
+      else clearRetry()
     } else {
       console.warn('[news] bad payload', data)
+      scheduleRetry(useScope)
     }
   } catch (e: any) {
     console.error('[news] fetch failed', e?.errMsg || e?.message || e)
-    if (items.value.length === 0) {
-      items.value = [
-        {
-          id: 'err-' + Date.now(),
-          title: '后端请求失败：' + (e?.errMsg || e?.message || 'unknown'),
-          summary: '请确认 express 服务在 ' + API_BASE + ' 运行（cd server && node src/index.js）',
-          sourceChannel: 'system',
-          sourceName: '系统',
-          publishedAt: Date.now(),
-          url: '',
-          matchedHoldings: [],
-        },
-      ]
-    }
+    // 不再插入「后端请求失败」卡片：抖动期展示"拉取中"并自动重试即可
+    scheduleRetry(useScope)
   } finally {
     loading.value = false
   }
@@ -370,7 +373,7 @@ if (typeof document !== 'undefined') {
   })
 }
 onMounted(() => startNewsPoll())
-onBeforeUnmount(() => stopNewsPoll())
+onBeforeUnmount(() => { stopNewsPoll(); clearRetry() })
 </script>
 
 <style lang="scss" scoped>

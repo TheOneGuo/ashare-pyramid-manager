@@ -27,7 +27,7 @@ import { registerCorsAndParse, requireAuth, ifindRateLimit } from './middleware.
 import { getProvider } from './providers/index.js';
 import { getCached, setCached } from './cache.js';
 import { computeTrackState } from './track-executor.js';
-import { refreshAll, refreshIntervalSeconds, refreshLabel, labelForInterval, CHANNELS } from './news-collector.js';
+import { refreshAll, refreshIntervalSeconds, refreshLabel, labelForInterval, CHANNELS, newsWriteSpoolStats } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
 import { handleExtract } from './portfolio-extract.js';
 import { handleResearch, refineExternalReport, refineWithLlm, buildRefinedReport, detectAdvancedProductivity } from './research-report.js';
@@ -55,6 +55,39 @@ const PREVIEW_DIR = path.resolve(__dirname, '../../preview');
 
 // 「全部」快讯源：新浪 7×24（国内直连主源）+ 电报源（代理可用时补充）
 const TELEGRAM_CHANNELS = ['sina_724', 'FinanceNewsDaily', 'jin10data', 'cnwallstreet', 'ywcqdz'];
+
+// =====================================================
+// DB 读路径韧性：Turso（东京）直连偶发「挂住不抛」，读路径统一加硬超时
+// 否则 initial refresh / scheduled refresh 会永久卡在 await listHoldings() 上，
+// 采集定时器再也不触发（表现为「快讯永远是空的」）。
+// =====================================================
+const DB_READ_TIMEOUT_MS = Number(process.env.DB_READ_TIMEOUT_MS || 8000);
+
+function withDbTimeout(promise, ms = DB_READ_TIMEOUT_MS, label = 'db') {
+  let timer = null;
+  return Promise.race([
+    Promise.resolve(promise).finally(() => timer && clearTimeout(timer)),
+    new Promise((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`${label}_timeout_${ms}ms`)), ms);
+      if (timer.unref) timer.unref();
+    }),
+  ]);
+}
+
+/** 采集调度专用：读持仓超时 → 按「无持仓」继续，只影响持仓相关源，绝不影响主快讯源 */
+async function listHoldingsSafe(ms = DB_READ_TIMEOUT_MS) {
+  try {
+    return await withDbTimeout(listHoldings(), ms, 'listHoldings');
+  } catch (e) {
+    console.warn(`[server] listHoldings ${e.message} → 本轮按「无持仓」继续（不阻塞快讯采集）`);
+    return [];
+  }
+}
+
+/** 读接口专用：超时直接抛错，由路由回 5xx，避免静默返回空数据误导前端 */
+function listHoldingsStrict(ms = DB_READ_TIMEOUT_MS) {
+  return withDbTimeout(listHoldings(), ms, 'listHoldings');
+}
 
 const app = express();
 
@@ -250,6 +283,17 @@ app.get('/api/health', async (_req, res) => {
     interval_seconds: intervalSec,
     mode_label: refreshLabel(),
     last_refresh_at: lastRefreshAt,
+    // 采集写入健康度：write_failed>0 说明有批次彻底丢了；spool_pending>0 说明有积压待补写
+    news_write_spool: newsWriteSpoolStats(),
+    last_refresh: lastRefreshSummary ? {
+      refreshed_at: lastRefreshSummary.refreshed_at,
+      telegram_items: lastRefreshSummary.telegram?.items || 0,
+      spool_flushed: lastRefreshSummary.spool_flushed || 0,
+      spool_pending: lastRefreshSummary.spool_pending || 0,
+      write_spooled: lastRefreshSummary.write_spooled || 0,
+      write_failed: lastRefreshSummary.write_failed || 0,
+      errors: (lastRefreshSummary.telegram?.errors || []).slice(0, 5),
+    } : null,
     ifind_token_loaded: !!process.env.IFIND_REFRESH_TOKEN,
     uptime: process.uptime(),
   });
@@ -265,24 +309,44 @@ app.get('/api/news', async (req, res) => {
     const limit = Number.isFinite(limitRaw) ? Math.min(200, Math.max(1, limitRaw)) : 30;
     const since = Number.isFinite(sinceRaw) ? sinceRaw : 0;
     const holding = req.query.holding === '1' || req.query.holding === 'true';
-    // Turso 海外直连偶发抖动：读路径重试一次（400ms 退避）
+
+    // 内存缓存命中直接返回：Turso 海外链路抖动的窗口里，靠它保证快讯页秒开、不报错
+    const cachedPayload = getCached('news', req);
+    if (cachedPayload) return res.json({ ...cachedPayload, cached: true });
+
     const load = async () => {
       if (holding) {
-        const holdings = await listHoldings();
+        const holdings = await listHoldingsSafe(3000);
         const codes = holdings.map((h) => h.stock_code);
         return fetchNews({ limit, since, holding_codes: codes });
       }
       // 全部：新浪 7×24 主源 + 电报源（代理可用时补充）
       return fetchNews({ limit, since, channels: TELEGRAM_CHANNELS });
     };
-    let items;
-    try {
-      items = await load();
-    } catch (e1) {
-      await new Promise((r) => setTimeout(r, 400));
-      items = await load();
+
+    let items = null;
+    let lastErr = null;
+    // 两段尝试：先 3s 快速失败（热连接通常 0.2s，失败多为失效 socket），
+    // 第二段给 9s —— 走代理时「冷连接」实测可能卡 ~5s，窗口太短会在冷启动瞬间误判为全失败。
+    for (const ms of [3000, 9000]) {
+      try {
+        items = await withDbTimeout(load(), ms, 'news_read');
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
     }
-    res.json({ ok: true, count: items.length, items });
+
+    if (items) {
+      const payload = { ok: true, count: items.length, items };
+      setCached('news', req, payload);
+      return res.json(payload);
+    }
+
+    // 两次都没读到：不返回 500（会被前端当成异常），而是空列表 + warming，
+    // 前端据此展示「最新信息正在拉取中…」并自动重试。
+    console.warn('[news] all attempts failed:', lastErr?.message);
+    return res.json({ ok: true, count: 0, items: [], warming: true });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -301,7 +365,7 @@ app.post('/api/news/refresh', requireAuth, async (req, res) => {
   if (refreshing) return res.status(429).json({ ok: false, error: 'refresh_in_progress' });
   refreshing = true;
   try {
-    const holdings = await listHoldings();
+    const holdings = await listHoldingsSafe(6000);
     const codes = holdings.map((h) => h.stock_code);
     const summary = await refreshAll({
       db: { upsertNewsItems, recordSourceError, cleanupOldNews },
@@ -323,7 +387,7 @@ app.post('/api/news/refresh', requireAuth, async (req, res) => {
 // =====================================================
 app.get('/api/holdings', async (_req, res) => {
   try {
-    const items = await listHoldings();
+    const items = await listHoldingsStrict();
     res.json({ ok: true, count: items.length, items });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -1105,7 +1169,7 @@ app.post('/api/research/reports/by-holdings', requireAuth, async (req, res) => {
 app.get('/api/portfolio/ledger', async (_req, res) => {
   try {
     const events = await listLedgerEvents();
-    const positions = await listHoldings();
+    const positions = await listHoldingsStrict();
     // fee_rate_wan 取最近一条 fee 事件或默认 1.2
     let feeWan = 1.2;
     for (const e of events) {
@@ -1130,7 +1194,7 @@ app.post('/api/portfolio/ledger', requireAuth, async (req, res) => {
     const id = await appendLedgerEvent(type, payload || {});
     // 回放并返回最新快照
     const events = await listLedgerEvents();
-    const positions = await listHoldings();
+    const positions = await listHoldingsStrict();
     let feeWan = 1.2;
     for (const e of events) {
       if (e.type === 'fee_rate_change' || e.type === 'init') {
@@ -1149,7 +1213,7 @@ app.post('/api/portfolio/ledger/preview', requireAuth, async (req, res) => {
   try {
     const { type, amount, fee_rate_wan } = req.body || {};
     const events = await listLedgerEvents();
-    const positions = await listHoldings();
+    const positions = await listHoldingsStrict();
     let feeWan = 1.2;
     for (const e of events) {
       if (e.type === 'fee_rate_change' || e.type === 'init') {
@@ -1342,7 +1406,17 @@ app.use((err, _req, res, _next) => {
 });
 
 async function main() {
-  await initDb();
+  // initDb 只是幂等的建表/迁移（远程表已存在），但海外 DB 链路抖动时单条 stmt 可能挂很久，
+  // 直接 await 会让 app.listen 永不执行（服务起不来）。用超时兜住：超时后 initDb 仍在后台继续，
+  // HTTP 服务照常拉起 —— 与 initDb 内「保证 HTTP 服务总能拉起」的设计意图一致。
+  try {
+    await Promise.race([
+      initDb(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('initDb_timeout_8000ms')), 8000)),
+    ]);
+  } catch (e) {
+    console.warn('[server] db init 超时，服务照常启动（建表/迁移后台继续）:', e?.message);
+  }
   // 清理旧版采集写入的脏公告行（source_name='t' / 旧 guid 格式 ann:CODE:TS:IDX）
   cleanupStaleAnnouncements().then((ok) => console.log('[server] cleanup stale announcements:', ok ? 'done' : 'skipped')).catch(() => {});
   app.listen(PORT, () => {
@@ -1354,7 +1428,7 @@ async function main() {
   // 首次启动触发一次采集（异步，不阻塞）
   setTimeout(async () => {
     try {
-      const holdings = await listHoldings();
+      const holdings = await listHoldingsSafe(8000);
       const codes = holdings.map((h) => h.stock_code);
       const summary = await refreshAll({
         db: { upsertNewsItems, recordSourceError, cleanupOldNews },
@@ -1374,7 +1448,7 @@ async function main() {
   let refreshTimer = null;
   async function scheduledRefresh() {
     try {
-      const holdings = await listHoldings();
+      const holdings = await listHoldingsSafe(8000);
       const codes = holdings.map((h) => h.stock_code);
       const summary = await refreshAll({
         db: { upsertNewsItems, recordSourceError, cleanupOldNews },

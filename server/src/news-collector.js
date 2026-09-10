@@ -21,6 +21,7 @@ import { fetchSinaLive, CHANNEL_META as SINA_META } from './sina-live.js';
 import * as em from './eastmoney.js';
 import * as macro from './macro-news.js';
 import { HOLDING_NEWS_CHANNELS } from './db.js';
+import { writeGuarded, retryWithTimeout, flushSpool, spoolStats, NEWS_WRITE_SPOOL } from './write-guard.js';
 
 const SECONDS = {
   TRADING: 15 * 60,
@@ -120,7 +121,20 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
     holdings_news: { refreshed: 0, items: 0, errors: [] },
     announcements: { refreshed: 0, items: 0, errors: [] },
     macro: { refreshed: 0, fetched: 0, items: 0, errors: [] },
+    write_failed: 0,
+    write_spooled: 0,
   };
+
+  // =====================================================
+  // 0-pre) 先补写上一轮因 Turso 抖动落盘的批次（幂等，重放无副作用）
+  // =====================================================
+  try {
+    const r = await flushNewsWriteSpool(db, log);
+    if (r.flushed) summary.spool_flushed = r.flushed;
+    if (r.kept) summary.spool_pending = r.kept;
+  } catch (e) {
+    summary.write_errors = [`spool_flush: ${e?.message}`];
+  }
 
   // =====================================================
   // 0) 新浪 7×24（国内直连，不依赖代理；电报被墙时的主快讯源）
@@ -132,7 +146,7 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
     } else {
       const r = await fetchSinaLive({ pageSize: 60, log });
       if (r.items.length > 0) {
-        await upsertNews(db, {
+        const w = await upsertNews(db, {
           source_channel: SINA_META.channel,
           source_name: SINA_META.name,
           feed_url: r.usedUrl,
@@ -140,8 +154,12 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
           now_ts: now,
           last_error: '',
         });
-        summary.telegram.fetched++;
-        summary.telegram.items += r.items.length;
+        if (w.ok) {
+          summary.telegram.fetched++;
+          summary.telegram.items += r.items.length;
+        } else {
+          tallyWriteFailure(summary, SINA_META.channel, r.items.length, w);
+        }
       }
     }
   } catch (e) {
@@ -180,7 +198,7 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
         errors = r.errors;
       }
       if (items.length > 0) {
-        await upsertNews(db, {
+        const w = await upsertNews(db, {
           source_channel: channelMeta.channel,
           source_name: channelMeta.name,
           feed_url: usedUrl,
@@ -188,8 +206,13 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
           now_ts: now,
           last_error: '',
         });
-        summary.telegram.fetched++;
-        summary.telegram.items += items.length;
+        if (w.ok) {
+          summary.telegram.fetched++;
+          summary.telegram.items += items.length;
+        } else {
+          // 写入彻底失败：计数字段不再虚报，同时把原因带出来，便于 /api/news/status 一眼看到
+          tallyWriteFailure(summary, channelMeta.channel, items.length, w);
+        }
       } else if (errors.length > 0) {
         await recordSourceError(db, channelMeta, usedUrl, errors.join('; '), now);
         summary.telegram.errors.push(`${channelMeta.channel}: ${errors[0]}`);
@@ -322,7 +345,15 @@ async function refreshAll({ db, mode = 'real', holdingCodes = [], log = console 
   }
 
   // 清理过期（持仓相关公告/个股新闻因发布时间可能很早，不参与清理）
-  await db.cleanupOldNews(now - NEWS_RETENTION_HOURS * 3600_000, HOLDING_NEWS_CHANNELS);
+  // 收尾清理失败不影响本轮采集结果，加超时避免无限期挂住整个 refresh
+  try {
+    await retryWithTimeout(
+      () => db.cleanupOldNews(now - NEWS_RETENTION_HOURS * 3600_000, HOLDING_NEWS_CHANNELS),
+      { delays: [0, 800], timeoutMs: WRITE_TIMEOUT_MS, label: 'cleanupOldNews' },
+    );
+  } catch (e) {
+    summary.write_errors = [...(summary.write_errors || []), `cleanup: ${e?.message}`];
+  }
 
   return summary;
 }
@@ -345,24 +376,73 @@ function refreshLabel(now = new Date()) {
 }
 
 // =====================================================
-// DB 写入辅助（调用 db.js 提供的接口）
+// DB 写入辅助（经 write-guard 加固：硬超时 + 退避重试 + 全失败落 spool）
+// 目的：Turso（东京）抖动时不再「静默丢弃整轮采集」，也不允许 await 永久悬停。
 // =====================================================
+// 写超时：Turso 走代理，单次 batch 往返一般 0.5~3s；15s 给足冷连接余量。
+// 配合 db.upsertNewsItems 的 batch 写（往返次数 N→1），正常一轮远低于该值。
+const WRITE_TIMEOUT_MS = Number(process.env.NEWS_WRITE_TIMEOUT_MS || 15000);
+const WRITE_DELAYS = [0, 800, 2000];
+
 async function upsertNews(db, { source_channel, source_name, feed_url, items, now_ts, last_error }) {
-  if (typeof db.upsertNewsItems === 'function') {
-    await db.upsertNewsItems({ source_channel, source_name, feed_url, items, now_ts, last_error });
-  }
+  if (typeof db.upsertNewsItems !== 'function') return { ok: false, skipped: true };
+  const payload = { source_channel, source_name, feed_url, items, now_ts, last_error };
+  const r = await writeGuarded((p) => db.upsertNewsItems(p), payload, {
+    label: `upsertNews:${source_channel}`,
+    timeoutMs: WRITE_TIMEOUT_MS,
+    delays: WRITE_DELAYS,
+    spoolFile: NEWS_WRITE_SPOOL,
+    onFail: (e, i) => console.warn(`[news] ${source_channel} 写入第${i + 1}次失败: ${e?.message?.slice(0, 90)}`),
+  });
+  if (r.ok) return r;
+  console.warn(
+    `[news] ${source_channel} 写入 ${r.attempts} 次全失败` +
+    `${r.spooled ? '，已落 spool 待下轮补写' : '，且 spool 落盘失败（本批已丢）'}: ${r.error?.slice(0, 90)}`,
+  );
+  return r;
 }
 
+/** 源状态写入属于「诊断信息」，失败不落 spool，最多重试 2 次后放弃。 */
 async function recordSourceError(db, channelMeta, feed_url, error, now_ts) {
-  if (typeof db.recordSourceError === 'function') {
-    await db.recordSourceError({
+  if (typeof db.recordSourceError !== 'function') return;
+  await retryWithTimeout(
+    () => db.recordSourceError({
       source_channel: channelMeta.channel,
       source_name: channelMeta.name,
       feed_url,
       last_error: error,
       now_ts,
-    });
+    }),
+    { delays: [0, 600], timeoutMs: 5000, label: `recordSourceError:${channelMeta.channel}` },
+  );
+}
+
+/** 写入彻底失败时统一记账：不虚报 items，并把失败原因暴露给状态接口 */
+function tallyWriteFailure(summary, channel, n, w) {
+  if (w.spooled) {
+    summary.write_spooled = (summary.write_spooled || 0) + 1;
+    summary.telegram?.errors?.push(`${channel}: 写入失败已落 spool 待补写(${n}条) ${w.error || ''}`.trim());
+  } else {
+    summary.write_failed = (summary.write_failed || 0) + 1;
+    summary.telegram?.errors?.push(`${channel}: 写入失败且未落盘，丢失 ${n} 条 (${w.error || 'unknown'})`);
   }
+}
+
+/** 回放上一轮落盘的写入批次（Turso 恢复后补写；news_items 幂等 upsert，不会重复） */
+export async function flushNewsWriteSpool(db, log = console) {
+  if (typeof db?.upsertNewsItems !== 'function') return { flushed: 0, kept: 0 };
+  const say = (m) => (typeof log?.log === 'function' ? log.log(m) : console.log(m));
+  return flushSpool(
+    NEWS_WRITE_SPOOL,
+    // 补写时把 now_ts 换成当前时间：否则 fetched_at 仍是旧时间戳，可能被「近 24 小时」过滤掉
+    (entry) => db.upsertNewsItems({ ...(entry?.payload || {}), now_ts: Date.now() }),
+    { log: say, max: 30, timeoutMs: WRITE_TIMEOUT_MS },
+  );
+}
+
+/** 未补写的积压批次数量（诊断用，暴露到 /api/news/status） */
+export function newsWriteSpoolStats() {
+  return spoolStats(NEWS_WRITE_SPOOL);
 }
 
 export {

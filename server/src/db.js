@@ -13,6 +13,7 @@
 
 import { createClient } from '@libsql/client';
 import { matchHoldingProfile } from './holding-profiles.js';
+import { createTursoFetch, tursoProxyInfo } from './turso-fetch.js';
 import 'dotenv/config';
 
 const url = process.env.TURSO_DATABASE_URL?.trim();
@@ -22,7 +23,10 @@ let client = null;
 let mode = 'uninitialized';
 
 if (url) {
-  client = createClient({ url, authToken: token || undefined });
+  // Turso 在东京，国内直连不可达（fetch failed）→ 有代理配置时注入自定义 fetch 走代理。
+  // 未配置代理则返回 undefined，客户端行为与改造前一致。
+  const tursoFetch = createTursoFetch();
+  client = createClient({ url, authToken: token || undefined, ...(tursoFetch ? { fetch: tursoFetch } : {}) });
   mode = token ? 'turso-remote' : 'turso-local-file';
 } else {
   client = createClient({ url: 'file:./dev.sqlite' });
@@ -30,6 +34,10 @@ if (url) {
 }
 
 console.log(`[db] mode=${mode} url=${url || 'file:./dev.sqlite'}`);
+{
+  const info = tursoProxyInfo();
+  console.log(`[db] turso proxy=${info.enabled ? info.proxy : 'off(直连)'}${info.source ? ` (from ${info.source})` : ''}`);
+}
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS news_items (
@@ -273,34 +281,57 @@ export async function upsertNewsItems({ source_channel, source_name, feed_url, i
     await upsertSourceState({ source_channel, source_name, feed_url, last_fetch_at: now_ts, last_success_at: 0, last_count: 0, last_error });
     return 0;
   }
-  let ok = 0;
+  // 构造语句：优先「一次 batch 请求写完」。
+  // 原因：Turso 在东京、必须走代理，单次往返 ~0.3~1s。原来逐条 execute 时，
+  // 60 条的源 = 60 次往返（几十秒），必然被上层写超时打断，表现为整批写入失败。
+  // libSQL 的 batch 会把多条语句合并成一个 HTTP 请求，往返次数从 N 降到 1。
+  const SQL_UPSERT_NEWS = `INSERT INTO news_items(id,source_channel,source_name,title,summary,content,link,published_at,fetched_at,raw_json)
+        VALUES(?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET
+          title=excluded.title, summary=excluded.summary, content=excluded.content,
+          link=excluded.link, published_at=excluded.published_at,
+          fetched_at=excluded.fetched_at, raw_json=excluded.raw_json`;
+
+  const stmts = [];
   for (const it of items) {
+    if (!it.title) continue;
+    const id = String(it.guid || `${source_channel}|${it.link || ''}|${it.title}`);
+    stmts.push({
+      sql: SQL_UPSERT_NEWS,
+      args: [
+        id,
+        String(source_channel || '').slice(0, 80),
+        String(source_name || '').slice(0, 80),
+        String(it.title || '').slice(0, 500),
+        String(it.content || it.summary || '').slice(0, 4000),
+        String(it.content || '').slice(0, 16000),
+        String(it.link || '').slice(0, 500),
+        Number(it.published_at) || Number(now_ts),
+        Number(now_ts) || Date.now(),
+        JSON.stringify(it.raw || {}).slice(0, 8000),
+      ],
+    });
+  }
+
+  let ok = 0;
+  let firstErr = null;
+  if (stmts.length > 0) {
     try {
-      const id = String(it.guid || `${source_channel}|${it.link || ''}|${it.title}`);
-      if (!it.title) continue;
-      await client.execute({
-        sql: `INSERT INTO news_items(id,source_channel,source_name,title,summary,content,link,published_at,fetched_at,raw_json)
-              VALUES(?,?,?,?,?,?,?,?,?,?)
-              ON CONFLICT(id) DO UPDATE SET
-                title=excluded.title, summary=excluded.summary, content=excluded.content,
-                link=excluded.link, published_at=excluded.published_at,
-                fetched_at=excluded.fetched_at, raw_json=excluded.raw_json`,
-        args: [
-          id,
-          String(source_channel || '').slice(0, 80),
-          String(source_name || '').slice(0, 80),
-          String(it.title || '').slice(0, 500),
-          String(it.content || it.summary || '').slice(0, 4000),
-          String(it.content || '').slice(0, 16000),
-          String(it.link || '').slice(0, 500),
-          Number(it.published_at) || Number(now_ts),
-          Number(now_ts) || Date.now(),
-          JSON.stringify(it.raw || {}).slice(0, 8000),
-        ],
-      });
-      ok++;
+      await client.batch(stmts, 'write');
+      ok = stmts.length;
     } catch (e) {
-      console.warn(`[db] upsertNewsItems skip: ${e.message?.slice(0, 80)}`);
+      // 批量失败 → 逐条兜底：避免「一行有问题毒死整批」，也让部分成功仍能落库
+      firstErr = e;
+      console.warn(`[db] upsertNewsItems batch 失败，转逐条兜底: ${e.message?.slice(0, 100)}`);
+      for (const stmt of stmts) {
+        try {
+          await client.execute(stmt);
+          ok++;
+        } catch (e2) {
+          if (!firstErr) firstErr = e2;
+          console.warn(`[db] upsertNewsItems skip: ${e2.message?.slice(0, 80)}`);
+        }
+      }
     }
   }
   // 更新源状态
@@ -309,8 +340,16 @@ export async function upsertNewsItems({ source_channel, source_name, feed_url, i
     last_fetch_at: now_ts,
     last_success_at: ok > 0 ? now_ts : 0,
     last_count: ok,
-    last_error: ok === 0 ? last_error : '',
+    last_error: ok === 0 ? last_error || firstErr?.message || '' : '',
   });
+  // ⚠️ 全批次失败必须抛出：调用方（news-collector 经 write-guard）据此触发重试/落 spool。
+  // 原来这里恒 return，上游完全感知不到「Turso 抖动导致整批丢弃」，是静默丢失的根因。
+  if (ok === 0 && items.length > 0) {
+    const err = new Error(`upsert_all_failed(${items.length}) : ${firstErr?.message?.slice(0, 120) || 'unknown'}`);
+    err.total = items.length;
+    err.firstError = firstErr?.message || '';
+    throw err;
+  }
   return ok;
 }
 

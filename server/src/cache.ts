@@ -16,6 +16,7 @@ const TTL: Record<string, number> = {
   lhb: 60_000,
   f10: 60_000,
   fundflow: 300_000, // 资金流向：5 分钟
+  news: 20_000, // 快讯：20s（前端 30s 轮询；Turso 链路抖动时靠它兜底秒开）
 };
 
 function keyOf(kind: string, req: any): string {
