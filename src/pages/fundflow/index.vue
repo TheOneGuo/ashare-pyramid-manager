@@ -17,9 +17,13 @@
             <DateBanner :metric="activeMetric" :as-of="data.asOf" />
             <SubTabs :active-type="activeType" @change="onTabChange" />
           </view>
-          <!-- 海外资金：行业级北向持仓已停披 → 展示交易所仍公开的日度成交热度 -->
-          <NorthPanel v-if="activeType === 'foreign' && data.north" :north="data.north" :notice="activeMetric?.notice" />
-          <view v-else-if="activeType === 'foreign'" class="ff-state"><text>北向日度数据暂不可用</text></view>
+          <!-- 海外资金：北向行业级持仓自 2024-08-16 停披，板块榜为代理口径；
+               桑基图照常展示海外资金流向（高亮），下方补充北向日度成交作为口径说明 -->
+          <view v-if="activeType === 'foreign'">
+            <SankeyChart :sankey="data.sankey" :active-type="activeType" />
+            <NorthPanel v-if="data.north" :north="data.north" :notice="activeMetric?.notice" />
+            <view v-else class="ff-state"><text>北向日度数据暂不可用</text></view>
+          </view>
           <SankeyChart v-else :sankey="data.sankey" :active-type="activeType" />
         </view>
 
@@ -140,7 +144,9 @@ $radius-lg: 20rpx;
     linear-gradient(90deg, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
   background-size: 48px 48px;
   color: $color-text-primary;
-  font-family: -apple-system, 'PingFang SC', sans-serif;
+  /* 与财经快讯/AI 研报/持仓分析一致：顶部留白 24rpx（标题垂直位置对齐）
+     字体不在此处覆盖，继承 App.vue 全局字体（"Noto Serif SC","Songti SC",SimSun,serif） */
+  padding-top: 24rpx;
   padding-bottom: calc(160rpx + env(safe-area-inset-bottom, 0px));
 }
 .ff-page.h5-mode {
@@ -150,14 +156,14 @@ $radius-lg: 20rpx;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding-top: 24rpx;
   padding-bottom: 0;
 }
-/* head 固定区（对齐持仓/行情页） */
+.ff-text-muted { color: $color-text-secondary; }
+.font-inherit { font-family: inherit; }
+/* head 固定区（对齐财经快讯/持仓分析：靠 flex 布局自然固定在顶部，不用 sticky） */
 .ff-head {
   flex: 0 0 auto;
-  position: sticky;
-  top: 0;
-  z-index: 10;
   background: $color-bg;
   padding: 16rpx 24rpx 8rpx;
 }

@@ -9,54 +9,36 @@
       <text class="board__total" :class="totalClass">{{ fmtFlow(node.totalPct) }}</text>
     </view>
 
-    <!-- 海外资金：北向日度成交热度榜（行业级持仓已停披，如实展示交易所仍公开数据） -->
-    <template v-if="node.type === 'foreign'">
-      <view v-if="north && north.series.length" class="board__rows">
-        <view v-for="(d, i) in shownNorth" :key="d.date" class="board__row">
-          <text class="board__rank" :class="{ 'board__rank--top': i < 3 }">{{ i + 1 }}</text>
-          <view class="board__cell">
-            <view class="board__cell-top">
-              <text class="board__name">{{ d.date }}</text>
-              <text class="board__pct">{{ d.dealAmtYi.toFixed(2) }}亿</text>
-            </view>
-            <view class="board__cell-sub">
-              <text class="board__sub"><template v-if="d.dealNum > 0">成交 {{ fmtWan(d.dealNum) }} 笔</template><template v-if="d.lead"> · 领涨 {{ d.lead }}<template v-if="d.leadZdf !== 0"> {{ fmtPct(d.leadZdf) }}</template></template></text>
-            </view>
+    <!-- 四类资金统一渲染：板块增仓榜（top3 → 更多 → top10）+ 股票中意榜 -->
+    <view class="board__section-label">
+      <text>{{ node.type === 'foreign' ? '板块增仓榜（代理口径）' : '板块增仓榜' }}</text>
+    </view>
+    <view class="board__rows">
+      <view v-for="s in shownSectors" :key="s.code" class="board__row">
+        <text class="board__rank" :class="{ 'board__rank--top': s.rank <= 3 }">{{ s.rank }}</text>
+        <view class="board__cell">
+          <view class="board__cell-top">
+            <text class="board__name">{{ s.name }}</text>
+            <text class="board__pct" :class="s.pct >= 0 ? 'is-up' : 'is-down'">{{ fmtFlow(s.pct) }}</text>
+          </view>
+          <view class="board__cell-sub">
+            <text class="board__sub">5日 {{ fmtFlow(s.pct5d) }}</text>
           </view>
         </view>
       </view>
-      <view v-else class="board__empty"><text>北向日度数据暂不可用</text></view>
-    </template>
+    </view>
 
-    <!-- 其他三类：板块增仓榜（top3 → 更多 → top10）+ 领涨股 -->
-    <template v-else>
-      <view class="board__rows">
-        <view v-for="s in shownSectors" :key="s.code" class="board__row">
-          <text class="board__rank" :class="{ 'board__rank--top': s.rank <= 3 }">{{ s.rank }}</text>
-          <view class="board__cell">
-            <view class="board__cell-top">
-              <text class="board__name">{{ s.name }}</text>
-              <text class="board__pct" :class="s.pct >= 0 ? 'is-up' : 'is-down'">{{ fmtFlow(s.pct) }}</text>
-            </view>
-            <view class="board__cell-sub">
-              <text class="board__sub">5日 {{ fmtFlow(s.pct5d) }}</text>
-            </view>
-          </view>
+    <view v-if="stocks.length" class="board__stock">
+      <text class="board__stock-label">股票中意榜</text>
+      <view v-for="s in stocks.slice(0, 5)" :key="s.code" class="board__stock-row">
+        <view class="board__stock-main">
+          <text class="board__stock-name">{{ s.name }}</text>
+          <text v-if="s.sector && s.sector !== '—'" class="board__stock-sector">{{ s.sector }}</text>
         </view>
+        <text v-if="s.meta" class="board__stock-meta">{{ s.meta }}</text>
+        <text v-else class="board__stock-pct" :class="s.pct >= 0 ? 'is-up' : 'is-down'">{{ fmtPct(s.pct) }}</text>
       </view>
-
-      <view v-if="stocks.length" class="board__stock">
-        <text class="board__stock-label">股票中意榜</text>
-        <view v-for="s in stocks.slice(0, 5)" :key="s.code" class="board__stock-row">
-          <view class="board__stock-main">
-            <text class="board__stock-name">{{ s.name }}</text>
-            <text v-if="s.sector && s.sector !== '—'" class="board__stock-sector">{{ s.sector }}</text>
-          </view>
-          <text v-if="s.meta" class="board__stock-meta">{{ s.meta }}</text>
-          <text v-else class="board__stock-pct" :class="s.pct >= 0 ? 'is-up' : 'is-down'">{{ fmtPct(s.pct) }}</text>
-        </view>
-      </view>
-    </template>
+    </view>
 
     <view v-if="canToggle" class="board__more" hover-class="board__more--hover" @tap="expanded = !expanded">
       <text>{{ expanded ? '收起 ▴' : '更多 ▾' }}</text>
@@ -82,11 +64,7 @@ const expanded = ref(false)
 const sectors = computed(() => props.sectors || [])
 const stocks = computed(() => props.stocks || [])
 const shownSectors = computed(() => (expanded.value ? sectors.value : sectors.value.slice(0, 3)))
-const northSeries = computed(() => props.north?.series || [])
-const shownNorth = computed(() => (expanded.value ? northSeries.value.slice(0, 10) : northSeries.value.slice(0, 3)))
-const canToggle = computed(() =>
-  props.node.type === 'foreign' ? northSeries.value.length > 3 : sectors.value.length > 3,
-)
+const canToggle = computed(() => sectors.value.length > 3)
 
 // 外资卡合计 = 北向成交额（非涨跌，中性色）
 const totalClass = computed(() => (props.node.type === 'foreign' ? '' : props.node.totalPct >= 0 ? 'is-up' : 'is-down'))

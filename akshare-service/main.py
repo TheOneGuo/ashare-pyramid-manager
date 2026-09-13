@@ -14,6 +14,9 @@ import akshare as ak
 import pandas as pd
 import logging
 import time
+import json
+import os
+import threading
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("akshare-service")
@@ -27,6 +30,64 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============= 机构持仓结果缓存（抵御东方财富 dataapi 偶发超时） =============
+# 痛点：stock_report_fund_hold 底层调东方财富 dataapi/zlsj/list，网络偶发
+# Max retries exceeded → /hold 全报告期失败返回 502，导致「股票中意榜」间歇性空白。
+# 方案：成功即落盘 JSON（内存+文件双缓存），全失败时回吐上次成功结果并标 stale=true，
+# 前端照常渲染（数据带报告期标注，用户可知其为最近一次成功快照）。
+_HOLD_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hold_cache.json")
+_HOLD_CACHE: dict = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def _load_hold_cache() -> None:
+    global _HOLD_CACHE
+    try:
+        if os.path.exists(_HOLD_CACHE_FILE):
+            with open(_HOLD_CACHE_FILE, "r", encoding="utf-8") as f:
+                _HOLD_CACHE = json.load(f)
+            logger.info("hold cache loaded: %d kind(s)", len(_HOLD_CACHE))
+    except Exception as e:
+        logger.warning("hold cache load failed: %s", e)
+        _HOLD_CACHE = {}
+
+
+def _save_hold_cache() -> None:
+    try:
+        with open(_HOLD_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(_HOLD_CACHE, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("hold cache save failed: %s", e)
+
+
+# 单次 akshare 抓取上限（秒）。东方财富 dataapi 偶发挂起（SSL EOF / 无响应），
+# 不设上限会拖垮整个 /hold（后端 20s 超时先到 → 股票中意榜空白）。超时即视为失败并回退缓存。
+_HOLD_FETCH_TIMEOUT = 4
+
+
+def _run_with_timeout(fn, timeout, *args, **kwargs):
+    """在守护线程执行阻塞调用，timeout 秒后放弃（返回 (None, TimeoutError)）。"""
+    box: dict = {}
+
+    def _worker() -> None:
+        try:
+            box["v"] = fn(*args, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            box["e"] = e
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return None, TimeoutError(f"{getattr(fn, '__name__', 'call')} exceeded {timeout}s")
+    if "e" in box:
+        return None, box["e"]
+    return box.get("v"), None
+
+
+_load_hold_cache()
 
 
 def _sanitize(v):
@@ -358,7 +419,11 @@ def hold(
     last_err = None
     for period in _HOLD_PERIODS:
         try:
-            df = ak.stock_report_fund_hold(symbol=symbol, date=period)
+            df, err = _run_with_timeout(ak.stock_report_fund_hold, _HOLD_FETCH_TIMEOUT, symbol=symbol, date=period)
+            if err is not None:
+                last_err = err
+                logger.warning("hold %s @%s failed: %s", kind, period, err)
+                continue
             if df is None or len(df) == 0:
                 continue
             df = df.rename(columns=lambda c: str(c).strip() if isinstance(c, str) else c).copy()
@@ -381,6 +446,15 @@ def hold(
                 df = df.sort_values("持股市值", ascending=False)
             # 注意：此处取「前」limit 条（_df_to_records 的 limit 取末尾，适用于升序原始数据）
             items = _sanitize(df.head(limit).to_dict(orient="records"))
+            # 成功即写入缓存（内存+磁盘），供东方财富超时时的兜底回吐
+            with _CACHE_LOCK:
+                _HOLD_CACHE[kind] = {
+                    "report_date": period,
+                    "source": "akshare-sina",
+                    "items": items,
+                    "ts": time.time(),
+                }
+                _save_hold_cache()
             return {
                 "ok": True,
                 "kind": kind,
@@ -393,6 +467,23 @@ def hold(
         except Exception as e:
             last_err = e
             logger.warning("hold %s @%s failed: %s", kind, period, e)
+    # 全报告期失败：东方财富偶发超时 → 回吐上次成功结果（标 stale），避免「股票中意榜」空白
+    with _CACHE_LOCK:
+        cached = _HOLD_CACHE.get(kind)
+    if cached and cached.get("items"):
+        age_h = (time.time() - cached.get("ts", 0)) / 3600
+        logger.warning("hold %s all periods failed, serve stale cache (%.1fh old)", kind, age_h)
+        return {
+            "ok": True,
+            "kind": kind,
+            "symbol": symbol,
+            "report_date": cached["report_date"],
+            "source": cached.get("source", "akshare-sina"),
+            "count": len(cached["items"]),
+            "items": cached["items"],
+            "stale": True,
+            "stale_age_hours": round(age_h, 1),
+        }
     logger.exception("hold all periods failed")
     raise HTTPException(status_code=502, detail=str(last_err))
 

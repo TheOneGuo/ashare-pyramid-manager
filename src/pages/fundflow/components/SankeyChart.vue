@@ -27,7 +27,9 @@ const FUND_COLORS: Record<string, string> = {
 const UP = '#e2553b' // 红涨（与其他 tab 一致）
 const DOWN = '#26a86b' // 绿跌（与其他 tab 一致）
 const TEXT_FILL = '#f5ecd9'
-const FONT_FAMILY = "-apple-system, 'PingFang SC', sans-serif"
+// 与 App.vue 全局字体一致（"Noto Serif SC","Songti SC",SimSun,serif），
+// 保证资金流向与其他 tab（财经快讯/AI 研报/持仓分析）字体相同
+const FONT_FAMILY = '"Noto Serif SC","Songti SC",SimSun,serif'
 const RECT_FILL = 'rgba(255,184,107,0.10)'
 const RECT_STROKE = 'rgba(255,184,107,0.30)'
 
@@ -97,10 +99,12 @@ const layout = computed(() => {
       if (!l || !r) return null
       const w = clamp((Math.abs(e.pct) / maxAbs) * 26, 4, 26)
       const active = props.activeType === e.fund
+      // 四类资金流向默认都清晰可见（用户明确要求看到公募/平准/海外流向，而非只有共同增仓）；
+      // 激活资金略强以示当前选中，非激活仍保持 0.5 高可见度，不再淡到几乎不可见。
       return {
         d: ribbon(LEFT_R, RIGHT_L, CX, l.cy, r.cy, w),
         color: FUND_COLORS[l.colorKey],
-        opacity: active ? 0.85 : 0.15,
+        opacity: active ? 0.95 : 0.5,
       }
     })
     .filter((x): x is { d: string; color: string; opacity: number } => x !== null)

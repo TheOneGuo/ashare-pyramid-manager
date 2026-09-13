@@ -4,7 +4,7 @@
 // A（板块增仓榜，细分概念板块）：腾讯 getRank?board_type=gn 概念板块（801 个），
 //   主力净流入字段 zljlr(今日)/zljlr_d5(5日)/zljlr_d20(20日)（单位：万元）+ 领涨股 lzg。
 //   四类资金按不同时间窗口取榜（代理口径，页面如实标注）：
-//     共同增仓=今日 / 公募基金=5日 / 平准基金=20日 / 海外资金=5日。
+//     共同增仓=今日 / 公募基金=5日 / 平准基金=20日 / 海外资金=QFII重仓映射概念板块（不再复用5日代理，避免与公募雷同）。
 // B（股票中意榜，各资金真实持仓）：季度披露（页面标注报告期）：
 //     公募基金=基金重仓股（akshare 新浪源，经 akshare-service /hold?kind=fund）
 //     海外资金=QFII 重仓股（/hold?kind=qfii）
@@ -105,7 +105,7 @@ export const FUND_METRIC: Record<FundType, MetricInfo> = {
   foreign: {
     label: '北向成交 + QFII季报',
     unit: '亿',
-    notice: '行业级北向持仓自 2024-08-16 起交易所停止披露；板块榜用概念板块近5日主力净流入（代理口径），股票榜用 QFII 最新季报重仓股，卡汇总显示北向日度成交。',
+    notice: '行业级北向持仓自 2024-08-16 起交易所停止披露；板块榜改为 QFII 最新季报重仓股映射出的概念板块（按增仓/新进优先排序，反映海外实际持仓赛道），股票榜用 QFII 重仓股，卡汇总显示北向日度成交。',
   },
 };
 
@@ -154,6 +154,31 @@ const CONCEPT_BLACKLIST = [
 
 function isConceptBoard(name: string): boolean {
   return !CONCEPT_BLACKLIST.some((k) => name.includes(k));
+}
+
+// 行业板块（hy，31 个申万一级，互斥无重叠）→ 仅用于「全市场合计」。
+// ⚠️ 概念板块（gn）同一只股票归属多个概念（如茅台∈白酒+茅指数+MSCI+沪股通），
+//    跨概念求和会重复计算 27~30 倍（实测：概念 20日合计 -12.6万亿 vs 行业 -4013亿），
+//    因此合计一律用行业板块，概念板块只用于榜单与桑基图（单板块数值本身真实）。
+export async function fetchTencentIndustryBoards(): Promise<TencentBoard[]> {
+  const url = 'https://proxy.finance.qq.com/cgi/cgi-bin/rank/pt/getRank?board_type=hy&sort_type=price&direct=down&offset=0&count=50';
+  const j = await withRetry(() => fetchJson(url, 12000));
+  const list = (j && j.data && j.data.rank_list) || [];
+  if (!Array.isArray(list) || list.length === 0) throw new Error('tencent industry boards empty');
+  const num = (v: unknown): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return list.map((it: any) => ({
+    code: String(it.code || ''),
+    name: String(it.name || '').trim(),
+    zljlr: num(it.zljlr),
+    zljlrD5: num(it.zljlr_d5),
+    zljlrD20: num(it.zljlr_d20),
+    leadCode: String(it.lzg?.code || ''),
+    leadName: String(it.lzg?.name || ''),
+    leadZdf: num(it.lzg?.zdf),
+  }));
 }
 
 export async function fetchTencentConceptBoards(): Promise<TencentBoard[]> {
@@ -253,6 +278,35 @@ export async function fetchNorthDaily(days = 15): Promise<NorthData> {
   return { asOf: series[0].date, latest: series[0], series };
 }
 
+// 个股 → 概念板块（东财 F10 CORETHEME；SECURITY_CODE 为数值字段，过滤器不带引号）。
+// 北上/海外(QFII)真实持仓需映射到概念赛道才能驱动「海外资金 板块增仓榜」，否则只能复用公募代理而雷同。
+// 逐个 code 取（东财 antlr 不接受 in(...)），并行限流，失败单只跳过，整体不抛错。
+async function fetchStockConcepts(codes: string[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  const uniq = [...new Set(codes.map((c) => String(c).padStart(6, '0')))];
+  if (!uniq.length) return out;
+  const BATCH = 6;
+  for (let i = 0; i < uniq.length; i += BATCH) {
+    const slice = uniq.slice(i, i + BATCH);
+    const results = await Promise.allSettled(
+      slice.map(async (code) => {
+        const url =
+          'https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_F10_CORETHEME_BOARDTYPE' +
+          '&columns=SECURITY_CODE,BOARD_NAME&pageSize=100&pageNumber=1&source=WEB&client=WEB' +
+          `&filter=(SECURITY_CODE=${code})`;
+        const j = await withRetry(() => fetchJson(url, 10000));
+        const rows = (j && j.result && j.result.data) || [];
+        const names = rows.map((r: any) => String(r.BOARD_NAME || '')).filter(Boolean);
+        return { code, names };
+      }),
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.names.length) out.set(r.value.code, r.value.names);
+    }
+  }
+  return out;
+}
+
 // ============= 聚合 =============
 const WAN2YI = 1 / 10000; // 万 → 亿
 function r2(v: number): number { return Math.round(v * 100) / 100; }
@@ -314,10 +368,33 @@ function fmtWan(n: number): string {
   return w >= 10000 ? `${(w / 10000).toFixed(1)}亿` : `${w.toFixed(0)}万`;
 }
 
+// 海外(QFII)持仓变化 → 权重（新进/增仓优先）
+const QFII_PRIORITY: Record<string, number> = { '新进': 3, '增仓': 2, '不变': 1, '减仓': 0 };
+
+// 海外资金 板块增仓榜：由 QFII 真实持仓映射到的概念板块按暴露度排序（不再复用公募的近5日代理）。
+// pct/pct5d 仍取该板块真实主力净流入（今日/5日，单位亿），仅排序键改为「海外持仓暴露度」，
+// 从而与公募基金(近5日主力净流入)自然区分，且信号真实可追溯。
+function rankForeignSectors(boards: TencentBoard[], holdings: HoldingItem[], concepts: Map<string, string[]>): SectorNode[] {
+  const score = new Map<string, number>(); // 概念名 -> 海外暴露度
+  for (const h of holdings) {
+    const names = concepts.get(h.code) || [];
+    const w = QFII_PRIORITY[h.change] ?? 1;
+    for (const n of names) score.set(n, (score.get(n) || 0) + w);
+  }
+  const matched = boards.filter((b) => (score.get(b.name) || 0) > 0)
+    .sort((a, b) => (score.get(b.name)! - score.get(a.name)!) || (b.zljlr - a.zljlr));
+  // 兜底：概念映射全空（接口失败）时退回按今日主力净流入排序，确保与公募基金(近5日)不同、不雷同
+  const list = matched.length ? matched : [...boards].sort((a, b) => b.zljlr - a.zljlr);
+  return list.slice(0, 10).map((b, i) => ({
+    code: b.code, name: b.name, pct: r2(b.zljlr * WAN2YI), pct5d: r2(b.zljlrD5 * WAN2YI), rank: i + 1,
+  }));
+}
+
 // ============= 主聚合（真实，方案 A+B） =============
 export async function buildFundFlowReal(opts?: { dateStr?: string }): Promise<FundFlowResp> {
-  const [boardsRes, fundRes, qfiiRes, hjRes, northRes] = await Promise.allSettled([
+  const [boardsRes, indRes, fundRes, qfiiRes, hjRes, northRes] = await Promise.allSettled([
     fetchTencentConceptBoards(),
+    fetchTencentIndustryBoards(),
     fetchFundHoldings(),
     fetchQfiiHoldings(),
     fetchHuijinHoldings(),
@@ -327,18 +404,32 @@ export async function buildFundFlowReal(opts?: { dateStr?: string }): Promise<Fu
     const why = boardsRes.status === 'rejected' ? String((boardsRes.reason as Error)?.message || boardsRes.reason) : 'empty';
     throw new Error(`概念板块资金流不可用: ${why}`);
   }
-  const boards = boardsRes.value;
+  if (indRes.status !== 'fulfilled' || indRes.value.length === 0) {
+    const why = indRes.status === 'rejected' ? String((indRes.reason as Error)?.message || indRes.reason) : 'empty';
+    throw new Error(`行业板块资金流不可用（合计口径）: ${why}`);
+  }
+  const boards = boardsRes.value; // 概念（榜单/桑基图）
+  const industries = indRes.value; // 行业（合计）
   const fundHoldings = fundRes.status === 'fulfilled' ? fundRes.value : [];
   const qfiiHoldings = qfiiRes.status === 'fulfilled' ? qfiiRes.value : [];
   const hjHoldings = hjRes.status === 'fulfilled' ? hjRes.value : [];
   const north: NorthData | undefined = northRes.status === 'fulfilled' ? northRes.value : undefined;
+  // 海外板块榜需由 QFII 真实持仓映射概念板块；仅取变化优先的前 25 只抓概念，降低外部调用量
+  const topQfii = [...qfiiHoldings]
+    .sort((a, b) => {
+      const prio = (c: string) => (c === '新进' ? 0 : c === '增仓' ? 1 : c === '不变' ? 2 : 3);
+      return prio(a.change) - prio(b.change);
+    })
+    .slice(0, 25);
+  let qfiiConcepts: Map<string, string[]> = new Map();
+  try { qfiiConcepts = await fetchStockConcepts(topQfii.map((h) => h.code)); } catch { /* 兜底在 rankForeignSectors */ }
 
   // 板块榜（A：概念主力净流入，四类窗口）
   const sectors: Record<FundType, SectorNode[]> = {
     joint: rankTop(boards, (b) => b.zljlr, 10, (b) => b.zljlrD5),
     public_fund: rankTop(boards, (b) => b.zljlrD5, 10, (b) => b.zljlrD20),
     stabilization: rankTop(boards, (b) => b.zljlrD20, 10, (b) => b.zljlrD5),
-    foreign: rankTop(boards, (b) => b.zljlrD5, 10, (b) => b.zljlrD20),
+    foreign: rankForeignSectors(boards, qfiiHoldings, qfiiConcepts),
   };
 
   // 股票榜（B：各资金真实持仓）
@@ -349,7 +440,8 @@ export async function buildFundFlowReal(opts?: { dateStr?: string }): Promise<Fu
     foreign: holdingsToStocks(qfiiHoldings, 10, '最新季报'),
   };
 
-  const sumOf = (pick: (b: TencentBoard) => number) => r2(boards.reduce((acc, b) => acc + pick(b) * WAN2YI, 0));
+  // 合计一律用行业板块（互斥，无重复计算）；概念板块跨板块求和会虚高 27~30 倍
+  const sumOf = (pick: (b: TencentBoard) => number) => r2(industries.reduce((acc, b) => acc + pick(b) * WAN2YI, 0));
   const funds: FundNode[] = FUND_META.map((m) => ({
     type: m.type,
     name: m.name,
@@ -359,13 +451,35 @@ export async function buildFundFlowReal(opts?: { dateStr?: string }): Promise<Fu
       m.type === 'joint' ? sumOf((b) => b.zljlr)
       : m.type === 'public_fund' ? sumOf((b) => b.zljlrD5)
       : m.type === 'stabilization' ? sumOf((b) => b.zljlrD20)
-      : north?.latest?.dealAmtYi ?? 0,
+      // 海外资金：北向行业持仓 2024-08-16 起停披露，无真实"合计"源；
+      // 左节点合计改为「海外(QFII)板块增仓榜今日主力净流合计」，与右列彩带量级一致、消视觉不一致
+      : r2(sectors.foreign.reduce((acc, s) => acc + s.pct, 0)),
   }));
 
-  // sankey：右列 = joint 今日概念 |净流入| 前 8；edges = 四类窗口真实概念边
-  const right = sectors.joint.slice(0, 8).map((s) => ({ ...s }));
+  // sankey：右列 = 四类资金 top 概念板块的并集（保证四类都有流向，而非只有共同增仓）
+  // 每类取 top-6，并集后按当日主力净流入量级排序取前 12（各资金窗口下的头部概念量级都大，
+  // 故四类均能落进右列）；再做兜底：若某类无概念进入右列，强制补入其头部概念。
+  const ALL_TYPES: FundType[] = ['joint', 'public_fund', 'stabilization', 'foreign'];
+  const topPerType = 6;
+  const unionCodes = new Set<string>();
+  for (const t of ALL_TYPES) for (const s of sectors[t].slice(0, topPerType)) unionCodes.add(s.code);
+  const rightPool = boards.filter((b) => unionCodes.has(b.code));
+  rightPool.sort((a, b) => Math.abs(b.zljlr) - Math.abs(a.zljlr));
+  // 兜底：保证每类资金至少 1 个概念进入右列
+  for (const t of ALL_TYPES) {
+    const top = sectors[t][0];
+    if (top && !unionCodes.has(top.code)) continue;
+    if (top && !rightPool.some((b) => b.code === top.code)) rightPool.push(boards.find((b) => b.code === top.code)!);
+  }
+  const right: SectorNode[] = rightPool.slice(0, 12).map((b, i) => ({
+    code: b.code,
+    name: b.name,
+    pct: r2(b.zljlr * WAN2YI), // 统一用今日主力净流入（真实）
+    pct5d: r2(b.zljlrD5 * WAN2YI),
+    rank: i + 1,
+  }));
   const edges: SankeyEdge[] = [];
-  for (const t of ['joint', 'public_fund', 'stabilization', 'foreign'] as FundType[]) {
+  for (const t of ALL_TYPES) {
     for (const s of sectors[t]) {
       if (!right.some((r) => r.code === s.code)) continue;
       edges.push({ fund: t, sectorCode: s.code, pct: s.pct });
