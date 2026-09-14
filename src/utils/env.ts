@@ -23,6 +23,9 @@ function read(key: keyof AppEnv, fallback = ''): string {
 }
 
 export const env: AppEnv = {
-  // 本地默认 dev 后端；小程序/App 端需要经 getStorageSync('ENV').API_BASE_URL 覆盖
-  API_BASE_URL: read('API_BASE_URL', 'http://localhost:9999'),
+  // H5 dev 默认走相对路径（''）：请求 /api/* 由 vite proxy 转发到 9999，
+  // 这样页面无论跑在 localhost:5173 还是手机经局域网 IP:5173 访问都同源可达，
+  // 不会出现「手机 localhost ≠ 开发机 localhost」导致的连接被拒。
+  // 小程序/App 端无同源后端，必须经 getStorageSync('ENV').API_BASE_URL 注入真实可达地址。
+  API_BASE_URL: read('API_BASE_URL', ''),
 }
