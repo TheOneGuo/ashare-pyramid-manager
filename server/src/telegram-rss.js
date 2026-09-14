@@ -20,6 +20,7 @@ const CHANNELS = [
   { channel: 'jin10data', name: '金十数据' },
   { channel: 'cnwallstreet', name: '华尔街见闻' },
   { channel: 'ywcqdz', name: '格隆汇' },
+  { channel: 'cai_lian_she_1', name: '财联社' },
 ];
 
 // 懒创建代理 dispatcher（无代理环境保持直连，行为不变）

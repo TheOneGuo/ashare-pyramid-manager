@@ -7,7 +7,8 @@
 //   3) 低频源（格隆汇约 20 条/日）被高频源（新浪约 2000 条/日）按时间倒序挤出窗口。
 //
 // 处理顺序（在读取层做，不删数据，便于随时调参回溯）：
-//   applyRelevance → dedupeSimilar → applySourceQuota → slice(limit)
+//   applyRelevance → dedupeSimilar → applySourceQuota → scoreAll（重要度打分）
+//   打分必须放在去重之后：多源共振（dup_count）本身就是重要性信号。
 //
 // 设计取舍：
 //   - **白名单（命中任一主题词即保留）**，不用黑名单。因为「游戏/影视/旅游」这些词既是
@@ -129,6 +130,56 @@ function envNum(name, def) {
 const FILTER_OFF = /^(1|true|on|yes)$/i.test(String(process.env.NEWS_FILTER_OFF || ''));
 const MIN_PER_SOURCE = envNum('NEWS_MIN_PER_SOURCE', 5);        // 每个活跃源保底条数
 const MAX_SOURCE_RATIO = Number(process.env.NEWS_MAX_SOURCE_RATIO) || 0.45; // 单源占单页上限
+const DEFAULT_MIN_PER_SOURCE = envNum('NEWS_DEFAULT_MIN_PER_SOURCE', 3); // 未在 SOURCE_PROFILE 里登记的源的保底
+// 重要度置顶最多占一页的比例（其余仍是时间倒序，保证「快讯」的时间感）
+const PIN_MAX_RATIO = Number(process.env.NEWS_PIN_MAX_RATIO) || 0.4;
+
+// =====================================================
+// 一·B、重要度打分（scoreItem）
+//   只对「已通过相关性过滤」的条目打分；分数用于前端高亮 A股/美股 重点快讯。
+//   dup_count 由 dedupeSimilar 产出，因此必须「先去重再打分」。
+// =====================================================
+
+/** 主题基础分（命中多个主题累加） */
+export const THEME_POINTS = {
+  a_stock: 5,
+  us_stock: 5,
+  cn_policy: 4,
+  us_policy: 4,
+  company_financials: 3,
+  macro: 2,
+  materials: 2,
+  shipping: 2,
+  geopolitics: 2,
+  industry: 2,
+  code: 4,
+};
+
+/** 主题 → UI 展示文案 */
+const THEME_LABEL = {
+  a_stock: 'A股',
+  us_stock: '美股',
+  cn_policy: '国内政策',
+  us_policy: '美国政策',
+  company_financials: '公司业绩',
+  macro: '宏观',
+  materials: '大宗商品',
+  shipping: '航运',
+  geopolitics: '地缘',
+  industry: '产业',
+};
+
+/** 强信号词：出现任一即 +3（全条只计一次，不按出现次数叠加） */
+export const STRONG_KEYWORDS = [
+  '涨停', '跌停', '停牌', '复牌', '退市', '立案', '问询函', '重组', '并购', '要约',
+  '减持', '增持', '回购', '业绩预告', '业绩快报', '财报', '美联储', '降息', '加息',
+  '降准', 'FOMC', '关税', '制裁', '实体清单', '出口管制', '301调查', '英伟达', '苹果', '特斯拉',
+];
+const STRONG_POINTS = 3;
+const ENTITY_POINTS = 3;     // 标题里出现 A股 6 位代码 / 美股 ticker
+const HOLDING_POINTS = 6;    // 与持仓标的相关
+const LEVEL_S = 14;          // >= 14 → S 重大
+const LEVEL_A = 8;           // >= 8  → A 重要，否则 B 一般
 
 // 统一的文本规范化（相关性判断用）：去空白/标点/标签符号，便于词表匹配
 function normalizeForMatch(s) {
@@ -138,12 +189,33 @@ function normalizeForMatch(s) {
     .toLowerCase();
 }
 
-// 去重用的规范化：额外剥掉「前导时间戳」和「【】」外壳
+// 去重用的规范化：先剥掉源名/时间戳等噪音外壳，再统一标点与大小写
 function normalizeForDup(s) {
-  return normalizeForMatch(s)
-    .replace(/^\d{4}-\d{2}-\d{2}[t ]?\d{2}:\d{2}(:\d{2})?/, '')
+  return normalizeForMatch(stripNoise(String(s || '')))
     .replace(/[【】\[\]]/g, '')
     .replace(/[，。、；：！？,.;:!?…—\-–~～"'“”‘’()（）{}<>《》|/\\*+%$@&]/g, '');
+}
+
+/**
+ * 去重用的「消息指纹」：剥掉各源自带的噪音外壳，只留下消息本身。
+ *
+ * 需要剥掉的噪音（同一条消息在不同源/不同时刻的唯一差异都来自这些）：
+ * - 源名前缀：【金十数据】/【财经Daily】/【格隆汇】…
+ * - 时间戳前缀：10:06:31 / 2026-09-13 09:40:11 —— 同一消息被滚动播报时只差时间
+ * - 「金十数据9月14日讯，」这类导语
+ * 剥掉后同一消息的指纹就趋同，containment 才能真正命中。
+ */
+function stripNoise(s) {
+  return s
+    // 源名括号壳（含「格隆汇」这类自有品牌）
+    .replace(/^[【\[]?[^【\[\]】]{1,12}[】\]]/, '')
+    // HH:MM 或 HH:MM:SS 前缀
+    .replace(/^\d{1,2}:\d{2}(:\d{2})?/, '')
+    // YYYY-MM-DD[ T]HH:MM[:SS] 前缀
+    .replace(/^\d{4}-\d{2}-\d{2}[t ]?\d{1,2}:\d{2}(:\d{2})?/, '')
+    // 「…讯，」导语
+    .replace(/[^，。；]{1,10}(讯|报道|消息)[，,]/g, '')
+    .trim();
 }
 
 function bigrams(s) {
@@ -158,6 +230,17 @@ function containment(a, b) {
   const [small, big] = a.size <= b.size ? [a, b] : [b, a];
   for (const g of small) if (big.has(g)) inter++;
   return inter / small.size;
+}
+
+/**
+ * 时间戳 → 本地日历日的整数序号（用于给去重比对做「相邻两天」分桶）。
+ * 北京时区固定 +8，不依赖运行环境的 TZ。
+ */
+const CN_DAY_MS = 86400_000;
+function localDayKey(ms) {
+  const t = Number(ms) || 0;
+  if (t <= 0) return 0;
+  return Math.floor((t + 8 * 3600_000) / CN_DAY_MS);
 }
 
 /**
@@ -210,31 +293,140 @@ export function applyRelevance(items) {
 }
 
 /**
- * 近似去重：跨源同一消息只留一条（保留时间最新者），并在 also_in 里标出其它来源。
- * 判定：规范化后完全相同，或 (bigram 包含度 ≥ 0.85 且双方长度 ≥ 12)。后者用于
- * 「新浪带正文全文 vs 华尔街见闻只取标题」这种一方是另一方子串的情况。
+ * 重要度打分。必须在 dedupeSimilar 之后调用，才能读到 dup_count。
+ *
+ * 规则（顺序即优先级无关，纯累加）：
+ *   主题基础分（THEME_POINTS，多主题累加） + 强信号词（+3，全条只计一次）
+ *   + 标题内标的实体（A股代码/美股 ticker，+3）
+ *   + 多源共振（dup_count>=3 → +4；==2 → +2；同一条消息被多家源报，本身就是重要性信号）
+ *   + 持仓相关（opts.holding_codes 命中 → +6）
+ *   + 时效（30 分钟内 +2 / 2 小时内 +1）
+ *
+ * @param {object} item 快讯条目（需要 title/summary/published_at/dup_count）
+ * @param {string[]} tags classify() 产出的主题标签
+ * @param {{holding_codes?: string[], now?: number}} opts
+ * @returns {{score: number, level: 'S'|'A'|'B', level_label: string, reasons: string[]}}
  */
+export function scoreItem(item, tags, opts = {}) {
+  const tagList = Array.isArray(tags) ? tags : [];
+  const title = String(item?.title || '');
+  const summary = String(item?.summary || '');
+  const text = normalizeForMatch(title + ' ' + summary.slice(0, 120));
+  const reasons = [];
+  let score = 0;
+
+  // 1) 主题基础分 + 主题标签文案
+  for (const [theme, points] of Object.entries(THEME_POINTS)) {
+    if (!tagList.includes(theme)) continue;
+    score += points;
+    if (THEME_LABEL[theme]) reasons.push(THEME_LABEL[theme]);
+  }
+
+  // 2) 强信号词（命中任一 +3，只计一次）
+  if (STRONG_KEYWORDS.some((w) => text.includes(normalizeForMatch(w)))) {
+    score += STRONG_POINTS;
+    reasons.push('强信号');
+  }
+
+  // 3) 标题里的标的实体（复用相关性用的代码正则）
+  if (STOCK_CODE.test(title) || US_TICKER.test(title)) {
+    score += ENTITY_POINTS;
+    reasons.push('标的代码');
+  }
+
+  // 4) 多源共振
+  const dup = Number(item?.dup_count) || 1;
+  if (dup >= 3) {
+    score += 4;
+    reasons.push(`多源×${dup}`);
+  } else if (dup === 2) {
+    score += 2;
+    reasons.push('多源×2');
+  }
+
+  // 5) 持仓相关
+  const holdingCodes = Array.isArray(opts.holding_codes) ? opts.holding_codes : [];
+  if (holdingCodes.length > 0) {
+    const hit = holdingCodes.some((c) => {
+      const code = String(c || '').trim();
+      return code.length > 0 && (title.includes(code) || summary.includes(code));
+    });
+    if (hit) {
+      score += HOLDING_POINTS;
+      reasons.push('持仓相关');
+    }
+  }
+
+  // 6) 时效
+  const now = Number(opts.now) || Date.now();
+  const publishedAt = Number(item?.published_at) || 0;
+  if (publishedAt > 0) {
+    const age = now - publishedAt;
+    if (age >= 0 && age <= 30 * 60_000) {
+      score += 2;
+      reasons.push('刚刚');
+    } else if (age > 0 && age <= 2 * 3600_000) {
+      score += 1;
+      reasons.push('近期');
+    }
+  }
+
+  const level = score >= LEVEL_S ? 'S' : score >= LEVEL_A ? 'A' : 'B';
+  const level_label = level === 'S' ? '重大' : level === 'A' ? '重要' : '一般';
+  return { score, level, level_label, reasons };
+}
+
+/** 批量打分：给每条快讯挂上 score/level/level_label/reasons（原地返回新数组） */
+export function scoreAll(items, opts = {}) {
+  return items.map((it) => ({ ...it, ...scoreItem(it, it.tags || [], opts) }));
+}
+
+/**
+ * 近似去重：跨源同一消息只留一条（保留时间最新者），并在 also_in 里标出其它来源。
+ * 三条判定（任一命中即视为同一条）：
+ *   1. 规范化后完全相同；
+ *   2. (bigram 包含度 ≥ 0.85 且双方长度 ≥ 12 且长度比 ≥ 0.5) —— 用于长度接近的改写；
+ *   3. bigram 包含度 ≥ 0.9 且较短方长度 ≥ 12 —— 不要求长度比，用于
+ *      「金十数据只有标题（20 字）vs 新浪 7×24 带正文全文（100 字）」这类
+ *      一方完整包含在另一方里的情况（旧规则因长度比 0.2 < 0.5 而漏合并）。
+ * 注意：绝不做「前缀相同即重复」的判定——「欧洲央行行长拉加德：…」类同前缀不同事件会被误杀。
+ */
+const DUP_CONTAIN_HIGH = 0.9;    // 高包含度阈值（不看长度比）
+const DUP_CONTAIN_LOW = 0.85;    // 常规包含度阈值（需配合长度比）
+const DUP_MIN_LEN = 12;          // 参与包含度判定的最短规范化长度
+const DUP_LEN_RATIO = 0.5;       // 常规判定的最短/最长长度比要求
+
 export function dedupeSimilar(items) {
   const out = [];
   const keys = [];   // { norm, grams }
+  const keyDay = []; // 与 keys 同序的「本地日历日」分桶键，见下方 DAY_BUCKET_MS
   let merged = 0;
 
   for (const it of items) {
     const norm = normalizeForDup(it.title);
     if (!norm) { out.push(it); continue; }
     const grams = bigrams(norm);
+    const day = localDayKey(it.published_at);
+    const buckets = [day, day - 1];   // 跨午夜的同一条消息也能合并
 
     let hit = -1;
     for (let i = 0; i < keys.length; i++) {
       const k = keys[i];
+      // 只在相邻两天内比对：快讯流窗口是 24h，跨天比对既无收益又会让 500+ 条的
+      // 两两 bigram 比对变成 O(n²) 热点（实测去重是 shapeNewsFeed 里最慢的一步）。
+      if (!buckets.includes(keyDay[i])) continue;
       if (k.norm === norm) { hit = i; break; }
-      if (norm.length >= 12 && k.norm.length >= 12 &&
-          Math.min(norm.length, k.norm.length) / Math.max(norm.length, k.norm.length) >= 0.5 &&
-          containment(grams, k.grams) >= 0.85) { hit = i; break; }
+      const minLen = Math.min(norm.length, k.norm.length);
+      if (minLen < DUP_MIN_LEN) continue;                       // 太短不做包含度判定
+      const ratio = minLen / Math.max(norm.length, k.norm.length);
+      const c = containment(grams, k.grams);
+      if (c >= DUP_CONTAIN_HIGH) { hit = i; break; }            // 规则 3：真包含，不看长度比
+      if (ratio >= DUP_LEN_RATIO && c >= DUP_CONTAIN_LOW) { hit = i; break; } // 规则 2
     }
 
     if (hit === -1) {
       keys.push({ norm, grams });
+      keyDay.push(day);
       out.push(it);
       continue;
     }
@@ -253,31 +445,72 @@ export function dedupeSimilar(items) {
 }
 
 /**
- * 每源配额：先给每个活跃源保底 MIN_PER_SOURCE 条（保证低频源不被挤掉），
- * 再按时间倒序补满，但单源不超过 ceil(limit * MAX_SOURCE_RATIO)。
+ * 每源配额档位（按实测占比定：sina_724 51% / jin10data 21% 必须压最狠，
+ * 否则整页被单一源刷满；低频高价值源给保底 5 条，避免被时间倒序挤光）。
+ * 未登记的源（macro_* / eastmoney_* 等）走 DEFAULT_PROFILE：保底 3 条 + 单源 ≤45%。
+ */
+export const SOURCE_PROFILE = {
+  // 高频源：压得最狠（占比上限 25%），但也要有保底，否则会被自家高频刷掉后一页全空
+  sina_724: { minPerSource: 5, maxRatio: 0.25 },
+  jin10data: { minPerSource: 5, maxRatio: 0.25 },
+  cnwallstreet: { minPerSource: 5, maxRatio: 0.35 },
+  ywcqdz: { minPerSource: 5, maxRatio: 0.35 },
+  FinanceNewsDaily: { minPerSource: 5, maxRatio: 0.35 },
+  cai_lian_she_1: { minPerSource: 5, maxRatio: 0.35 },
+};
+
+const DEFAULT_PROFILE = {
+  minPerSource: DEFAULT_MIN_PER_SOURCE,
+  maxRatio: MAX_SOURCE_RATIO,
+};
+
+/**
+ * 取某个频道的配额档位（与默认值合并）。
+ * @param {string} channel source_channel
+ * @returns {{minPerSource: number, maxRatio: number}}
+ */
+export function getProfile(channel) {
+  const p = SOURCE_PROFILE[channel];
+  return {
+    minPerSource: Number(p?.minPerSource) > 0 ? Number(p.minPerSource) : DEFAULT_PROFILE.minPerSource,
+    maxRatio: Number(p?.maxRatio) > 0 ? Number(p.maxRatio) : DEFAULT_PROFILE.maxRatio,
+  };
+}
+
+/**
+ * 每源配额：先给每个活跃源保底（各自 minPerSource，保证低频源不被挤掉），
+ * 再按时间倒序补满，但单源不超过该源自己的 cap = max(保底, ceil(limit*maxRatio))。
  * 入参需已按 published_at 倒序。
  */
 export function applySourceQuota(items, { limit = 30, minPerSource = MIN_PER_SOURCE, maxRatio = MAX_SOURCE_RATIO } = {}) {
   if (items.length <= limit) return { items, quotaApplied: 0 };
-  const cap = Math.max(minPerSource, Math.ceil(limit * maxRatio));
   const picked = new Set();
   const count = new Map();
+
+  // 每个频道的保底/上限：显式入参 minPerSource/maxRatio 作为「未登记频道」的兜底
+  const fallbackFloor = Number(minPerSource) > 0 ? Number(minPerSource) : DEFAULT_PROFILE.minPerSource;
+  const fallbackRatio = Number(maxRatio) > 0 ? Number(maxRatio) : DEFAULT_PROFILE.maxRatio;
+  const floorOf = (ch) => (SOURCE_PROFILE[ch] ? getProfile(ch).minPerSource : fallbackFloor);
+  const capOf = (ch) => {
+    const p = SOURCE_PROFILE[ch] ? getProfile(ch) : { minPerSource: fallbackFloor, maxRatio: fallbackRatio };
+    return Math.max(p.minPerSource, Math.ceil(limit * p.maxRatio));
+  };
 
   const take = (it, i) => {
     picked.add(i);
     count.set(it.source_channel, (count.get(it.source_channel) || 0) + 1);
   };
 
-  // 第一轮：保底
+  // 第一轮：保底（各源按自身档位）
   for (let i = 0; i < items.length && picked.size < limit; i++) {
     const ch = items[i].source_channel;
-    if ((count.get(ch) || 0) < minPerSource) take(items[i], i);
+    if ((count.get(ch) || 0) < floorOf(ch)) take(items[i], i);
   }
-  // 第二轮：按时间倒序补满（受单源上限约束）
+  // 第二轮：按时间倒序补满（受该源自己的单源上限约束）
   for (let i = 0; i < items.length && picked.size < limit; i++) {
     if (picked.has(i)) continue;
     const ch = items[i].source_channel;
-    if ((count.get(ch) || 0) >= cap) continue;
+    if ((count.get(ch) || 0) >= capOf(ch)) continue;
     take(items[i], i);
   }
   // 第三轮：仍不满（源太少/上限太紧）则无视上限补满
@@ -289,23 +522,75 @@ export function applySourceQuota(items, { limit = 30, minPerSource = MIN_PER_SOU
   return { items: ordered, quotaApplied: 1 };
 }
 
-/** 完整流水线：相关性 → 去重 → 配额 → 截断。入参需已按时间倒序。 */
-export function shapeNewsFeed(rows, { limit = 30, filter = true } = {}) {
+/**
+ * 重要度优先排序：高分置顶 + O(n) 时间保序。
+ *
+ * 为什么不用「按 score 全量排序」：那会把 2 分的旧闻顶到 7 分的新消息前面，
+ * 整个流会失去时间感。这里只把「达到 PIN_MIN_SCORE 的少数重点」提到最前
+ * （组内仍按分数、再按时间），其余保持原有时间倒序。
+ *
+ * 另加两条护栏：
+ * - 全量排序时对「同源」做 -0.5 微惩罚，避免同一家媒体刷满置顶区；
+ * - 置顶数不超过 limit 的 PIN_MAX_RATIO，保证时间流仍然是主体。
+ *
+ * @param {Array} items 已打分（含 score / level / source_channel / published_at）
+ * @param {{limit?: number, pinMinScore?: number, pinMaxRatio?: number}} opts
+ */
+export function rankByImportance(items, { limit = 30, pinMinScore = LEVEL_A, pinMaxRatio = PIN_MAX_RATIO } = {}) {
+  if (!Array.isArray(items) || items.length <= 1) return items;
+  const pinCap = Math.max(1, Math.ceil(limit * pinMaxRatio));
+
+  // 先按原始分数粗排候选，再在候选内部做同源微惩罚。
+  // 注意必须在「候选集内」计数：若在全池计数，同一源靠前的高分条目会把后面
+  // 同源条目压过头，最终置顶区内部反而出现分数倒挂。
+  const cand = [];
+  for (let idx = 0; idx < items.length; idx++) {
+    if ((Number(items[idx].score) || 0) >= pinMinScore) cand.push({ it: items[idx], idx });
+  }
+  cand.sort((a, b) => (Number(b.it.score) || 0) - (Number(a.it.score) || 0) || (Number(b.it.published_at) || 0) - (Number(a.it.published_at) || 0) || a.idx - b.idx);
+
+  const srcSeen = new Map();
+  const effOf = new Map();
+  for (const c of cand) {
+    const n = srcSeen.get(c.it.source_channel) || 0;
+    srcSeen.set(c.it.source_channel, n + 1);
+    c.eff = (Number(c.it.score) || 0) - n * 0.5;
+    effOf.set(c, c.eff);
+  }
+  cand.sort((a, b) => b.eff - a.eff || (Number(b.it.published_at) || 0) - (Number(a.it.published_at) || 0) || a.idx - b.idx);
+
+  const chosen = cand.slice(0, pinCap);
+  if (chosen.length === 0) return items;
+  const pinned = new Set(chosen.map((c) => c.idx));
+  return [...chosen.map((c) => ({ ...c.it, pinned: true })), ...items.filter((_, i) => !pinned.has(i))];
+}
+
+/**
+ * 完整流水线：相关性 → 去重 → 配额 → 截断 → 打分 → 重要度置顶。
+ * 入参需已按时间倒序。打分放最后：scoreItem 依赖去重产出的 dup_count（多源共振是正向信号）。
+ * filter=false（?raw=1 / NEWS_FILTER_OFF=1）时不做打分，score 等字段为 undefined。
+ */
+export function shapeNewsFeed(rows, { limit = 30, filter = true, holding_codes = null } = {}) {
   const raw = rows.length;
   if (!filter || FILTER_OFF) {
+    // 原始流：不打分、不补字段，保持旧行为便于对账
     return { items: rows.slice(0, limit), stats: { raw, kept: rows.length, filtered: 0, merged: 0, quota: 0, filter_off: true } };
   }
   const { kept, dropped } = applyRelevance(rows);
   const { items: deduped, merged } = dedupeSimilar(kept);
   const { items: final, quotaApplied } = applySourceQuota(deduped, { limit });
+  const scored = scoreAll(final, { holding_codes });
+  const ranked = rankByImportance(scored, { limit });
+  const pinnedCount = ranked.reduce((n, it) => n + (it.pinned ? 1 : 0), 0);
   return {
-    items: final,
+    items: ranked,
     stats: {
       raw,
       kept: kept.length,
       filtered: dropped.length,
       merged,
       quota: quotaApplied,
+      pinned: pinnedCount,
       dropped_samples: dropped.slice(0, 8),
     },
   };

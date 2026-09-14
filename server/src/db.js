@@ -486,12 +486,12 @@ function buildAllNewsQuery({ since, channels, cap, perChannel = 0 }) {
  * 否则低频源根本没机会进候选池。filter=false 时等价旧行为（?raw=1）。
  * @returns {{items: any[], stats: object}}
  */
-export async function fetchNewsFeed({ limit = 30, since = 0, channels = null, filter = true } = {}) {
+export async function fetchNewsFeed({ limit = 30, since = 0, channels = null, filter = true, holding_codes = null } = {}) {
   const cap = Math.min(200, Math.max(1, limit));
 
   if (!filter) {
     const r = await client.execute(buildAllNewsQuery({ since, channels, cap }));
-    return shapeNewsFeed(r.rows.map(mapNewsRow), { limit: cap, filter: false });
+    return shapeNewsFeed(r.rows.map(mapNewsRow), { limit: cap, filter: false, holding_codes });
   }
 
   // 时间下界：让 idx_news_pub 索引生效（窗口函数否则要扫全表排序）。
@@ -500,7 +500,7 @@ export async function fetchNewsFeed({ limit = 30, since = 0, channels = null, fi
   // 每源取数上限：放大 1.8 倍以补偿过滤/去重造成的损耗（保证最终能填满 limit）
   const perChannel = Math.min(80, Math.max(12, Math.ceil(cap * 1.8)));
   const r = await client.execute(buildAllNewsQuery({ since: floor, channels, cap: 0, perChannel }));
-  return shapeNewsFeed(r.rows.map(mapNewsRow), { limit: cap, filter: true });
+  return shapeNewsFeed(r.rows.map(mapNewsRow), { limit: cap, filter: true, holding_codes });
 }
 
 function safeJson(s) { try { return JSON.parse(s); } catch { return {}; } }

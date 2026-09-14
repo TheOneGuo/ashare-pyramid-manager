@@ -55,7 +55,7 @@ const MODE = (process.env.NEWS_SOURCE_MODE || 'real').toLowerCase();
 const PREVIEW_DIR = path.resolve(__dirname, '../../preview');
 
 // 「全部」快讯源：新浪 7×24（国内直连主源）+ 电报源（代理可用时补充）
-const TELEGRAM_CHANNELS = ['sina_724', 'FinanceNewsDaily', 'jin10data', 'cnwallstreet', 'ywcqdz'];
+const TELEGRAM_CHANNELS = ['sina_724', 'FinanceNewsDaily', 'jin10data', 'cnwallstreet', 'ywcqdz', 'cai_lian_she_1'];
 
 // =====================================================
 // DB 读路径韧性：Turso（东京）直连偶发「挂住不抛」，读路径统一加硬超时
@@ -335,6 +335,23 @@ app.get('/api/health', async (_req, res) => {
 // =====================================================
 // News
 // =====================================================
+// 持仓代码缓存：喂给快讯打分器做「持仓相关」加分（+6 → 标为「重大」并置顶）。
+// 持仓极少变动，缓存 60s，避免每个 /api/news 请求都去查海外 Turso 拖快慢讯页。
+let _holdingCodesCache = { ts: 0, codes: [] };
+const HOLDING_CODES_TTL = 60_000;
+async function getHoldingCodes() {
+  const now = Date.now();
+  if (now - _holdingCodesCache.ts < HOLDING_CODES_TTL) return _holdingCodesCache.codes;
+  try {
+    const holdings = await listHoldingsSafe(3000);
+    const codes = (holdings || []).map((h) => h && h.stock_code).filter(Boolean);
+    _holdingCodesCache = { ts: now, codes };
+  } catch {
+    // 查失败就沿用上一次的值（可能为空数组），绝不让打分链路因此中断
+  }
+  return _holdingCodesCache.codes;
+}
+
 app.get('/api/news', async (req, res) => {
   try {
     const limitRaw = Number(req.query.limit);
@@ -350,14 +367,14 @@ app.get('/api/news', async (req, res) => {
     if (cachedPayload) return res.json({ ...cachedPayload, cached: true });
 
     const load = async () => {
+      // 持仓代码两个用途：?holding=1 时按持仓过滤；无论是否过滤都喂给打分器做「持仓相关」加分
+      const codes = await getHoldingCodes();
       if (holding) {
-        const holdings = await listHoldingsSafe(3000);
-        const codes = holdings.map((h) => h.stock_code);
         const rows = await fetchNews({ limit, since, holding_codes: codes });
         return { items: rows, stats: { scope: 'holding', raw: rows.length } };
       }
       // 全部：新浪 7×24 主源 + 电报源；默认做相关性过滤/去重/每源配额（?raw=1 可绕过）
-      return fetchNewsFeed({ limit, since, channels: TELEGRAM_CHANNELS, filter });
+      return fetchNewsFeed({ limit, since, channels: TELEGRAM_CHANNELS, filter, holding_codes: codes });
     };
 
     let items = null;

@@ -75,3 +75,8 @@ build/
 docs/verify/chrome-profile-*/
 docs/verify/*.err
 docs/verify/write-fxbaogao-env.ps1
+
+# 离线验证脚手架（2026-09-14 新闻去重/打分验证时引入）
+server/.verify/
+server/undefined/
+turso_pull.sqlite3

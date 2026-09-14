@@ -72,14 +72,26 @@
         v-for="item in visibleItems"
         :key="item.id"
         class="news-item"
-        :class="{ 'is-matched': item.matchedHoldings.length > 0 }"
+        :class="{
+          'is-matched': item.matchedHoldings.length > 0,
+          'is-level-s': item.level === 'S',
+          'is-level-a': item.level === 'A',
+        }"
       >
         <view class="news-item-head">
-          <text class="news-item-source">{{ item.sourceName || item.sourceChannel }}</text>
+          <view class="news-item-head-left">
+            <text
+              v-if="item.level === 'S' || item.level === 'A'"
+              class="news-level"
+              :class="item.level === 'S' ? 'news-level-s' : 'news-level-a'"
+            >{{ item.levelLabel || (item.level === 'S' ? '重大' : '重要') }}</text>
+            <text class="news-item-source">{{ item.sourceName || item.sourceChannel }}</text>
+          </view>
           <text class="news-item-time">{{ formatTime(item.publishedAt) }}</text>
         </view>
-        <view v-if="item.matchedHoldings.length > 0" class="news-item-tags">
-          <text class="news-item-tag">持仓 {{ item.matchedHoldings.join(' · ') }}</text>
+        <view v-if="item.matchedHoldings.length > 0 || item.themeChips.length > 0" class="news-item-tags">
+          <text v-if="item.matchedHoldings.length > 0" class="news-item-tag">持仓 {{ item.matchedHoldings.join(' · ') }}</text>
+          <text v-for="chip in item.themeChips" :key="chip" class="news-theme-chip">{{ chip }}</text>
         </view>
         <text class="news-item-title">{{ item.title }}</text>
         <template v-if="item.summary">
@@ -87,6 +99,10 @@
           <text v-else class="news-item-summary">{{ item.summary }}</text>
           <text v-if="activeScope === 'holding' && (item.summary || '').length > 90" class="news-item-toggle" @tap="toggleExpand(item.id)">{{ expandedIds.has(item.id) ? '收起全文 ↑' : '展开全文 ↓' }}</text>
         </template>
+        <view v-if="item.dupCount > 1 || item.alsoIn.length > 0" class="news-item-meta">
+          <text v-if="item.dupCount > 1" class="news-dup-count">×{{ item.dupCount }}</text>
+          <text v-if="item.alsoIn.length > 0" class="news-dup-sources">多源: {{ dupLabel(item) }}</text>
+        </view>
       </view>
     </view>
     </view>
@@ -115,7 +131,18 @@ interface RawNews {
   link?: string
   url?: string
   published_at?: number
+  // ── 由 server/src/news-relevance.js 产出的打分层字段（后端可能滞后，全部可选） ──
+  score?: number
+  level?: string
+  level_label?: string
+  reasons?: string[]
+  tags?: string[]
+  also_in?: string[]
+  dup_count?: number
+  pinned?: boolean
 }
+
+type NewsLevel = 'S' | 'A' | 'B'
 
 interface NewsItem {
   id: string
@@ -126,6 +153,15 @@ interface NewsItem {
   publishedAt: number
   url: string
   matchedHoldings: string[]   // 命中的持仓股票代码（仅 holding=1 时计算）
+  tags: string[]
+  themeChips: string[]        // 由 tags 映射出的展示用小标签（A股/美股/政策/美股政策）
+  alsoIn: string[]            // 同源报道的其他来源名
+  dupCount: number
+  score: number
+  level: NewsLevel
+  levelLabel: string
+  reasons: string[]
+  pinned: boolean             // 服务端判定为「重要度置顶」，应在列表最前
 }
 
 const items = ref<NewsItem[]>([])
@@ -274,7 +310,32 @@ async function fetchNews(showLoading = true, scope: 'all' | 'holding' | null = n
   }
 }
 
+// 只用 4 个最有信息量的主题标签，避免 chip 刷屏；其余 tag（macro/industry/code…）不展示
+const THEME_TAG_LABELS: Record<string, string> = {
+  a_stock: 'A股',
+  us_stock: '美股',
+  cn_policy: '政策',
+  us_policy: '美股政策',
+}
+function themeChipsFrom(tags: string[]): string[] {
+  const out: string[] = []
+  for (const t of tags || []) {
+    const label = THEME_TAG_LABELS[t]
+    if (label && !out.includes(label)) out.push(label)
+  }
+  return out
+}
+
+function dupLabel(item: NewsItem): string {
+  const names = (item.alsoIn || []).slice(0, 2).join('·')
+  return item.alsoIn.length > 2 ? `${names}等` : names
+}
+
 function mapItem(raw: RawNews): NewsItem {
+  const level: NewsLevel = raw.level === 'S' || raw.level === 'A' ? raw.level : 'B'
+  const tags = Array.isArray(raw.tags) ? raw.tags : []
+  const alsoIn = Array.isArray(raw.also_in) ? raw.also_in : []
+  const dupRaw = Number(raw.dup_count)
   const base: NewsItem = {
     id: raw.id,
     title: raw.title || '(无标题)',
@@ -284,6 +345,15 @@ function mapItem(raw: RawNews): NewsItem {
     publishedAt: raw.published_at || Date.now(),
     url: raw.link || raw.url || '',
     matchedHoldings: [],
+    tags,
+    themeChips: themeChipsFrom(tags),
+    alsoIn,
+    dupCount: Number.isFinite(dupRaw) && dupRaw > 0 ? dupRaw : 1,
+    score: Number.isFinite(Number(raw.score)) ? Number(raw.score) : 0,
+    level,
+    levelLabel: raw.level_label || '',
+    reasons: Array.isArray(raw.reasons) ? raw.reasons : [],
+    pinned: raw.pinned === true,
   }
   base.matchedHoldings = detectMatchedHoldings(base)
   return base
@@ -313,8 +383,21 @@ const allCount = computed(() => items.value.length)
 const holdingTotal = ref(0)
 const holdingCount = computed(() => (activeScope.value === 'holding' ? items.value.length : holdingTotal.value))
 
+// 重要度置顶：
+// 服务端已按「分数置顶 + 时间保序」排好序并下发 pinned 标记，前端不再二次重排
+// （否则服务端的置顶区会被本地的 S 级置顶逻辑打乱）。仅当服务端未下发 pinned
+// （旧版本后端 / 缓存响应）时，回退到「S 级稳定置顶」以保持观感。
+function pinLevelS(list: NewsItem[]): NewsItem[] {
+  if (list.some((it) => it.pinned)) return list
+  if (!list.some((it) => it.level === 'S')) return list
+  const top: NewsItem[] = []
+  const rest: NewsItem[] = []
+  for (const it of list) (it.level === 'S' ? top : rest).push(it)
+  return top.concat(rest)
+}
+
 const visibleItems = computed(() => {
-  if (activeScope.value === 'all') return items.value
+  if (activeScope.value === 'all') return pinLevelS(items.value)
   // 持仓相关：服务端已返回关联内容，这里直接展示（matchedHoldings 仅用于标签）
   let list = items.value
   // 若从持仓页聚焦某标的，则只显示该标的代码命中或画像关键词命中的新闻
@@ -327,7 +410,7 @@ const visibleItems = computed(() => {
       return kwArr.some((k: string) => k && text.includes(k))
     })
   }
-  return list
+  return pinLevelS(list)
 })
 
 onMounted(async () => {
@@ -391,6 +474,14 @@ $color-text-secondary: #a89a82;
 $color-text-warm: #d3c3ad;
 $color-match-bg: rgba(114, 247, 255, 0.12);
 $color-match-border: rgba(114, 247, 255, 0.5);
+// 重要度色板（A股习惯：红 = 重大/上涨，琥珀 = 重要）
+$rf-red: #ff4d4f;
+$color-level-s: $rf-red;
+$color-level-s-bg: rgba(255, 77, 79, 0.1);
+$color-level-s-border: rgba(255, 77, 79, 0.5);
+$color-level-a: $rf-amber;
+$color-level-a-bg: rgba(255, 184, 107, 0.08);
+$color-level-a-border: rgba(255, 184, 107, 0.5);
 $radius-md: 14px;
 $radius-lg: 18px;
 $radius-full: 999px;
@@ -550,6 +641,19 @@ $radius-full: 999px;
     border-color: $color-match-border;
     background: linear-gradient(180deg, rgba(114, 247, 255, 0.07), rgba(255, 184, 107, 0.03));
   }
+
+  // 重要度：左侧色条 + 淡色底，红=重大(S)、琥珀=重要(A)
+  &.is-level-s {
+    border-color: $color-level-s-border;
+    border-left: 3px solid $color-level-s;
+    background: linear-gradient(180deg, $color-level-s-bg, rgba(255, 184, 107, 0.025));
+  }
+
+  &.is-level-a {
+    border-color: $color-level-a-border;
+    border-left: 3px solid $color-level-a;
+    background: linear-gradient(180deg, $color-level-a-bg, rgba(114, 247, 255, 0.02));
+  }
 }
 
 .news-item:active {
@@ -564,10 +668,41 @@ $radius-full: 999px;
   margin-bottom: 12rpx;
 }
 
+.news-item-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.news-level {
+  display: inline-block;
+  padding: 2rpx 10rpx;
+  font-size: 20rpx;
+  font-weight: 700;
+  border-radius: $radius-full;
+  white-space: nowrap;
+}
+.news-level-s {
+  color: #fff;
+  background: $color-level-s;
+  border: 1rpx solid $color-level-s;
+}
+.news-level-a {
+  color: $color-bg;
+  background: $color-level-a;
+  border: 1rpx solid $color-level-a;
+}
+
 .news-item-source {
   font-size: 22rpx;
   color: $rf-cyan;
   font-weight: 600;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .news-item-tags {
@@ -585,6 +720,37 @@ $radius-full: 999px;
   background: $color-match-bg;
   border: 1rpx solid $color-match-border;
   border-radius: $radius-full;
+}
+
+.news-theme-chip {
+  display: inline-block;
+  padding: 4rpx 12rpx;
+  font-size: 20rpx;
+  color: $color-text-warm;
+  background: rgba(255, 184, 107, 0.08);
+  border: 1rpx solid $color-border;
+  border-radius: $radius-full;
+}
+
+/* 多源 / 重复报道 */
+.news-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12rpx;
+  margin-top: 12rpx;
+}
+.news-dup-count {
+  font-size: 20rpx;
+  font-weight: 700;
+  color: $rf-amber;
+  padding: 2rpx 10rpx;
+  background: rgba(255, 184, 107, 0.1);
+  border-radius: $radius-full;
+}
+.news-dup-sources {
+  font-size: 20rpx;
+  color: $color-text-secondary;
 }
 
 .news-item-time {
@@ -652,5 +818,10 @@ $radius-full: 999px;
   .news-kw-code { font-size: 11px; }
   .news-item-title { font-size: 14px; }
   .news-item-time { font-size: 11px; }
+  .news-item-source { font-size: 11px; }
+  .news-level { font-size: 11px; padding: 1px 6px; }
+  .news-theme-chip { font-size: 11px; padding: 1px 6px; }
+  .news-dup-count { font-size: 11px; padding: 1px 6px; }
+  .news-dup-sources { font-size: 11px; }
 }
 </style>
