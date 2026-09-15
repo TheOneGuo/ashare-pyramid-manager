@@ -230,7 +230,14 @@ SQL 注入（全部 `?` 绑定）｜SSRF（频道为硬编码清单，PDF 域名
 | 8 | 补索引 `research_reports(broker)`、`portfolio_plans(updated_at)` | 零 | 可逆 |
 | 9 | （可选）物化 `fxbaogao_reports.is_foreign` 替代 `org_name LIKE '%…%'` | 低 | 需验证 |
 
-> ⚠️ 步骤 6/7 会改动**远程 Turso schema**，属生产数据库变更。**建议先在本地/影子库验证，再择窗口执行**；本报告先给出方案，执行前请你确认。
+> ✅ **执行状态（2026-09-15 17:10，提交 `74b13f0`）**：步骤 1/2/3/4/5/6/7 均已执行完毕。
+> - 远端 Turso：`DROP TABLE research_items`、`DROP TABLE portfolio_snapshots`、
+>   `ALTER TABLE fxbaogao_reports DROP COLUMN source_range`（执行前带「行数必须为 0」安全闸复核）。
+> - 结果：表 14 → **12 张**，`fxbaogao_reports` 16 → **15 列**，回收磁盘约 **292MB**。
+> - 功能验证：后端以新代码重启后 `SQL_PARSE_ERROR` 归零；`/api/health`、`/api/news`、`/api/holdings`、
+>   `/api/research/fxbaogao/summary` 全部 200；数据持续增长（`news_items` 4433→4909、
+>   `fxbaogao_reports` 12980→13025）；spool 积压 333→274（重放正常）；测试 80/80 通过。
+> - 步骤 8（补索引）、9（物化 `is_foreign`）仍为**建议项，未执行**。
 
 ### 8.4 备份现状
 - `turso_pull.sqlite3`（30M）= 远端镜像，**已 gitignore，未入库** ✅

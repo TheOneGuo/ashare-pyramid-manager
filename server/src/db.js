@@ -3,12 +3,13 @@
  *
  * 表结构（统一）：
  * - news_items：通用新闻（含电报RSS、东财公告、东财个股新闻），用 source_channel 区分
- * - research_items：研报
- * - portfolio_snapshots：持仓快照
  * - portfolio_holdings：当前持仓（轻量表，用于触发持仓标的的新闻采集）
  * - news_sources：源健康状态
  *
- * 调用方不用关心底层，统一定义了上面 5 张表。
+ * 调用方不用关心底层，统一定义了上面 3 张表。
+ * 注：research_items / portfolio_snapshots 为历史遗留死表（远端 0 行、全仓无任何读写代码），
+ *     已于 2026-09-15 从 SCHEMA 移除并在远端 DROP；研报能力由 research_reports /
+ *     research_stock_reports / fxbaogao_reports / fxbaogao_ai 承担。
  */
 
 import { createClient } from '@libsql/client';
@@ -68,36 +69,6 @@ CREATE TABLE IF NOT EXISTS news_sources (
   last_error      TEXT NOT NULL DEFAULT '',
   updated_at      INTEGER NOT NULL DEFAULT 0
 );
-
-CREATE TABLE IF NOT EXISTS research_items (
-  id           TEXT PRIMARY KEY,
-  title        TEXT NOT NULL,
-  broker       TEXT,
-  industry     TEXT,
-  summary      TEXT,
-  key_points   TEXT,
-  risk_points  TEXT,
-  ai_tldr      TEXT,
-  published_at INTEGER,
-  fetched_at   INTEGER NOT NULL,
-  status       TEXT DEFAULT 'pending'
-);
-
-CREATE INDEX IF NOT EXISTS idx_research_pub ON research_items(published_at DESC);
-
-CREATE TABLE IF NOT EXISTS portfolio_snapshots (
-  id          TEXT PRIMARY KEY,
-  user_id     TEXT NOT NULL,
-  positions   TEXT NOT NULL,
-  total_cost  REAL,
-  market_value REAL,
-  net_value   REAL,
-  pnl         REAL,
-  plan_json   TEXT,
-  created_at  INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_snapshot_user_time ON portfolio_snapshots(user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS portfolio_holdings (
   stock_code      TEXT NOT NULL,
@@ -181,7 +152,7 @@ CREATE TABLE IF NOT EXISTS fxbaogao_reports (
   pub_date    TEXT NOT NULL DEFAULT '',    -- 展示用日期字符串
   recommended INTEGER NOT NULL DEFAULT 0,  -- 1=先进生产力相关推荐
   categories  TEXT NOT NULL DEFAULT '[]',  -- JSON 数组
-  source_range TEXT NOT NULL DEFAULT '',   -- 同步来源时间范围标记
+  -- [2026-09-15 已下线] source_range：只写不读字段，全仓无任何 SELECT
   pdf_url     TEXT NOT NULL DEFAULT '',    -- PDF 直链缓存（详情页秒开用）
   ai_status   INTEGER NOT NULL DEFAULT 0,  -- 0=未精读 1=精读中 2=已精读
   report_type TEXT NOT NULL DEFAULT '',    -- stock/industry/macro/strategy/minutes/other（LLM 精读时权威更新）
@@ -1214,12 +1185,12 @@ export async function upsertFxbaogaoReports(list) {
     const t = Number(r.pubTime || 0);
     const sec = t >= 1e12 ? Math.floor(t / 1000) : t;
     return {
-      sql: `INSERT INTO fxbaogao_reports(report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,source_range,pdf_url,ai_status,report_type,industry_name,region,perspective,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      sql: `INSERT INTO fxbaogao_reports(report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,pdf_url,ai_status,report_type,industry_name,region,perspective,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(report_id) DO UPDATE SET
               title=excluded.title, org_name=excluded.org_name, page_num=excluded.page_num,
               pub_time=excluded.pub_time, pub_date=excluded.pub_date, recommended=excluded.recommended,
-              categories=excluded.categories, source_range=excluded.source_range, industry_name=excluded.industry_name,
+              categories=excluded.categories, industry_name=excluded.industry_name,
               region=excluded.region, perspective=excluded.perspective`,
       args: [
         Number(r.reportId) || 0,
@@ -1230,7 +1201,6 @@ export async function upsertFxbaogaoReports(list) {
         String(r.pubTimeStr || r.pubDate || '').slice(0, 40),
         r.recommended ? 1 : 0,
         JSON.stringify(Array.isArray(r.categories) ? r.categories : []),
-        String(r.sourceRange || '').slice(0, 60),
         String(r.pdfUrl || '').slice(0, 500),
         0,
         classifyFxbaogaoReport(r.title, r.orgName),

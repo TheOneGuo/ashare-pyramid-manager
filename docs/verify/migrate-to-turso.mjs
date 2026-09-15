@@ -25,12 +25,10 @@ const SKIP = new Set(['sqlite_sequence'])
 const PRIMARY_KEY = {
   news_items: 'id',
   news_sources: 'source_channel',
-  research_items: 'id',
   research_reports: 'id',
   research_stock_reports: 'stock_code',
   portfolio_holdings: 'stock_code',
   portfolio_recommendations: '(role, stock_code)',
-  portfolio_snapshots: 'id',
   portfolio_ledger_events: 'id',
   portfolio_plans: 'id',
   holding_profiles: 'stock_code',
