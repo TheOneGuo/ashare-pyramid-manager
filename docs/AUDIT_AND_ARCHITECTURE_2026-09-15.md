@@ -396,3 +396,33 @@ await withTimeout(runJob('news'), 60_000, { onTimeout: 'abort+reschedule' })
 - **GitHub**：审计开始时 `main` = `origin/main` = `e75eeb2`，**ahead=0 / behind=0**（本地无领先提交）。
 - **Turso**：本地镜像 `turso_pull.sqlite3` 已于 2026-09-15 15:45 全量刷新至与远端一致（14 张表行数逐一比对通过，`fxbaogao_reports` 12,980）。
 - **本次修复与测试完成后**，将产生新的本地提交并推送 `origin/main`；远端 schema/数据变更（Q8 步骤 6/7）需你确认后再执行。
+
+---
+
+## 13. 审计后新发现并修复：libSQL `execute({sql})` 缺 `args` 导致语句静默失败
+
+**现象**：启动日志 `cleanupStaleAnnouncements: Cannot convert undefined or null to object`。
+
+**根因**：`@libsql/client` 内部 `stmtToHrana`（`hrana.js:249`）对 `stmt.args` 执行 `Object.entries()`。
+以**对象形式**调用 `client.execute({ sql })` 却未提供 `args` 时，`args` 为 `undefined` → 抛 `TypeError`。
+字符串形式 `client.execute(sql)` 不受影响（内部会补 `args: []`）。
+
+**危害远超日志噪音** —— 全仓扫描 24 个文件共 **6 处**，且全部被 `try/catch` 静默吞掉：
+
+| 位置 | 函数 | 后果 |
+|---|---|---|
+| db.js:584 | `migrateHoldingsColumns` | 持仓表补列（current_price/pnl/pnl_pct）**从未执行** |
+| db.js:600 | `migratePlansColumns` | 计划表补列（last_price/last_price_at）**从未执行** |
+| db.js:611 | `migrateNewsContent` | 新闻表补 content 列 **从未执行** |
+| db.js:618 | `migrateNewsContent` | content 空值回填 summary **从未执行** |
+| db.js:1760/1761 | `cleanupStaleAnnouncements` | 清理脏公告的两条 DELETE **从未执行** |
+
+即：**旧库若缺列，永远补不上**；脏公告永远清不掉。属于"被 catch 吞掉的真实功能失效"。
+
+**修复**：6 处一律补 `args: []`，并在原处加注释固化该坑；错误日志截断由 80 放宽到 200 字符。
+
+**验证**：重启后日志由 `skipped` → `done`；`SQL_PARSE_ERROR` 0、`Cannot convert` 0；
+三张表列完整无缺失；`news_items` 4909→4451（清理函数首次生效，删除 458 条旧版脏公告行，属预期）；测试 80/80。
+
+**防范建议**：① 统一封装 `exec(sql, args = [])` 包装器，禁止直接写 `execute({sql})`；
+② 迁移类 `catch` 不应无条件静默，至少 `console.warn` 出 `e.message`，避免同类问题再次隐身。

@@ -581,7 +581,7 @@ export async function migrateHoldingsColumns() {
   ];
   for (const [col, type] of needed) {
     try {
-      await client.execute({ sql: `ALTER TABLE portfolio_holdings ADD COLUMN ${col} ${type}` });
+      await client.execute({ sql: `ALTER TABLE portfolio_holdings ADD COLUMN ${col} ${type}`, args: [] });
       console.log(`[db] migrated holdings +${col}`);
     } catch (e) {
       // 列已存在则忽略
@@ -597,7 +597,7 @@ export async function migratePlansColumns() {
   ];
   for (const [col, type] of needed) {
     try {
-      await client.execute({ sql: `ALTER TABLE portfolio_plans ADD COLUMN ${col} ${type}` });
+      await client.execute({ sql: `ALTER TABLE portfolio_plans ADD COLUMN ${col} ${type}`, args: [] });
       console.log(`[db] migrated plans +${col}`);
     } catch (e) {
       // 列已存在则忽略
@@ -608,14 +608,14 @@ export async function migratePlansColumns() {
 // 旧库迁移：news_items 增加 content 整帖字段
 export async function migrateNewsContent() {
   try {
-    await client.execute({ sql: `ALTER TABLE news_items ADD COLUMN content TEXT NOT NULL DEFAULT ''` });
+    await client.execute({ sql: `ALTER TABLE news_items ADD COLUMN content TEXT NOT NULL DEFAULT ''`, args: [] });
     console.log('[db] migrated news_items +content');
   } catch (e) {
     // 列已存在则忽略
   }
   // 回填：旧行的 content 为空时，用已有 summary 兜底（新抓取会用整帖覆盖）
   try {
-    await client.execute({ sql: `UPDATE news_items SET content = summary WHERE content = ''` });
+    await client.execute({ sql: `UPDATE news_items SET content = summary WHERE content = ''`, args: [] });
   } catch (e) { /* ignore */ }
 }
 
@@ -1757,11 +1757,14 @@ export async function deleteHoldingProfile(stock_code) {
 // 清理旧版采集写入的脏公告行（source_name='t' / 旧 guid 格式 ann:CODE:TS:IDX）
 export async function cleanupStaleAnnouncements() {
   try {
-    await client.execute({ sql: `DELETE FROM news_items WHERE source_name = 't' AND source_channel LIKE 'eastmoney_announcement_%'` });
-    await client.execute({ sql: `DELETE FROM news_items WHERE source_channel LIKE 'eastmoney_announcement_%' AND id LIKE 'ann:%:%:%'` });
+    // 注意：libSQL 的 execute 传「对象形式」时 args 必填。其内部 stmtToHrana 会执行
+    // Object.entries(stmt.args)，args 为 undefined 时抛
+    // "Cannot convert undefined or null to object"，语句被静默跳过（本次修复的既有 bug）。
+    await client.execute({ sql: `DELETE FROM news_items WHERE source_name = 't' AND source_channel LIKE 'eastmoney_announcement_%'`, args: [] });
+    await client.execute({ sql: `DELETE FROM news_items WHERE source_channel LIKE 'eastmoney_announcement_%' AND id LIKE 'ann:%:%:%'`, args: [] });
     return true;
   } catch (e) {
-    console.warn('[db] cleanupStaleAnnouncements:', e.message?.slice(0, 80));
+    console.warn('[db] cleanupStaleAnnouncements 失败:', String(e?.message || e).slice(0, 200));
     return false;
   }
 }
