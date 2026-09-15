@@ -41,6 +41,30 @@ console.log(`[db] mode=${mode} url=${url || 'file:./dev.sqlite'}`);
   console.log(`[db] turso proxy=${info.enabled ? info.proxy : 'off(直连)'}${info.source ? ` (from ${info.source})` : ''}`);
 }
 
+// =====================================================
+// 统一 SQL 执行入口：全仓一律走 exec()，禁止裸写 client.execute({ sql })
+// =====================================================
+// 背景（2026-09-15 实测）：@libsql/client 内部 stmtToHrana 会执行 Object.entries(stmt.args)，
+// 以对象形式调用 client.execute({ sql }) 却未提供 args 时，args 为 undefined，
+// 抛 "TypeError: Cannot convert undefined or null to object"。
+// 该异常常被 try/catch 静默吞掉，导致 3 个迁移函数 + 1 个清理函数长期失效却无人察觉。
+//
+// 本包装器同时接受两种入参，且对「漏传 args」天然免疫（兜底为 []）：
+//   exec(sql)                 —— 字符串/模板字符串
+//   exec(sql, args)           —— 推荐写法
+//   exec({ sql, args })       —— 兼容历史写法
+//   exec({ sql })             —— 兼容写法，args 自动兜底为 []，不会触发上述异常
+export async function exec(stmt, args = []) {
+  let sql = stmt;
+  let params = args;
+  if (stmt && typeof stmt === 'object') {
+    sql = stmt.sql;
+    params = stmt.args ?? [];
+  }
+  if (!Array.isArray(params)) params = [];
+  return client.execute({ sql, args: params });
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS news_items (
   id              TEXT PRIMARY KEY,
@@ -219,7 +243,7 @@ export async function initDb() {
   const stmts = SCHEMA.split(';').map((s) => s.trim()).filter(Boolean);
   for (const sql of stmts) {
     try {
-      await client.execute(sql);
+      await exec(sql);
     } catch (e) {
       if (!/already exists|duplicate/i.test(String(e.message))) {
         console.warn(`[db] init stmt skipped: ${sql.slice(0, 40)}... (${e.message?.slice(0, 60)})`);
@@ -297,7 +321,7 @@ export async function upsertNewsItems({ source_channel, source_name, feed_url, i
       console.warn(`[db] upsertNewsItems batch 失败，转逐条兜底: ${e.message?.slice(0, 100)}`);
       for (const stmt of stmts) {
         try {
-          await client.execute(stmt);
+          await exec(stmt);
           ok++;
         } catch (e2) {
           if (!firstErr) firstErr = e2;
@@ -327,7 +351,7 @@ export async function upsertNewsItems({ source_channel, source_name, feed_url, i
 
 async function upsertSourceState({ source_channel, source_name, feed_url, last_fetch_at, last_success_at, last_count, last_error }) {
   try {
-    await client.execute({
+    await exec({
       sql: `INSERT INTO news_sources(source_channel,source_name,feed_url,last_fetch_at,last_success_at,last_count,last_error,updated_at)
             VALUES(?,?,?,?,?,?,?,?)
             ON CONFLICT(source_channel) DO UPDATE SET
@@ -391,7 +415,7 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
 
   if (source_channel) {
     const sql = `SELECT ${NEWS_COLS} FROM news_items WHERE published_at >= ? AND source_channel = ? ORDER BY published_at DESC LIMIT ?`;
-    const r = await client.execute({ sql, args: [since, source_channel, cap] });
+    const r = await exec({ sql, args: [since, source_channel, cap] });
     return r.rows.map(mapNewsRow);
   }
 
@@ -402,7 +426,7 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
     const rows = [];
     for (const c of holding_codes) {
       const ch = `eastmoney_announcement_${c}`;
-      const r = await client.execute({ sql: holdSql, args: [since, ch, perSrc] });
+      const r = await exec({ sql: holdSql, args: [since, ch, perSrc] });
       rows.push(...r.rows);
     }
     const seen = new Set();
@@ -417,7 +441,7 @@ export async function fetchNews({ limit = 30, since = 0, source_channel = null, 
   }
 
   // 默认 / 全部：可由 channels 限定（如仅电报三源）
-  const r = await client.execute(buildAllNewsQuery({ since, channels, cap }));
+  const r = await exec(buildAllNewsQuery({ since, channels, cap }));
   return r.rows.map(mapNewsRow);
 }
 
@@ -461,7 +485,7 @@ export async function fetchNewsFeed({ limit = 30, since = 0, channels = null, fi
   const cap = Math.min(200, Math.max(1, limit));
 
   if (!filter) {
-    const r = await client.execute(buildAllNewsQuery({ since, channels, cap }));
+    const r = await exec(buildAllNewsQuery({ since, channels, cap }));
     return shapeNewsFeed(r.rows.map(mapNewsRow), { limit: cap, filter: false, holding_codes });
   }
 
@@ -470,14 +494,14 @@ export async function fetchNewsFeed({ limit = 30, since = 0, channels = null, fi
   const floor = Math.max(Number(since) || 0, Date.now() - 48 * 3600_000);
   // 每源取数上限：放大 1.8 倍以补偿过滤/去重造成的损耗（保证最终能填满 limit）
   const perChannel = Math.min(80, Math.max(12, Math.ceil(cap * 1.8)));
-  const r = await client.execute(buildAllNewsQuery({ since: floor, channels, cap: 0, perChannel }));
+  const r = await exec(buildAllNewsQuery({ since: floor, channels, cap: 0, perChannel }));
   return shapeNewsFeed(r.rows.map(mapNewsRow), { limit: cap, filter: true, holding_codes });
 }
 
 function safeJson(s) { try { return JSON.parse(s); } catch { return {}; } }
 
 export async function fetchNewsSources() {
-  const r = await client.execute(`SELECT source_channel,source_name,feed_url,last_fetch_at,last_success_at,last_count,last_error,updated_at FROM news_sources ORDER BY source_channel`);
+  const r = await exec(`SELECT source_channel,source_name,feed_url,last_fetch_at,last_success_at,last_count,last_error,updated_at FROM news_sources ORDER BY source_channel`);
   return r.rows.map((row) => ({
     source_channel: row.source_channel,
     source_name: row.source_name,
@@ -504,7 +528,7 @@ export async function cleanupOldNews(cutoff_ms, keepChannels = []) {
       sql += ` AND ${clause}`;
       args.push(...keepChannels.map((p) => `${p}%`));
     }
-    const r = await client.execute({ sql, args });
+    const r = await exec({ sql, args });
     return r.rowsAffected || 0;
   } catch (e) {
     console.warn(`[db] cleanupOldNews: ${e.message?.slice(0, 80)}`);
@@ -527,7 +551,7 @@ export function isHoldingChannel(ch) {
 // =====================================================
 
 export async function upsertHolding({ stock_code, short_name, market, shares, cost_basis, current_price, pnl, pnl_pct }) {
-  await client.execute({
+  await exec({
     sql: `INSERT INTO portfolio_holdings(stock_code,short_name,market,shares,cost_basis,current_price,pnl,pnl_pct,added_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?,?)
           ON CONFLICT(stock_code) DO UPDATE SET
@@ -581,10 +605,14 @@ export async function migrateHoldingsColumns() {
   ];
   for (const [col, type] of needed) {
     try {
-      await client.execute({ sql: `ALTER TABLE portfolio_holdings ADD COLUMN ${col} ${type}`, args: [] });
+      await exec(`ALTER TABLE portfolio_holdings ADD COLUMN ${col} ${type}`);
       console.log(`[db] migrated holdings +${col}`);
     } catch (e) {
-      // 列已存在则忽略
+      // 「列已存在」是幂等成功，静默忽略；其余错误必须出声——
+      // 否则迁移会长期静默失效（2026-09-15 前正是如此，6 处语句从未执行过）。
+      if (!/already exists|duplicate column/i.test(String(e?.message || ''))) {
+        console.warn(`[db] migrateHoldingsColumns +${col} 失败:`, String(e?.message || e).slice(0, 200));
+      }
     }
   }
 }
@@ -597,10 +625,12 @@ export async function migratePlansColumns() {
   ];
   for (const [col, type] of needed) {
     try {
-      await client.execute({ sql: `ALTER TABLE portfolio_plans ADD COLUMN ${col} ${type}`, args: [] });
+      await exec(`ALTER TABLE portfolio_plans ADD COLUMN ${col} ${type}`);
       console.log(`[db] migrated plans +${col}`);
     } catch (e) {
-      // 列已存在则忽略
+      if (!/already exists|duplicate column/i.test(String(e?.message || ''))) {
+        console.warn(`[db] migratePlansColumns +${col} 失败:`, String(e?.message || e).slice(0, 200));
+      }
     }
   }
 }
@@ -608,15 +638,19 @@ export async function migratePlansColumns() {
 // 旧库迁移：news_items 增加 content 整帖字段
 export async function migrateNewsContent() {
   try {
-    await client.execute({ sql: `ALTER TABLE news_items ADD COLUMN content TEXT NOT NULL DEFAULT ''`, args: [] });
+    await exec(`ALTER TABLE news_items ADD COLUMN content TEXT NOT NULL DEFAULT ''`);
     console.log('[db] migrated news_items +content');
   } catch (e) {
-    // 列已存在则忽略
+    if (!/already exists|duplicate column/i.test(String(e?.message || ''))) {
+      console.warn('[db] migrateNewsContent +content 失败:', String(e?.message || e).slice(0, 200));
+    }
   }
   // 回填：旧行的 content 为空时，用已有 summary 兜底（新抓取会用整帖覆盖）
   try {
-    await client.execute({ sql: `UPDATE news_items SET content = summary WHERE content = ''`, args: [] });
-  } catch (e) { /* ignore */ }
+    await exec(`UPDATE news_items SET content = summary WHERE content = ''`);
+  } catch (e) {
+    console.warn('[db] news_items content 回填失败:', String(e?.message || e).slice(0, 200));
+  }
 }
 
 // ── 研报类型启发式分类（LLM 精读前的初分类，精读后被权威值覆盖） ──
@@ -675,7 +709,7 @@ async function execRetry(sql, args = [], tries = 3) {
   let lastErr;
   for (let i = 0; i < tries; i++) {
     try {
-      return await client.execute(args.length ? { sql, args } : sql);
+      return await exec(sql, args);
     } catch (e) {
       lastErr = e;
       const msg = String(e?.message || '');
@@ -786,14 +820,14 @@ async function execRetryBatch(stmts, tries = 3) {
 }
 
 export async function removeHolding(stock_code) {
-  await client.execute({
+  await exec({
     sql: `DELETE FROM portfolio_holdings WHERE stock_code=?`,
     args: [String(stock_code).padStart(6, '0')],
   });
 }
 
 export async function listHoldings() {
-  const r = await client.execute(`SELECT stock_code,short_name,market,shares,cost_basis,current_price,pnl,pnl_pct,added_at,updated_at FROM portfolio_holdings ORDER BY stock_code`);
+  const r = await exec(`SELECT stock_code,short_name,market,shares,cost_basis,current_price,pnl,pnl_pct,added_at,updated_at FROM portfolio_holdings ORDER BY stock_code`);
   return r.rows.map((row) => ({
     stock_code: row.stock_code,
     short_name: row.short_name,
@@ -829,7 +863,7 @@ export async function listRecommendations(role = null) {
     args.push(role);
   }
   sql += ` ORDER BY role, weight DESC, stock_code`;
-  const r = await client.execute({ sql, args });
+  const r = await exec({ sql, args });
   return r.rows.map((row) => ({
     role: row.role,
     stock_code: row.stock_code,
@@ -842,7 +876,7 @@ export async function listRecommendations(role = null) {
 }
 
 export async function upsertRecommendation({ role, stock_code, stock_name, weight, note }) {
-  await client.execute({
+  await exec({
     sql: `INSERT INTO portfolio_recommendations(role,stock_code,stock_name,weight,note,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?)
           ON CONFLICT(role,stock_code) DO UPDATE SET
@@ -863,7 +897,7 @@ export async function upsertRecommendation({ role, stock_code, stock_name, weigh
 }
 
 export async function removeRecommendation({ role, stock_code }) {
-  await client.execute({
+  await exec({
     sql: `DELETE FROM portfolio_recommendations WHERE role=? AND stock_code=?`,
     args: [String(role), String(stock_code).padStart(6, '0')],
   });
@@ -872,9 +906,9 @@ export async function removeRecommendation({ role, stock_code }) {
 export async function bulkSetRecommendations(role, items) {
   // 一次性替换某 role 的全部推荐
   const now = Date.now();
-  await client.execute({ sql: `DELETE FROM portfolio_recommendations WHERE role=?`, args: [String(role)] });
+  await exec({ sql: `DELETE FROM portfolio_recommendations WHERE role=?`, args: [String(role)] });
   for (const it of items || []) {
-    await client.execute({
+    await exec({
       sql: `INSERT INTO portfolio_recommendations(role,stock_code,stock_name,weight,note,created_at,updated_at)
             VALUES(?,?,?,?,?,?,?)`,
       args: [
@@ -943,7 +977,7 @@ export async function compareWithRole(role) {
 
 export async function appendLedgerEvent(type, payload = {}) {
   const now = Date.now();
-  const r = await client.execute({
+  const r = await exec({
     sql: `INSERT INTO portfolio_ledger_events(type, payload, ts) VALUES(?,?,?)`,
     args: [String(type).slice(0, 32), JSON.stringify(payload || {}).slice(0, 4000), now],
   });
@@ -951,7 +985,7 @@ export async function appendLedgerEvent(type, payload = {}) {
 }
 
 export async function listLedgerEvents() {
-  const r = await client.execute(`SELECT id,type,payload,ts FROM portfolio_ledger_events ORDER BY ts ASC, id ASC`);
+  const r = await exec(`SELECT id,type,payload,ts FROM portfolio_ledger_events ORDER BY ts ASC, id ASC`);
   return r.rows.map((row) => ({
     id: Number(row.id),
     type: row.type,
@@ -961,7 +995,7 @@ export async function listLedgerEvents() {
 }
 
 export async function clearLedger() {
-  await client.execute(`DELETE FROM portfolio_ledger_events`);
+  await exec(`DELETE FROM portfolio_ledger_events`);
 }
 
 // =====================================================
@@ -970,7 +1004,7 @@ export async function clearLedger() {
 
 export async function upsertPlan({ stock_code, stock_name, p0, atr, atr_pct, total_invest, plan_json, last_price, last_price_at }) {
   const now = Date.now();
-  await client.execute({
+  await exec({
     sql: `INSERT INTO portfolio_plans(stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,last_price,last_price_at,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?,?,?)
           ON CONFLICT(stock_code) DO UPDATE SET
@@ -1000,7 +1034,7 @@ export async function upsertPlan({ stock_code, stock_name, p0, atr, atr_pct, tot
 }
 
 export async function getPlan(stock_code) {
-  const r = await client.execute({
+  const r = await exec({
     sql: `SELECT stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,last_price,last_price_at,created_at,updated_at FROM portfolio_plans WHERE stock_code=?`,
     args: [String(stock_code).padStart(6, '0')],
   });
@@ -1022,14 +1056,14 @@ export async function getPlan(stock_code) {
 }
 
 export async function updatePlanPrice(stock_code, price, ts = Date.now()) {
-  await client.execute({
+  await exec({
     sql: `UPDATE portfolio_plans SET last_price=?, last_price_at=?, updated_at=? WHERE stock_code=?`,
     args: [Number(price) || 0, Number(ts), Number(ts), String(stock_code).padStart(6, '0')],
   });
 }
 
 export async function listPlans() {
-  const r = await client.execute(`SELECT stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,last_price,last_price_at,created_at,updated_at FROM portfolio_plans ORDER BY updated_at DESC`);
+  const r = await exec(`SELECT stock_code,stock_name,p0,atr,atr_pct,total_invest,plan_json,last_price,last_price_at,created_at,updated_at FROM portfolio_plans ORDER BY updated_at DESC`);
   return r.rows.map((row) => ({
     stock_code: row.stock_code,
     stock_name: row.stock_name,
@@ -1046,7 +1080,7 @@ export async function listPlans() {
 }
 
 export async function removePlan(stock_code) {
-  await client.execute({
+  await exec({
     sql: `DELETE FROM portfolio_plans WHERE stock_code=?`,
     args: [String(stock_code).padStart(6, '0')],
   });
@@ -1058,7 +1092,7 @@ export async function removePlan(stock_code) {
 
 export async function upsertResearchReport({ id, title, broker, industry, source_url, raw_text, tldr, key_points, opportunities, risks, status = 'refined' }) {
   const now = Date.now();
-  await client.execute({
+  await exec({
     sql: `INSERT INTO research_reports(id,title,broker,industry,source_url,raw_text,tldr,key_points,opportunities,risks,status,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
           ON CONFLICT(id) DO UPDATE SET
@@ -1077,7 +1111,7 @@ export async function upsertResearchReport({ id, title, broker, industry, source
 }
 
 export async function listResearchReports() {
-  const r = await client.execute(`SELECT id,title,broker,industry,source_url,raw_text,tldr,key_points,opportunities,risks,status,created_at,updated_at FROM research_reports ORDER BY created_at DESC LIMIT 100`);
+  const r = await exec(`SELECT id,title,broker,industry,source_url,raw_text,tldr,key_points,opportunities,risks,status,created_at,updated_at FROM research_reports ORDER BY created_at DESC LIMIT 100`);
   return r.rows.map((row) => ({
     id: row.id,
     title: row.title,
@@ -1117,7 +1151,7 @@ export async function listResearchReportsFiltered(opts = {}) {
   const whereSql = wheres.length ? 'WHERE ' + wheres.join(' AND ') : ''
   const sql = `SELECT id,title,broker,industry,source_url,raw_text,tldr,key_points,opportunities,risks,status,created_at,updated_at FROM research_reports ${whereSql} ORDER BY created_at DESC LIMIT ?`
   args.push(limit)
-  const r = await client.execute({ sql, args })
+  const r = await exec({ sql, args })
   return r.rows.map((row) => ({
     id: row.id,
     title: row.title,
@@ -1137,7 +1171,7 @@ export async function listResearchReportsFiltered(opts = {}) {
 
 // 各时间窗 + 每个 broker 的计数（前端底部筛选条用）
 export async function countResearchReportsGrouped() {
-  const r = await client.execute('SELECT broker, created_at FROM research_reports')
+  const r = await exec('SELECT broker, created_at FROM research_reports')
   const now = Date.now()
   const byDateRange = { '1d': 0, '1w': 0, '1m': 0, '3m': 0, 'all': 0 }
   const byBroker = {}
@@ -1159,7 +1193,7 @@ export async function countResearchReportsGrouped() {
 }
 
 export async function deleteResearchReport(id) {
-  await client.execute({ sql: `DELETE FROM research_reports WHERE id=?`, args: [String(id)] });
+  await exec({ sql: `DELETE FROM research_reports WHERE id=?`, args: [String(id)] });
 }
 
 // =====================================================
@@ -1218,7 +1252,7 @@ export async function upsertFxbaogaoReports(list) {
 // 缓存 PDF 直链（详情页秒开：命中缓存无需再调 MCP）
 export async function updateFxbaogaoPdfUrl(reportId, url) {
   if (!reportId || !url) return;
-  await client.execute({
+  await exec({
     sql: `UPDATE fxbaogao_reports SET pdf_url=? WHERE report_id=?`,
     args: [String(url).slice(0, 500), Number(reportId)],
   });
@@ -1304,7 +1338,7 @@ export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0,
       f.pub_time DESC
     LIMIT ? OFFSET ?`;
   args.push(...FOREIGN_ORG_LIKE, ...FOREIGN_ORG_LIKE, Math.min(Math.max(Number(limit) || 20, 1), 200), Math.max(Number(offset) || 0, 0));
-  const r = await client.execute({ sql, args });
+  const r = await exec({ sql, args });
   return r.rows.map((row) => ({
     reportId: Number(row.report_id),
     title: String(row.title || ''),
@@ -1325,7 +1359,7 @@ export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0,
 
 // 统计：总数 + 最新入库时间（返回毫秒，与前端 Date.now() 同单位）
 export async function getFxbaogaoStats() {
-  const r = await client.execute('SELECT COUNT(*) AS n, COALESCE(MAX(pub_time),0) AS latest FROM fxbaogao_reports');
+  const r = await exec('SELECT COUNT(*) AS n, COALESCE(MAX(pub_time),0) AS latest FROM fxbaogao_reports');
   const latestSec = Number(r.rows[0]?.latest || 0);
   const latestMs = latestSec >= 1e12 ? latestSec : latestSec * 1000;
   return {
@@ -1336,7 +1370,7 @@ export async function getFxbaogaoStats() {
 
 // 按 report_id 取单条（含 pdf_url 缓存），供详情页「秒开 PDF」用
 export async function getFxbaogaoReportById(reportId) {
-  const r = await client.execute({
+  const r = await exec({
     sql: `SELECT report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,pdf_url,ai_status FROM fxbaogao_reports WHERE report_id=? LIMIT 1`,
     args: [Number(reportId)],
   });
@@ -1358,7 +1392,7 @@ export async function getFxbaogaoReportById(reportId) {
 
 // 未精读总数（摘要/状态展示用）
 export async function maxUnrefinedCount() {
-  const r = await client.execute('SELECT COUNT(*) AS n FROM fxbaogao_reports WHERE ai_status=0');
+  const r = await exec('SELECT COUNT(*) AS n FROM fxbaogao_reports WHERE ai_status=0');
   return Number(r.rows[0]?.n || 0);
 }
 
@@ -1368,7 +1402,7 @@ export async function maxUnrefinedCount() {
 
 export async function upsertFxbaogaoAi({ report_id, title, broker, source_url, raw_text, tldr, key_points, opportunities, risks, status, model, report_type = '', region = '', perspective = '', extract = null }) {
   const now = Date.now();
-  await client.execute({
+  await exec({
     sql: `INSERT INTO fxbaogao_ai(report_id,title,broker,source_url,raw_text,tldr,key_points,opportunities,risks,status,model,report_type,region,perspective,extract_json,created_at,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
           ON CONFLICT(report_id) DO UPDATE SET
@@ -1403,14 +1437,14 @@ export async function upsertFxbaogaoAi({ report_id, title, broker, source_url, r
   const aiStatus = String(status || '') === 'refined-llm' ? 2 : 0;
   // report_type/region/perspective 用 LLM 权威值覆盖启发式回填值；但 LLM 没给值（含 mock 路径）时
   // 必须保留原值，不能用空串覆盖——否则每次进程重启都要重跑一遍 backfill（实测每次刷 1005 行）。
-  await client.execute({
+  await exec({
     sql: `UPDATE fxbaogao_reports SET ai_status=?, report_type=COALESCE(NULLIF(?,''), report_type), region=COALESCE(NULLIF(?,''), region), perspective=COALESCE(NULLIF(?,''), perspective) WHERE report_id=?`,
     args: [aiStatus, String(report_type || '').slice(0, 20), String(region || '').slice(0, 10), String(perspective || '').slice(0, 20), Number(report_id)],
   });
 }
 
 export async function getFxbaogaoAi(report_id) {
-  const r = await client.execute({
+  const r = await exec({
     sql: `SELECT report_id,title,broker,source_url,raw_text,tldr,key_points,opportunities,risks,status,model,report_type,region,perspective,extract_json,created_at,updated_at FROM fxbaogao_ai WHERE report_id=?`,
     args: [Number(report_id)],
   });
@@ -1458,7 +1492,7 @@ export async function searchFxbaogaoByStock(codes = [], names = []) {
     FROM fxbaogao_ai a JOIN fxbaogao_reports r ON a.report_id = r.report_id
     WHERE (${conds.join(' OR ')})
     ORDER BY r.pub_time DESC LIMIT 30`;
-  const r = await client.execute({ sql, args });
+  const r = await exec({ sql, args });
   return r.rows.map((row) => ({
     reportId: Number(row.report_id),
     title: String(row.title || ''),
@@ -1489,7 +1523,7 @@ export async function searchFxbaogaoByStock(codes = [], names = []) {
 export async function listUnrefinedFxbaogao(limit = 20) {
   const cap = Math.min(Math.max(Number(limit) || 20, 1), 100);
   const foreignCase = FOREIGN_ORG_LIKE.map(() => 'org_name LIKE ?').join(' OR ');
-  const r = await client.execute({
+  const r = await exec({
     sql: `SELECT report_id,title,org_name,page_num,pub_time,pub_date,pdf_url FROM fxbaogao_reports
       WHERE ai_status=0
         AND (org_name IS NULL OR (org_name <> '财报' AND org_name <> '公告' AND org_name NOT LIKE '%公告%'))
@@ -1540,7 +1574,7 @@ export async function listUnrefinedFxbaogao(limit = 20) {
 export async function listFxbaogaoDailyCandidates(limit = 300) {
   const cap = Math.min(Math.max(Number(limit) || 100, 1), 500);
   const foreignCase = FOREIGN_ORG_LIKE.map(() => 'org_name LIKE ?').join(' OR ');
-  const r = await client.execute({
+  const r = await exec({
     sql: `SELECT report_id,title,org_name,recommended,pub_time,pub_date,pdf_url,report_type,region
       FROM fxbaogao_reports
       WHERE ai_status=0
@@ -1580,13 +1614,13 @@ function localDayKey() {
 }
 export async function getPdfDownloadsToday() {
   try {
-    const r = await client.execute({ sql: `SELECT cnt FROM fxbaogao_daily_download WHERE day=?`, args: [localDayKey()] });
+    const r = await exec({ sql: `SELECT cnt FROM fxbaogao_daily_download WHERE day=?`, args: [localDayKey()] });
     return Number(r.rows?.[0]?.cnt || 0);
   } catch { return 0; }
 }
 export async function incrPdfDownloadsToday(n = 1) {
   try {
-    await client.execute({
+    await exec({
       sql: `INSERT INTO fxbaogao_daily_download(day,cnt) VALUES(?,?)
         ON CONFLICT(day) DO UPDATE SET cnt=cnt+excluded.cnt`,
       args: [localDayKey(), Math.max(0, Number(n) || 1)],
@@ -1603,13 +1637,13 @@ export async function incrPdfDownloadsToday(n = 1) {
 // 下一轮看门狗能自动补跑；代价是崩溃会重试，故 index.js 侧加了 30 分钟最小重试间隔。
 export async function hasRunDailyJobToday() {
   try {
-    const r = await client.execute({ sql: `SELECT 1 AS x FROM fxbaogao_daily_download WHERE day=? LIMIT 1`, args: [localDayKey()] });
+    const r = await exec({ sql: `SELECT 1 AS x FROM fxbaogao_daily_download WHERE day=? LIMIT 1`, args: [localDayKey()] });
     return r.rows.length > 0;
   } catch { return false; }
 }
 export async function markDailyJobDone() {
   try {
-    await client.execute({
+    await exec({
       sql: `INSERT INTO fxbaogao_daily_download(day,cnt) VALUES(?,0) ON CONFLICT(day) DO NOTHING`,
       args: [localDayKey()],
     });
@@ -1623,7 +1657,7 @@ export async function markDailyJobDone() {
 // 修复落库后新产生的 mock 行 ai_status 已经是 0，所以正常情况下第二次调用返回 0。
 export async function requeueMockRefinements() {
   try {
-    const r = await client.execute(
+    const r = await exec(
       `UPDATE fxbaogao_reports SET ai_status=0
        WHERE ai_status=2 AND report_id IN (SELECT report_id FROM fxbaogao_ai WHERE status='refined-mock')`,
     );
@@ -1636,12 +1670,12 @@ export async function requeueMockRefinements() {
 
 // 将某条研报标记为"精读中"，避免多实例重复消费
 export async function markFxbaogaoAiPending(report_id) {
-  await client.execute({ sql: `UPDATE fxbaogao_reports SET ai_status=1 WHERE report_id=?`, args: [Number(report_id)] });
+  await exec({ sql: `UPDATE fxbaogao_reports SET ai_status=1 WHERE report_id=?`, args: [Number(report_id)] });
 }
 
 // 自愈：把卡在「精读中」的行（PDF 失败/进程中断）重置回未精读队列，供下一轮 pump 重试
 export async function resetStuckFxbaogaoPending() {
-  const r = await client.execute(`UPDATE fxbaogao_reports SET ai_status=0 WHERE ai_status=1`);
+  const r = await exec(`UPDATE fxbaogao_reports SET ai_status=0 WHERE ai_status=1`);
   return r.rowsAffected || 0;
 }
 
@@ -1649,8 +1683,8 @@ export async function resetStuckFxbaogaoPending() {
 export async function cleanupOldFxbaogao(cutoffMs) {
   try {
     const cutoffSec = Math.floor(cutoffMs / 1000);
-    await client.execute({ sql: `DELETE FROM fxbaogao_ai WHERE report_id IN (SELECT report_id FROM fxbaogao_reports WHERE pub_time < ?)`, args: [cutoffSec] });
-    const r = await client.execute({ sql: `DELETE FROM fxbaogao_reports WHERE pub_time < ?`, args: [cutoffSec] });
+    await exec({ sql: `DELETE FROM fxbaogao_ai WHERE report_id IN (SELECT report_id FROM fxbaogao_reports WHERE pub_time < ?)`, args: [cutoffSec] });
+    const r = await exec({ sql: `DELETE FROM fxbaogao_reports WHERE pub_time < ?`, args: [cutoffSec] });
     return r.rowsAffected || 0;
   } catch (e) {
     console.warn('[db] cleanupOldFxbaogao:', e.message?.slice(0, 80));
@@ -1664,7 +1698,7 @@ export async function cleanupOldFxbaogao(cutoffMs) {
 
 export async function upsertStockReport({ stock_code, stock_name, report_json }) {
   const now = Date.now();
-  await client.execute({
+  await exec({
     sql: `INSERT INTO research_stock_reports(stock_code,stock_name,report_json,created_at,updated_at)
           VALUES(?,?,?,?,?)
           ON CONFLICT(stock_code) DO UPDATE SET
@@ -1674,7 +1708,7 @@ export async function upsertStockReport({ stock_code, stock_name, report_json })
 }
 
 export async function listStockReports() {
-  const r = await client.execute(`SELECT stock_code,stock_name,report_json,created_at,updated_at FROM research_stock_reports ORDER BY updated_at DESC`);
+  const r = await exec(`SELECT stock_code,stock_name,report_json,created_at,updated_at FROM research_stock_reports ORDER BY updated_at DESC`);
   return r.rows.map((row) => ({
     stock_code: row.stock_code,
     stock_name: row.stock_name,
@@ -1685,7 +1719,7 @@ export async function listStockReports() {
 }
 
 export async function deleteStockReport(stock_code) {
-  await client.execute({ sql: `DELETE FROM research_stock_reports WHERE stock_code=?`, args: [String(stock_code).padStart(6, '0')] });
+  await exec({ sql: `DELETE FROM research_stock_reports WHERE stock_code=?`, args: [String(stock_code).padStart(6, '0')] });
 }
 
 // =====================================================
@@ -1704,7 +1738,7 @@ for (const p of _SEED) SEED_PROFILES.set(p.stock_code, p);
 
 export async function upsertHoldingProfile({ stock_code, raw_materials, products, customers, overseas_peers, policy_domains, transport, extra_keywords }) {
   const now = Date.now();
-  await client.execute({
+  await exec({
     sql: `INSERT INTO holding_profiles(stock_code,raw_materials,products,customers,overseas_peers,policy_domains,transport,extra_keywords,updated_at)
           VALUES(?,?,?,?,?,?,?,?,?)
           ON CONFLICT(stock_code) DO UPDATE SET
@@ -1721,7 +1755,7 @@ export async function upsertHoldingProfile({ stock_code, raw_materials, products
 }
 
 export async function listHoldingProfiles() {
-  const r = await client.execute(`SELECT stock_code,raw_materials,products,customers,overseas_peers,policy_domains,transport,extra_keywords,updated_at FROM holding_profiles`);
+  const r = await exec(`SELECT stock_code,raw_materials,products,customers,overseas_peers,policy_domains,transport,extra_keywords,updated_at FROM holding_profiles`);
   const dbRows = r.rows.map((row) => ({
     stock_code: row.stock_code,
     raw_materials: jarr(row.raw_materials),
@@ -1751,7 +1785,7 @@ export async function listHoldingProfiles() {
 }
 
 export async function deleteHoldingProfile(stock_code) {
-  await client.execute({ sql: `DELETE FROM holding_profiles WHERE stock_code=?`, args: [String(stock_code).padStart(6, '0')] });
+  await exec({ sql: `DELETE FROM holding_profiles WHERE stock_code=?`, args: [String(stock_code).padStart(6, '0')] });
 }
 
 // 清理旧版采集写入的脏公告行（source_name='t' / 旧 guid 格式 ann:CODE:TS:IDX）
@@ -1760,8 +1794,8 @@ export async function cleanupStaleAnnouncements() {
     // 注意：libSQL 的 execute 传「对象形式」时 args 必填。其内部 stmtToHrana 会执行
     // Object.entries(stmt.args)，args 为 undefined 时抛
     // "Cannot convert undefined or null to object"，语句被静默跳过（本次修复的既有 bug）。
-    await client.execute({ sql: `DELETE FROM news_items WHERE source_name = 't' AND source_channel LIKE 'eastmoney_announcement_%'`, args: [] });
-    await client.execute({ sql: `DELETE FROM news_items WHERE source_channel LIKE 'eastmoney_announcement_%' AND id LIKE 'ann:%:%:%'`, args: [] });
+    await exec({ sql: `DELETE FROM news_items WHERE source_name = 't' AND source_channel LIKE 'eastmoney_announcement_%'`, args: [] });
+    await exec({ sql: `DELETE FROM news_items WHERE source_channel LIKE 'eastmoney_announcement_%' AND id LIKE 'ann:%:%:%'`, args: [] });
     return true;
   } catch (e) {
     console.warn('[db] cleanupStaleAnnouncements 失败:', String(e?.message || e).slice(0, 200));

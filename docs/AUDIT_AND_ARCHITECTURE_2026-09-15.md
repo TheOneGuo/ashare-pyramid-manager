@@ -424,5 +424,25 @@ await withTimeout(runJob('news'), 60_000, { onTimeout: 'abort+reschedule' })
 **验证**：重启后日志由 `skipped` → `done`；`SQL_PARSE_ERROR` 0、`Cannot convert` 0；
 三张表列完整无缺失；`news_items` 4909→4451（清理函数首次生效，删除 458 条旧版脏公告行，属预期）；测试 80/80。
 
-**防范建议**：① 统一封装 `exec(sql, args = [])` 包装器，禁止直接写 `execute({sql})`；
+**防范建议（已实施，见下节）**：① 统一封装 `exec(sql, args = [])` 包装器，禁止直接写 `execute({sql})`；
 ② 迁移类 `catch` 不应无条件静默，至少 `console.warn` 出 `e.message`，避免同类问题再次隐身。
+
+---
+
+## 14. 落地：统一 `exec()` 包装器 + CI 强制校验（同日追加）
+
+**`exec(sql, args = [])`**（`db.js`）：全仓 64 处 `client.execute(...)` 已全部改为 `exec(...)`。
+包装器同时接受 `exec(sql)`、`exec(sql, args)`、`exec({sql, args})`、`exec({sql})` 四种写法，
+**且对「漏传 args」天然免疫**（兜底 `[]`），使上述 bug 从结构上不可能再现。
+
+**强制约束**：项目无 ESLint，故新增 `server/scripts/check-no-raw-execute.mjs`，
+扫描 `server/src` 内的裸 `.execute(`，仅允许 `db.js` 中包装器自身那一次；
+已挂到 `npm run check:db`，可接入 CI。
+经反向验证：注入一处裸调用即被拦截并 `exit 1`（干净时 `exit 0`）。
+
+**迁移 catch 不再无条件静默**：`migrateHoldingsColumns` / `migratePlansColumns` /
+`migrateNewsContent` 现区分「duplicate column（幂等成功，静默）」与「其他错误（warn 出 message）」；
+`execRetry` 也改为复用 `exec(sql, args)`。
+
+**回归验证**：6 个接口全绿；`SQL_PARSE_ERROR`/`Cannot convert`/`TypeError` 均 0；
+`cleanup: done`；spool 持续下降（333→214）；`news_items` 4451→4712 证明写入正常；测试 80/80。
