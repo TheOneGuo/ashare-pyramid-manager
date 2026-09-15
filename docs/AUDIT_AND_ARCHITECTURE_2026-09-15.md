@@ -446,3 +446,38 @@ await withTimeout(runJob('news'), 60_000, { onTimeout: 'abort+reschedule' })
 
 **回归验证**：6 个接口全绿；`SQL_PARSE_ERROR`/`Cannot convert`/`TypeError` 均 0；
 `cleanup: done`；spool 持续下降（333→214）；`news_items` 4451→4712 证明写入正常；测试 80/80。
+
+---
+
+## 15. 落地：spool 目录定位错误修复 —— `%20` 幽灵目录（同日追加）
+
+**现象**：健康检查 `news_write_spool.pending` 长期停在 214 条 / 6.5MB，
+但项目内 `server/.spool/` 根本不存在该文件。
+
+**根因**：`write-guard.js` 用 `path.dirname(new URL(import.meta.url).pathname)` 求目录。
+`import.meta.url` 是已百分号编码的 file URL，`.pathname` 会原样保留 `%20`，
+于是 `fs.mkdirSync(dir, { recursive: true })` 在本机真实目录之外
+**另建了一张字面量带 `%20` 的幽灵目录树**：
+
+```
+~/Library/Application%20Support/TRAE%20SOLO%20CN/ModularData/ai-agent/
+  work-mode-projects/6a92a62cb233b16022eba6b2/server/.spool/news-write-pending.jsonl
+```
+
+**危害**（隐蔽但实质性）：
+1. 「写失败不丢数据」这条兜底实际落在开发者看不见、也不会去检查的位置，
+   一旦需要人工干预补写（spool 超 500 行上限会丢最旧记录）根本无从下手；
+2. 污染用户 `~/Library` 目录（6.5MB 且持续增长）；
+3. 路径依赖：部署到无空格路径（Linux 容器）时表现正常，本地开发反而是坏的，
+   属于「只在开发机复现」的典型坑，难以通过线上现象定位。
+
+**修复**：改用 `node:url` 的 `fileURLToPath`（与 `index.js` / `fxbaogao.ts` 已有写法统一）。
+全仓复扫确认仅此一处，其余 4 处 `import.meta.url` 均已是正确写法。
+
+**数据保全**：先把 214 条积压批次 `cp` 到 `server/.spool/`，
+md5 校验一致（`1203b495…`，214 行）后才删除源文件，再用 `rmdir -p`
+逐级清理空目录（`rmdir` 遇非空自动停止，同级的 discord 数据未被触碰）。
+
+**验证**：重启后 `pending` 从 214 自动降到 184（启动即成功补写 30 批），
+证明新路径读写均正常；9 个接口全 200；幽灵目录未再生；
+`check:db` 通过、jest 80/80。已推送 `6c948c1`。
