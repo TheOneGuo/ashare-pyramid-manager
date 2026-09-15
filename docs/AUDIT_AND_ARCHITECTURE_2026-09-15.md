@@ -481,3 +481,55 @@ md5 校验一致（`1203b495…`，214 行）后才删除源文件，再用 `rmd
 **验证**：重启后 `pending` 从 214 自动降到 184（启动即成功补写 30 批），
 证明新路径读写均正常；9 个接口全 200；幽灵目录未再生；
 `check:db` 通过、jest 80/80。已推送 `6c948c1`。
+
+---
+
+## 16. 落地：前端统一 request() 层 + useCache 缓存 + 启动预取（Q5）
+
+**问题**：三套请求写法并存——`api/market.ts`/`fundflow.ts` 裸 `fetch`、
+`api/portfolio.ts` 自带 `jget()`、`pages/news` 裸 `uni.request`。
+其中**裸 fetch 是跨端真 bug**：微信小程序端没有 `fetch`，行情页与资金流页在微信端直接不可用。
+
+**新增 `src/utils/`**：
+| 文件 | 职责 |
+|---|---|
+| `request.ts` | 统一走 `uni.request`（三端通用）：URL 拼接、超时（默认 15s）、重试、HTTP 状态校验、错误归一化 |
+| `useCache.ts` | TTL 缓存 + 单飞去重 + 容量上限 200（防内存无界增长）+ 前缀失效 + 预取 |
+| `cacheConfig.ts` | 缓存键/TTL 单一来源（避免 `api ↔ prefetch` 循环依赖） |
+| `prefetch.ts` | App 启动静默预热只读接口 |
+
+**重试策略**：`GET` 默认重试 1 次（幂等），写操作默认 0（避免重复提交）；
+只有「网络失败 / 超时 / 5xx」才重试，4xx 不重试（重试也不会变对）；
+错误优先透传服务端 `error` 字段，而不是干巴巴的 `HTTP 500`。
+
+**改造**：`api/portfolio.ts` 47 处 `jget()` 整体改名 `request()`（参数语义不变，零逻辑改动）；
+持仓/角色字典接入缓存，写操作后 `invalidate()` 防脏读。
+
+**顺带修**：`src/utils/env.ts` 有 11 个已入库的 `U+FFFD` 乱码字节，一并修掉；
+`jest.config.js` 补 `@/` 别名映射（否则测试无法 import 项目内模块）。
+
+**测试**：新增 33 条（request 15 + useCache 18），含对抗性场景——
+非法 JSON、4xx 不重试、写操作不重试、失败不写缓存（否则永远卡在失败的 Promise 上）、
+容量淘汰、非 uni 环境兜底。全量 **113/113**，`vue-tsc` **0 错误**。
+
+---
+
+## 17. 落地：3 个索引 + 物化 `fxbaogao_reports.is_foreign`（Q8）
+
+**索引**（均已确认有实际查询支撑）：
+- `research_reports(broker, created_at DESC)` —— 一鱼两吃：既服务
+  `WHERE broker=? ORDER BY created_at DESC`，又是 `countResearchReportsGrouped`
+  的覆盖索引，可**避免回表读取体积巨大的 `raw_text` 全文列**。
+- `portfolio_plans(updated_at DESC)` —— `listPlans()` 固定该排序。
+- `fxbaogao_reports(is_foreign, ai_status)`。
+
+**`is_foreign` 物化**：此前「是否外资」在查询期用 **39 个 `org_name LIKE` 拼 OR** 判定：
+无法走索引、每次全表扫 + 逐行 39 次字符串匹配；同一表达式在 `ORDER BY` 里出现两次，
+每次查询要多传 **78 个绑定参数**；排序表达式只能 filesort。现改为写入时算一次存列，
+三处查询直接用该列。实测回填 **1940 / 13056** 条。
+
+**⚠️ 踩坑记录（值得记住）**：`CREATE INDEX ... ON fxbaogao_reports(is_foreign, ...)`
+**不能写进 SCHEMA**。SCHEMA 先于迁移执行，存量库当时还没有这列，
+会报 `no such column` 被 `initDb` 的 catch 静默吞掉——**结果是索引在存量库上永远建不上**，
+只有新库才有。正确做法是在迁移里加列之后再建索引。
+（这印证了 §14「迁移类 catch 别无条件静默」的必要性：静默让问题又隐身了一次。）
