@@ -13,8 +13,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const HERE = path.dirname(new URL(import.meta.url).pathname);
+// 必须用 fileURLToPath 而非 new URL(import.meta.url).pathname：
+// 后者在路径含空格/中文时会保留 %20 等百分号编码，导致 mkdirSync(recursive)
+// 在本机真实目录之外另行创建一张「字面量 %20」的幽灵目录树
+// （曾把 spool 写到 ~/Library/Application%20Support/... 而不是项目内 server/.spool）。
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SPOOL_DIR = path.resolve(HERE, '..', '.spool');
 
 /** 快讯写路径 spool 文件（server/.spool/news-write-pending.jsonl，已 gitignore） */
