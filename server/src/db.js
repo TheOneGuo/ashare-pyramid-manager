@@ -147,6 +147,9 @@ CREATE TABLE IF NOT EXISTS portfolio_plans (
   PRIMARY KEY (stock_code)
 );
 
+-- listPlans() 固定 ORDER BY updated_at DESC
+CREATE INDEX IF NOT EXISTS idx_plans_updated ON portfolio_plans(updated_at DESC);
+
 -- 研报 AI 精读：外部整篇研报入库（外资/内资券商/行业研究等）
 CREATE TABLE IF NOT EXISTS research_reports (
   id           TEXT PRIMARY KEY,
@@ -165,6 +168,11 @@ CREATE TABLE IF NOT EXISTS research_reports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_research_created ON research_reports(created_at DESC);
+-- (broker, created_at) 复合索引，一鱼两吃：
+--   1) listResearchReportsFiltered 的 WHERE broker = ? ORDER BY created_at DESC；
+--   2) countResearchReportsGrouped 的 SELECT broker, created_at —— 覆盖索引，
+--      可避免回表读取体积巨大的 raw_text 全文列，把全表扫变成索引扫。
+CREATE INDEX IF NOT EXISTS idx_research_broker_created ON research_reports(broker, created_at DESC);
 
 -- fxbaogao 全量研报索引（按时间段分片同步入库，report_id 唯一）
 CREATE TABLE IF NOT EXISTS fxbaogao_reports (
@@ -183,11 +191,15 @@ CREATE TABLE IF NOT EXISTS fxbaogao_reports (
   industry_name TEXT NOT NULL DEFAULT '',  -- fxbaogao 自带行业分类
   region      TEXT NOT NULL DEFAULT '',    -- 研报涉及地区：CN/US/KR/JP/TW/HK/GLOBAL/OTHER（LLM 精读权威，启发式兜底）
   perspective TEXT NOT NULL DEFAULT '',    -- 中资行业研报视角：产业/金融/供应链/技术/订单/认证
+  is_foreign  INTEGER NOT NULL DEFAULT 0,  -- 1=外资/海外机构（物化列，写入时按 FOREIGN_ORG_LIKE 判定）
   created_at  INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_fxbaogao_pub_time ON fxbaogao_reports(pub_time DESC);
 CREATE INDEX IF NOT EXISTS idx_fxbaogao_ai ON fxbaogao_reports(ai_status);
 CREATE INDEX IF NOT EXISTS idx_fxbaogao_type ON fxbaogao_reports(report_type);
+-- 注意：idx_fxbaogao_foreign 不写在这里 —— SCHEMA 先于迁移执行，存量库此时还没有
+-- is_foreign 列，CREATE INDEX 会报 no such column 而静默失败。改由
+-- migrateFxbaogaoIsForeign 在加列之后创建（新库/存量库都能覆盖到）。
 
 -- fxbaogao 研报 AI 精读结果（与原始研报分开存储，report_id 关联）
 CREATE TABLE IF NOT EXISTS fxbaogao_ai (
@@ -252,7 +264,7 @@ export async function initDb() {
   }
   initialized = true;
   // 迁移失败只告警、不抛错：保证 HTTP 服务总能拉起，数据库错误延迟到具体请求时再暴露
-  for (const fn of [migrateHoldingsColumns, migrateNewsContent, migratePlansColumns, migrateFxbaogaoColumns]) {
+  for (const fn of [migrateHoldingsColumns, migrateNewsContent, migratePlansColumns, migrateFxbaogaoColumns, migrateFxbaogaoIsForeign]) {
     try { await fn(); } catch (e) {
       console.warn('[db] migration skipped:', String(e?.message || e).slice(0, 120));
     }
@@ -805,6 +817,56 @@ export async function migrateFxbaogaoColumns() {
   }
 }
 
+/**
+ * 物化 fxbaogao_reports.is_foreign（2026-09-15）。
+ *
+ * 此前「是否外资」在查询期用 39 个 org_name LIKE 拼 OR 判定：
+ *   - 无法走索引，每次全表扫 + 逐行 39 次字符串匹配；
+ *   - 同一个表达式在 ORDER BY 里出现两次，每次查询要多传 78 个绑定参数；
+ *   - 排序表达式无法被索引优化，只能 filesort。
+ * 物化后写入时算一次，查询直接用 f.is_foreign，配合 idx_fxbaogao_foreign 走索引。
+ *
+ * 幂等性：用 PRAGMA table_info 判断列是否存在，不依赖错误文案
+ * （Turso/libSQL 的 duplicate column 文案未必与 SQLite 一致）。
+ * 列已存在 → 直接返回（新库由 SCHEMA 建好；存量库说明上次已回填）。
+ */
+export async function migrateFxbaogaoIsForeign() {
+  let hasColumn = false;
+  try {
+    const info = await exec('PRAGMA table_info(fxbaogao_reports)');
+    hasColumn = (info?.rows || []).some((r) => String(r.name) === 'is_foreign');
+  } catch (e) {
+    console.warn('[db] 读取 fxbaogao_reports 表结构失败，跳过 is_foreign 迁移:', String(e?.message || '').slice(0, 80));
+    return;
+  }
+  if (!hasColumn) {
+    try {
+      await execRetry('ALTER TABLE fxbaogao_reports ADD COLUMN is_foreign INTEGER NOT NULL DEFAULT 0');
+      console.log('[db] migrated fxbaogao_reports +is_foreign');
+    } catch (e) {
+      console.warn('[db] ALTER fxbaogao_reports +is_foreign failed:', String(e?.message || '').slice(0, 80));
+      return;
+    }
+
+    // 首次加列 → 回填存量（只跑一次；新写入的行由 upsertFxbaogaoReports 维护）
+    try {
+      const where = FOREIGN_ORG_LIKE.map(() => 'org_name LIKE ?').join(' OR ');
+      const r = await execRetry(`UPDATE fxbaogao_reports SET is_foreign = 1 WHERE ${where}`, FOREIGN_ORG_LIKE);
+      console.log(`[db] backfilled is_foreign for ${r?.rowsAffected ?? 0} fxbaogao rows`);
+    } catch (e) {
+      console.warn('[db] backfill is_foreign failed:', String(e?.message || '').slice(0, 80));
+    }
+  }
+
+  // 索引：列不管是新建还是已存在，这里都补一次（IF NOT EXISTS 幂等）。
+  // 不放在 SCHEMA 里，是因为 SCHEMA 先于本迁移执行，存量库当时还没这列。
+  try {
+    await execRetry('CREATE INDEX IF NOT EXISTS idx_fxbaogao_foreign ON fxbaogao_reports(is_foreign, ai_status)');
+  } catch (e) {
+    console.warn('[db] CREATE INDEX idx_fxbaogao_foreign failed:', String(e?.message || '').slice(0, 80));
+  }
+}
+
 async function execRetryBatch(stmts, tries = 3) {
   let lastErr;
   for (let i = 0; i < tries; i++) {
@@ -1219,13 +1281,14 @@ export async function upsertFxbaogaoReports(list) {
     const t = Number(r.pubTime || 0);
     const sec = t >= 1e12 ? Math.floor(t / 1000) : t;
     return {
-      sql: `INSERT INTO fxbaogao_reports(report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,pdf_url,ai_status,report_type,industry_name,region,perspective,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      sql: `INSERT INTO fxbaogao_reports(report_id,title,org_name,page_num,pub_time,pub_date,recommended,categories,pdf_url,ai_status,report_type,industry_name,region,perspective,is_foreign,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(report_id) DO UPDATE SET
               title=excluded.title, org_name=excluded.org_name, page_num=excluded.page_num,
               pub_time=excluded.pub_time, pub_date=excluded.pub_date, recommended=excluded.recommended,
               categories=excluded.categories, industry_name=excluded.industry_name,
-              region=excluded.region, perspective=excluded.perspective`,
+              region=excluded.region, perspective=excluded.perspective,
+              is_foreign=excluded.is_foreign`,
       args: [
         Number(r.reportId) || 0,
         String(r.title || '').slice(0, 300),
@@ -1241,6 +1304,7 @@ export async function upsertFxbaogaoReports(list) {
         String(r.industryName || '').slice(0, 60),
         detectFxbaogaoRegion(r.title, r.orgName),
         detectFxbaogaoPerspective(r.title, r.orgName),
+        isForeignFxbaogaoOrg(r.orgName) ? 1 : 0,
         now,
       ],
     };
@@ -1281,7 +1345,8 @@ export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0,
   if (startMs > 0) { wheres.push('f.pub_time >= ?'); args.push(Math.floor(startMs / 1000)); }
   if (endMs > 0) { wheres.push('f.pub_time <= ?'); args.push(Math.floor(endMs / 1000)); }
   const whereSql = 'WHERE ' + wheres.join(' AND ');
-  const foreignCase = FOREIGN_ORG_LIKE.map(() => 'f.org_name LIKE ?').join(' OR ');
+  // 外资判定已物化为 f.is_foreign 列（写入时按 FOREIGN_ORG_LIKE 判定），
+  // 这里不再拼 39 个 OR LIKE —— 每次查询少传 78 个绑定参数，且排序不必逐行做字符串匹配
   const sql = `SELECT f.report_id,f.title,f.org_name,f.page_num,f.pub_time,f.pub_date,f.recommended,f.categories,f.pdf_url,f.ai_status,f.report_type,f.industry_name,f.region,f.perspective
     FROM fxbaogao_reports f
     LEFT JOIN fxbaogao_ai a ON a.report_id = f.report_id
@@ -1291,7 +1356,7 @@ export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0,
       CASE WHEN IFNULL(f.ai_status,0) = 2 THEN 0 ELSE 1 END ASC,
       COALESCE(a.updated_at, 0) DESC,
       -- 1. 外资优先
-      CASE WHEN (${foreignCase}) THEN 0 ELSE 1 END ASC,
+      CASE WHEN f.is_foreign = 1 THEN 0 ELSE 1 END ASC,
       -- 2. 类型+地区层级（外资：中国行业→美国行业→韩日台港行业→中国宏观策略→美国宏观策略→韩日台港宏观策略→个股；中资同层级）
       CASE
         WHEN IFNULL(f.report_type,'') = 'industry' THEN
@@ -1320,7 +1385,7 @@ export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0,
       END ASC,
       -- 3. 中资中国行业研报按视角排序（产业→金融→供应链→技术→订单→认证）
       CASE
-        WHEN (${foreignCase}) = 0 AND IFNULL(f.report_type,'') = 'industry' AND f.region = 'CN' THEN
+        WHEN f.is_foreign = 0 AND IFNULL(f.report_type,'') = 'industry' AND f.region = 'CN' THEN
           CASE f.perspective
             WHEN '产业' THEN 0
             WHEN '金融' THEN 1
@@ -1337,7 +1402,7 @@ export async function listFxbaogaoReports({ offset = 0, limit = 20, startMs = 0,
       -- 5. 时间倒序
       f.pub_time DESC
     LIMIT ? OFFSET ?`;
-  args.push(...FOREIGN_ORG_LIKE, ...FOREIGN_ORG_LIKE, Math.min(Math.max(Number(limit) || 20, 1), 200), Math.max(Number(offset) || 0, 0));
+  args.push(Math.min(Math.max(Number(limit) || 20, 1), 200), Math.max(Number(offset) || 0, 0));
   const r = await exec({ sql, args });
   return r.rows.map((row) => ({
     reportId: Number(row.report_id),
@@ -1522,7 +1587,6 @@ export async function searchFxbaogaoByStock(codes = [], names = []) {
 // 个股研报（report_type='stock'）由前端「持仓和自选个股研报」本地 LLM 即时精读，不入线上队列。
 export async function listUnrefinedFxbaogao(limit = 20) {
   const cap = Math.min(Math.max(Number(limit) || 20, 1), 100);
-  const foreignCase = FOREIGN_ORG_LIKE.map(() => 'org_name LIKE ?').join(' OR ');
   const r = await exec({
     sql: `SELECT report_id,title,org_name,page_num,pub_time,pub_date,pdf_url FROM fxbaogao_reports
       WHERE ai_status=0
@@ -1530,7 +1594,7 @@ export async function listUnrefinedFxbaogao(limit = 20) {
         AND IFNULL(report_type,'') <> 'stock'
       ORDER BY
         -- 与 listFxbaogaoReports 一致：外资优先 → 类型+地区层级 → 中资中国行业视角 → 同档推荐 → 时间倒序
-        CASE WHEN (${foreignCase}) THEN 0 ELSE 1 END ASC,
+        CASE WHEN is_foreign = 1 THEN 0 ELSE 1 END ASC,
         CASE
           WHEN IFNULL(report_type,'') = 'industry' THEN
             CASE region
@@ -1545,7 +1609,7 @@ export async function listUnrefinedFxbaogao(limit = 20) {
           ELSE 30
         END ASC,
         CASE
-          WHEN (${foreignCase}) = 0 AND IFNULL(report_type,'') = 'industry' AND region = 'CN' THEN
+          WHEN is_foreign = 0 AND IFNULL(report_type,'') = 'industry' AND region = 'CN' THEN
             CASE perspective
               WHEN '产业' THEN 0 WHEN '金融' THEN 1 WHEN '供应链' THEN 2 WHEN '技术' THEN 3 WHEN '订单' THEN 4 WHEN '认证' THEN 5 ELSE 6
             END
@@ -1554,7 +1618,7 @@ export async function listUnrefinedFxbaogao(limit = 20) {
         recommended DESC,
         pub_time DESC
       LIMIT ?`,
-    args: [...FOREIGN_ORG_LIKE, ...FOREIGN_ORG_LIKE, cap],
+    args: [cap],
   });
   return r.rows.map((row) => ({
     reportId: Number(row.report_id),
@@ -1573,12 +1637,11 @@ export async function listUnrefinedFxbaogao(limit = 20) {
 // 任务运行时由 LLM 按标题权威判定并重排）。题材筛选（8 大主题）由 LLM 完成。
 export async function listFxbaogaoDailyCandidates(limit = 300) {
   const cap = Math.min(Math.max(Number(limit) || 100, 1), 500);
-  const foreignCase = FOREIGN_ORG_LIKE.map(() => 'org_name LIKE ?').join(' OR ');
   const r = await exec({
     sql: `SELECT report_id,title,org_name,recommended,pub_time,pub_date,pdf_url,report_type,region
       FROM fxbaogao_reports
       WHERE ai_status=0
-        AND (${foreignCase})
+        AND is_foreign = 1
         AND IFNULL(report_type,'') IN ('industry','macro')
       ORDER BY
         CASE
@@ -1590,7 +1653,7 @@ export async function listFxbaogaoDailyCandidates(limit = 300) {
         recommended DESC,
         pub_time DESC
       LIMIT ?`,
-    args: [...FOREIGN_ORG_LIKE, cap],
+    args: [cap],
   });
   return r.rows.map((row) => ({
     reportId: Number(row.report_id),
