@@ -24,6 +24,7 @@ import { fileURLToPath } from 'url';
 import { initDb, getMode, fetchNews, fetchNewsFeed, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, updatePlanPrice, ROLE_LABELS } from './db.js';
 import { enrichHolding, importFromText, importFromFile, fetchQuote, cleanStockName } from './stock-service.js';
 import { registerCorsAndParse, requireAuth, ifindRateLimit } from './middleware.js';
+import { withTimeout } from './write-guard.js';
 import { getProvider } from './providers/index.js';
 import { getCached, setCached } from './cache.js';
 import { computeTrackState, parseTrackPlan } from './track-executor.js';
@@ -97,6 +98,9 @@ registerCorsAndParse(app);
 
 // 刷新互斥锁（防止并发刷新叠加打爆外部源）
 let refreshing = false;
+// 单次全量刷新硬超时（ms）：上游「已连接但不响应」时 Promise 永不 resolve，
+// 若无 deadline，scheduledRefresh 的收尾逻辑不会执行 → 定时器不再续排 → 采集中枢静默死亡。
+const REFRESH_TIMEOUT_MS = Number(process.env.REFRESH_TIMEOUT_MS || 120_000);
 
 let lastRefreshAt = 0;
 let lastRefreshSummary = null;
@@ -890,7 +894,7 @@ app.get('/api/research/fxbaogao/reports', async (req, res) => {
 app.get('/api/research/fxbaogao/summary', async (_req, res) => {
   try {
     const stats = await getFxbaogaoStats().catch(() => ({ total: 0, latestPubTime: 0 }))
-    const unrefined = await listUnrefinedFxbaogao(1)
+    const unrefined = await listUnrefinedFxbaogao(1).catch(() => [])
     // dailyJob：回答「今天这一轮下载+精读到底跑没跑」——ranToday 来自库（进程重启不丢），
     // downloadsToday/budget 反映当日下载额度消耗（cnt 只在「新签发 PDF 直链」时递增）。
     const [ranToday, downloadsToday] = await Promise.all([
@@ -899,7 +903,9 @@ app.get('/api/research/fxbaogao/summary', async (_req, res) => {
     ])
     res.json({
       ok: true, ...stats,
-      unrefinedCount: unrefined.length >= 0 ? (await maxUnrefinedCount()) : 0,
+      // 原写法 `unrefined.length >= 0` 恒为真（死条件），等价于无条件多打一次查询。
+      // 改为：无未精读项时直接为 0，有则再查具体数量（省一次查询且语义正确）。
+      unrefinedCount: unrefined.length > 0 ? (await maxUnrefinedCount().catch(() => 0)) : 0,
       aiStatus: fxbaogaoJobStatus(),
       dailyJob: { ranToday, downloadsToday, budget: DAILY_PDF_BUDGET, hour: DAILY_JOB_HOUR },
     })
@@ -1531,24 +1537,36 @@ async function main() {
   // 定时刷新：自调度 setTimeout，每次执行后按当前时段重新算间隔，避免启动后永久不变
   let refreshTimer = null;
   async function scheduledRefresh() {
-    try {
-      const holdings = await listHoldingsSafe(8000);
-      const codes = holdings.map((h) => h.stock_code);
-      const summary = await refreshAll({
-        db: { upsertNewsItems, recordSourceError, cleanupOldNews },
-        mode: MODE,
-        holdingCodes: codes,
-      });
-      lastRefreshAt = Date.now();
-      lastRefreshSummary = summary;
-      const intervalSec = refreshIntervalSeconds();
-      console.log(`[server] refresh done: telegram=${summary.telegram.items}, ann=${summary.announcements.items}, news=${summary.holdings_news.items}  next=${refreshLabel()}`);
-    } catch (e) {
-      console.warn(`[server] scheduled refresh failed: ${e.message}`);
-    } finally {
-      const intervalSec = Math.max(60, refreshIntervalSeconds());
-      refreshTimer = setTimeout(scheduledRefresh, intervalSec * 1000);
+    // 与手动刷新共用同一把互斥锁：此前定时循环绕过该锁，可与手动刷新并发双刷
+    if (refreshing) {
+      console.warn('[server] scheduled refresh skipped: another refresh already in progress');
+    } else {
+      refreshing = true;
+      try {
+        const holdings = await listHoldingsSafe(8000);
+        const codes = holdings.map((h) => h.stock_code);
+        // 硬超时：catch 只能接 reject，接不住「挂起」。超时即本轮回退，收尾逻辑照常执行。
+        const summary = await withTimeout(
+          refreshAll({
+            db: { upsertNewsItems, recordSourceError, cleanupOldNews },
+            mode: MODE,
+            holdingCodes: codes,
+          }),
+          REFRESH_TIMEOUT_MS,
+          'refreshAll',
+        );
+        lastRefreshAt = Date.now();
+        lastRefreshSummary = summary;
+        console.log(`[server] refresh done: telegram=${summary.telegram.items}, ann=${summary.announcements.items}, news=${summary.holdings_news.items}  next=${refreshLabel()}`);
+      } catch (e) {
+        console.warn(`[server] scheduled refresh failed: ${e?.message || e}`);
+      } finally {
+        refreshing = false;
+      }
     }
+    // 关键自愈：无论成功/失败/跳过/超时，都必须续排下一次，否则采集中枢永久停摆
+    const intervalSec = Math.max(60, refreshIntervalSeconds());
+    refreshTimer = setTimeout(scheduledRefresh, intervalSec * 1000);
   }
   refreshTimer = setTimeout(scheduledRefresh, Math.max(60, refreshIntervalSeconds()) * 1000);
 

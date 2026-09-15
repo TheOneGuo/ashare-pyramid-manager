@@ -107,21 +107,26 @@ export function gapRange(
   k: number,
   is20: boolean = false,
 ): { lo: number; hi: number } {
+  // 防御：k 为 NaN/Infinity 时会让「加仓间距」整体变 NaN，进而污染全部档位价格
+  const kk = Number.isFinite(k) ? k : 0;
   let lo = GAP_LO_PCT;
   let hi = GAP_HI_PCT;
   if (is20) {
     lo += GAP20_ADD_LO;
     hi += GAP20_ADD_HI;
   }
+  const v = lo + kk * (hi - lo);
   return {
-    lo: lo + k * (hi - lo),
-    hi: lo + k * (hi - lo), // 单点返回（与 Python 版一致）
+    lo: v,
+    hi: v, // 单点返回（与 Python 版一致）
   };
 }
 
 /** 四档止盈价（相对首笔开仓价） */
 export function tpPrices(p0: number, k: number): number[] {
-  return TP_PCT.map(([lo, hi]) => r2(p0 * (lo + k * (hi - lo))));
+  const p = Number.isFinite(p0) ? p0 : 0;
+  const kk = Number.isFinite(k) ? k : 0;
+  return TP_PCT.map(([lo, hi]) => r2(p * (lo + kk * (hi - lo))));
 }
 
 // ============================================================================
@@ -319,12 +324,16 @@ export function computeAtr14(bars: Bar[]): number | null {
   const seg = bars.slice(-15).slice(1);
   const trs: number[] = [];
   for (const b of seg) {
-    const prev = b.prev_close ?? b.close ?? 0;
+    // 防御：部分数据源会给出 null/缺失的 prev_close，或脏数据 NaN。
+    // 一旦 NaN 进入 trs，Math.max 会把 NaN 传播到 ATR，再扩散到整个加仓方案。
+    const prevRaw = b.prev_close ?? b.close ?? 0;
+    if (!Number.isFinite(b.high) || !Number.isFinite(b.low) || !Number.isFinite(prevRaw)) continue;
     const tr = Math.max(
       b.high - b.low,
-      Math.abs(b.high - prev),
-      Math.abs(b.low - prev),
+      Math.abs(b.high - prevRaw),
+      Math.abs(b.low - prevRaw),
     );
+    if (!Number.isFinite(tr)) continue;
     trs.push(tr);
   }
   if (!trs.length) return null;
@@ -482,6 +491,15 @@ export function computePlan(
   adjustPct: number = 0,
   code: string = '',
 ): PlanResult {
+  // 输入净化（对抗性场景）：NaN / Infinity 会沿
+  //   ATR% → 自适应 K → 加仓间距 → 各档价格/仓位 → 总投资
+  // 一路传导，最终让整个方案静默变成 NaN（界面拿到 NaN 后表现为空白或错乱）。
+  // 算法层统一把非有限数退化为 0 —— 业务合法性由调用方校验，这里只保证「绝不吐 NaN」。
+  p0 = Number.isFinite(p0) ? p0 : 0;
+  atr = Number.isFinite(atr) ? atr : 0;
+  capital = Number.isFinite(capital) ? capital : 0;
+  feeWan = Number.isFinite(feeWan) ? feeWan : 0;
+
   let adj = Number(adjustPct || 0);
   if (Number.isNaN(adj)) adj = 0;
   adj = Math.max(-ALLOC_ADJUST_PCT, Math.min(ALLOC_ADJUST_PCT, adj));

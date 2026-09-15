@@ -17,6 +17,9 @@ const API_KEY = (env.LLM_API_KEY || '').trim()
 //   LLM_BASE_URL=https://gpt-agent.cc/v1            → 拼 https://gpt-agent.cc/v1/chat/completions
 //   LLM_BASE_URL=https://gpt-agent.cc/v1/           → 同上
 const RAW_BASE = (env.LLM_BASE_URL || 'https://gpt-agent.cc/v1').trim().replace(/\/+$/, '')
+// LLM 调用必须自带超时：judgeFxbaogaoTitlesByLlm 被每日任务直接调用（无外层超时包裹），
+// 端点挂起时该任务会永久 pending，只能等 30 分钟看门狗重试。
+const FETCH_TIMEOUT_MS = Number(env.LLM_TIMEOUT_MS || 90_000)
 // 如果用户已经写了 /v1，就不再拼；否则拼 /v1
 const BASE_URL = /\/v\d+$/i.test(RAW_BASE) ? RAW_BASE : `${RAW_BASE}/v1`
 const MODEL = (env.LLM_MODEL || 'MiniMax-M3').trim()
@@ -58,6 +61,7 @@ export async function chatJson<T = any>(args: ChatJsonArgs): Promise<T | null> {
         Authorization: `Bearer ${API_KEY}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     })
     if (!r.ok) {
       // 不抛错，返回 null 让上层走兜底

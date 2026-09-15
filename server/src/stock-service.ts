@@ -19,10 +19,20 @@ async function fetchText(url: string): Promise<string> {
   return new TextDecoder('gbk').decode(buf)
 }
 
+// 市场前缀判定。
+// 原实现只判 `6 → sh，否则 sz`，导致 5(沪市ETF/LOF，如 510300)、9(沪市B股)、
+// 11/12(沪市债券/可转债) 被错打成 sz，腾讯行情取不到数据 → 合法持仓导入失败。
+export function marketPrefix(code: string): 'sh' | 'sz' | 'bj' {
+  const c = String(code).padStart(6, '0')
+  if (/^[48]/.test(c)) return 'bj' // 北交所（腾讯行情用 bj 前缀）
+  if (/^(6|5|9|11|12)/.test(c)) return 'sh' // 沪市：主板 / ETF / B股 / 债券
+  return 'sz' // 深市：0 主板、3 创业板
+}
+
 // 腾讯行情单只：返回 {name, price} 或 null
 export async function fetchQuote(code: string): Promise<{ name: string; price: number } | null> {
   const c = String(code).padStart(6, '0')
-  const prefix = c.startsWith('6') ? 'sh' : 'sz'
+  const prefix = marketPrefix(c)
   const url = `https://qt.gtimg.cn/q=${prefix}${c}`
   try {
     const txt = await fetchText(url)
@@ -102,7 +112,7 @@ export async function enrichHolding(raw: RawHolding): Promise<EnrichedHolding> {
     code = r.code
     name = r.name || name
   }
-  const market = code.startsWith('6') ? 'SH' : 'SZ'
+  const market = marketPrefix(code).toUpperCase() as 'SH' | 'SZ' | 'BJ'
   if (!name || name === code) {
     const q = await fetchQuote(code)
     if (q) name = q.name
@@ -145,7 +155,9 @@ export function parseCsvHoldings(text: string): RawHolding[] {
     let shares = NaN
     for (const cell of cells) {
       if (/^\d{6}$/.test(cell)) code = cell
-      else if (cnNum(cell) === 0 && /\D/.test(cell)) name += (name ? ' ' : '') + cell
+      // 原判据 `cnNum(cell) === 0` 失效：cnNum("五粮液") 为 NaN，NaN === 0 为 false，
+      // 导致纯中文名称被当成成本价，最终整行被丢弃。改为「非有限数即视为名称」。
+      else if (!Number.isFinite(cnNum(cell)) && /\D/.test(cell)) name += (name ? ' ' : '') + cell
       else if (Number.isNaN(cost)) cost = cnNum(cell)
       else if (Number.isNaN(shares)) shares = cnNum(cell)
     }

@@ -22,11 +22,15 @@ const SINA_HEADERS = {
   Referer: 'https://finance.sina.com.cn/',
 };
 
+// 所有外部 fetch 必须带超时：上游「已连接但不响应」会让 Promise 永久挂起，
+// 进而使调用方 refreshAll 永不 resolve → 定时刷新不再续排（历史真实故障）。
+const FETCH_TIMEOUT_MS = Number(process.env.MACRO_FETCH_TIMEOUT_MS || 15_000);
+
 // 把 eastmoney 全市场期货行情转成新闻条目（命中原材料关键词即可关联持仓）
 export async function fetchCommoditySnapshots({ limit = 300 } = {}) {
   try {
     const url = `https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=${Math.min(500, limit)}&fs=m:114&fields=f12,f13,f14,f2,f3,f4`;
-    const r = await fetch(url, { headers: EM_HEADERS });
+    const r = await fetch(url, { headers: EM_HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     const j = await r.json();
     const diff = (j && j.data && j.data.diff) || {};
     const rows = Object.values(diff);
@@ -62,7 +66,7 @@ export async function fetchCommoditySnapshots({ limit = 300 } = {}) {
 export async function fetchSinaRoll({ num = 30 } = {}) {
   try {
     const url = `https://feed.mix.sina.com.cn/api/roll/get?pageid=153&lid=2509&k=&num=${num}&r=1`;
-    const r = await fetch(url, { headers: SINA_HEADERS });
+    const r = await fetch(url, { headers: SINA_HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     const j = await r.json();
     const list = (j && j.result && j.result.list) || [];
     const items = [];
@@ -93,7 +97,7 @@ export async function fetchSinaRoll({ num = 30 } = {}) {
 export async function fetchBdiIndex() {
   try {
     const url = 'https://push2.eastmoney.com/api/qt/stock/get?secid=100.BDI&fields=f43,f57,f58,f169';
-    const r = await fetch(url, { headers: EM_HEADERS });
+    const r = await fetch(url, { headers: EM_HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     const j = await r.json();
     const d = j && j.data;
     if (!d || !d.f58) return [];
@@ -121,7 +125,7 @@ export async function fetchBdiIndex() {
 const CSRC_POLICY_URL = 'http://www.csrc.gov.cn/csrc/c100039/common_list_2.shtml';
 export async function fetchCsrcPolicy({ num = 15 } = {}) {
   try {
-    const r = await fetch(CSRC_POLICY_URL, { headers: EM_HEADERS });
+    const r = await fetch(CSRC_POLICY_URL, { headers: EM_HEADERS, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     const html = await r.text();
     // 提取 <a ...>标题</a> 且 href 含 common 的条目
     const out = [];
