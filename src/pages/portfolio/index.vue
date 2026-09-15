@@ -741,6 +741,25 @@ async function loadPlans() {
         stock_name: p.stock_name || (h ? h.short_name : '') || code,
       }
     })
+    // 名称仍等于代码 => 说明没解析出真名（历史数据或行情缺失）。
+    // 用与「拟新买标的」同款的 resolveStockCode 补真名，并回写后端让数据自愈。
+    // 注意：不能在模板里裸渲染 stock_name，否则名称缺失时就只剩代码，用户无从判断标的。
+    const needName = planItems.value.filter((p: any) => !p.stock_name || p.stock_name === p.stock_code)
+    if (needName.length) {
+      let healed = 0
+      await Promise.all(needName.map(async (p: any) => {
+        try {
+          const rr: any = await resolveStockCode(p.stock_code)
+          if (rr && rr.ok && rr.name) {
+            p.stock_name = rr.name
+            healed++
+            // 回写后端（静默失败不阻塞 UI），下次加载即自带名称
+            try { await addPlan({ stock_code: p.stock_code, stock_name: rr.name, p0: p.p0, atr: p.atr, plan_json: p.plan_json }) } catch { /* ignore */ }
+          }
+        } catch { /* ignore */ }
+      }))
+      if (healed) console.log('[plans] 已补全名称', healed, '条')
+    }
     if (planItems.value.length && !trackSelected.value) onTrackSelect(planItems.value[0].stock_code)
   } catch (e) { console.warn('[plans] load failed', e) }
 }

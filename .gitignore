@@ -80,3 +80,7 @@ docs/verify/write-fxbaogao-env.ps1
 server/.verify/
 server/undefined/
 turso_pull.sqlite3
+
+# 持仓备份与验证脚手架（2026-09-14）
+backups/
+server/.verify-track.sqlite3

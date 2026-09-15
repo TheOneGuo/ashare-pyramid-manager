@@ -22,11 +22,11 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb, getMode, fetchNews, fetchNewsFeed, fetchNewsSources, upsertNewsItems, recordSourceError, cleanupOldNews, cleanupStaleAnnouncements, listHoldingProfiles, upsertHoldingProfile, deleteHoldingProfile, upsertHolding, removeHolding, listHoldings, importHoldings, listRecommendations, upsertRecommendation, removeRecommendation, bulkSetRecommendations, compareWithRole, updatePlanPrice, ROLE_LABELS } from './db.js';
-import { enrichHolding, importFromText, importFromFile, fetchQuote } from './stock-service.js';
+import { enrichHolding, importFromText, importFromFile, fetchQuote, cleanStockName } from './stock-service.js';
 import { registerCorsAndParse, requireAuth, ifindRateLimit } from './middleware.js';
 import { getProvider } from './providers/index.js';
 import { getCached, setCached } from './cache.js';
-import { computeTrackState } from './track-executor.js';
+import { computeTrackState, parseTrackPlan } from './track-executor.js';
 import { refreshAll, refreshIntervalSeconds, refreshLabel, labelForInterval, CHANNELS, newsWriteSpoolStats } from './news-collector.js';
 import { handleAnalyze } from './portfolio-analyzer.js';
 import { handleExtract } from './portfolio-extract.js';
@@ -447,6 +447,17 @@ app.get('/api/holdings', async (_req, res) => {
   }
 });
 
+// 计划跟踪推导状态（只读参考）。注意：这里的 derived_* 是「技术面口径」推算值，
+// 不代表用户实盘持仓 —— 实盘数据只在 /api/holdings。
+app.get('/api/track/state', async (_req, res) => {
+  try {
+    const items = Array.from(trackStateSnapshot.values());
+    res.json({ ok: true, count: items.length, items, note: 'derived_* 为技术面推算，仅供参考；实盘以 /api/holdings 为准' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 app.post('/api/holdings', requireAuth, async (req, res) => {
   try {
     const { stock_code, short_name, market, shares, cost_basis } = req.body || {};
@@ -632,9 +643,18 @@ app.post('/api/portfolio/plans', requireAuth, async (req, res) => {
     let ok = 0;
     for (const it of items) {
       if (!it || !it.stock_code || !it.plan_json) continue;
+      // 服务端兜底补名称：前端可能只传了代码（或名称解析失败传空串）。
+      // 若放任空名称落库，方案/跟踪列表就只剩代码，且历史数据不会自愈。
+      // 这里统一用 cleanStockName(fetchQuote(...)) 补全，与持仓富化同一套口径。
+      let name = cleanStockName(it.stock_name, it.stock_code);
+      if (!name) {
+        const q = await fetchQuote(it.stock_code);
+        name = cleanStockName(q && q.name, it.stock_code);
+      }
       await upsertPlan({
         stock_code: it.stock_code,
-        stock_name: it.stock_name || '',
+        // 万一行情也拿不到，退化为代码本身，保证前端永远有可读文本（与 news 页 || code 同策略）
+        stock_name: name || String(it.stock_code).padStart(6, '0'),
         p0: it.p0 || (it.plan_json.rows && it.plan_json.rows[0] && it.plan_json.rows[0].price) || 0,
         atr: it.atr || 0,
         atr_pct: it.plan_json.atr_pct || 0,
@@ -1554,29 +1574,53 @@ async function main() {
 // 持仓方案跟踪：持续采集实时价 → 到价位自动执行 → 写回已有持仓列表
 // 间隔 60s（与行情刷新解耦，独立轻量轮询）
 // =====================================================
+// 持仓方案跟踪：持续采集实时价 → 到价位自动执行 → 写回已有持仓列表
+// 间隔 60s（与行情刷新解耦，独立轻量轮询）
+//
+// 【口径约定 · 2026-09-14 用户决策】
+// portfolio_holdings = 用户「实盘持仓」的唯一真相源，只由用户录入/导入修改。
+// 本循环的 computeTrackState 推导结果属于「技术面参考」，【一律不得回写持仓表】。
+// 历史教训：本循环曾以技术面口径 upsert 持仓，把用户实盘「招商银行 300 股」
+// 覆盖成计划推导的 2400 股（且因字段名 bug 长期静默失败，修复后才暴露覆盖）。
+// 因此这里只更新计划自身的 last_price，并把推导状态打到日志/内存快照供前端只读展示。
+// =====================================================
 const TRACK_POLL_MS = 60_000;
+
+/** 最近一轮 track 推导结果（只读快照，供 /api/track/state 等只读接口消费） */
+const trackStateSnapshot = new Map();
 
 async function runTrackOnce() {
   try {
     const plans = await listPlans();
     if (!plans.length) return;
-    for (const p of plans) {
+    for (const raw of plans) {
+      // 单条计划解析失败只跳过这一条，不中断整批（parseTrackPlan 内部已 try/catch JSON.parse）
+      const p = parseTrackPlan(raw);
+      if (!p) {
+        console.warn('[track] 跳过无法解析的计划:', raw?.stock_code);
+        continue;
+      }
       const code = p.stock_code;
       const q = await fetchQuote(code);
       if (!q || !q.price) continue;
+      // 唯一允许的写操作：更新「计划」自己的最新价（不碰持仓表）
       await updatePlanPrice(code, q.price, Date.now());
       const state = computeTrackState(p, q.price);
-      // 未到建仓价前不写入持仓（避免把持仓清零），清仓时保留 0 股记录
-      if (!state.opened && !state.cleared) continue;
-      await importHoldings([{
-        code,
-        name: p.stock_name || q.name,
-        cost: state.avg_cost || p.p0,
-        shares: state.shares,
-        current_price: q.price,
-      }]);
+      // 推导结果仅存内存快照，供只读展示；绝不 upsert 到 portfolio_holdings
+      trackStateSnapshot.set(code, {
+        stock_code: code,
+        stock_name: cleanStockName(p.stock_name || q.name, code),
+        price: q.price,
+        opened: state.opened,
+        cleared: state.cleared,
+        // 技术面口径推导值（参考用，非用户实盘）
+        derived_shares: state.shares,
+        derived_avg_cost: state.avg_cost,
+        executed_count: state.executed_indices.length,
+        updated_at: Date.now(),
+      });
       if (state.cleared) {
-        console.log(`[track] ${code} 已清仓（实时价 ${q.price}）`);
+        console.log(`[track] ${code} 计划已清仓（实时价 ${q.price}）`);
       }
     }
   } catch (e) {

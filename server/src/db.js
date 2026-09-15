@@ -572,8 +572,10 @@ export async function upsertHolding({ stock_code, short_name, market, shares, co
       String(stock_code).padStart(6, '0'),
       String(short_name || '').slice(0, 40),
       String(market || '').slice(0, 10),
-      // 防御：shares 必须为正有限整数，否则抛错（由 importHoldings 的 try/catch 跳过，不污染 DB）
-      (() => { const n = Number(shares); if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) throw new Error('shares 必须为正整数'); return n; })(),
+      // 防御：shares 必须为非负整数（0 是合法值 = 已清仓，保留记录以便前端展示）；
+      // 负数/小数/NaN 才抛错（由 importHoldings 的 try/catch 跳过，不污染 DB）。
+      // 注意：此前校验为 n <= 0，导致 track 路径的「清仓写回 0 股」永远被拒绝。
+      (() => { const n = Number(shares); if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) throw new Error('shares 必须为非负整数'); return n; })(),
       // cost_basis 允许为 0，但必须是有限数字
       (() => { const n = Number(cost_basis); if (!Number.isFinite(n) || n < 0) throw new Error('cost_basis 必须为非负数字'); return n; })(),
       current_price === undefined ? null : Number(current_price),

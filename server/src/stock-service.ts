@@ -61,6 +61,19 @@ export async function resolveCodeByName(name: string): Promise<{ code: string; m
 
 // ---------- 富化单条持仓 ----------
 
+/**
+ * 归一化股票名称。
+ * 行情源（腾讯 qt.gtimg.cn）对部分标的会在汉字间插入排版空格（实测「五 粮 液」），
+ * 与用户手动录入/导入的「五粮液」不一致。若直接落库，60s 轮询会周期性把干净名称覆盖成带空格版本。
+ * 规则：去掉所有空白字符；仅剩 6 位数字（即没解析出名称）时回退为空串，交由上层用代码兜底。
+ */
+export function cleanStockName(raw?: string | null, code?: string): string {
+  const s = String(raw ?? '').replace(/\s+/g, '').trim()
+  if (!s) return ''
+  if (/^\d{6}$/.test(s) && s === String(code ?? '').padStart(6, '0')) return ''
+  return s
+}
+
 export interface RawHolding {
   code?: string
   name?: string
@@ -94,6 +107,7 @@ export async function enrichHolding(raw: RawHolding): Promise<EnrichedHolding> {
     const q = await fetchQuote(code)
     if (q) name = q.name
   }
+  name = cleanStockName(name, code)
   const q = await fetchQuote(code)
   if (!q) throw new Error(`无法获取 ${code} 的实时行情`)
   const price = q.price

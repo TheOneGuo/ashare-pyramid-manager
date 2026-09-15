@@ -33,9 +33,36 @@ export interface TrackPlan {
   plan_json: { rows?: any[]; tp_rows?: any[]; [k: string]: any };
 }
 
+/**
+ * 安全解析一条来自 DB 的计划记录。
+ * 背景：plan_json 是 TEXT 列，转义异常/历史写入可能留下非法 JSON。
+ * 若直接在循环里 JSON.parse，一条坏计划会抛出并让整个 track 循环提前退出，
+ * 导致该批次内其余所有计划都不同步行权（bug 会被放大成全局故障）。
+ * 因此：解析失败返回 null，由调用方单独跳过并告警。
+ */
+export function parseTrackPlan(row: any): TrackPlan | null {
+  if (!row || !row.stock_code) return null;
+  let pj = row.plan_json;
+  if (typeof pj === 'string') {
+    try {
+      pj = JSON.parse(pj);
+    } catch {
+      return null;
+    }
+  }
+  if (!pj || typeof pj !== 'object') return null;
+  const p0 = Number(row.p0);
+  return {
+    stock_code: String(row.stock_code),
+    stock_name: String(row.stock_name ?? ''),
+    p0: Number.isFinite(p0) ? p0 : 0,
+    atr_pct: Number(row.atr_pct) || 0,
+    plan_json: pj,
+  };
+}
+
 /** 与前端 buildSteps 对齐：生成完整步骤序列（不含 done 态） */
-export function buildTrackSteps(plan: TrackPlan): PlanStep[] {
-  const rows = plan.plan_json?.rows || [];
+export function buildTrackSteps(plan: TrackPlan): PlanStep[] {  const rows = plan.plan_json?.rows || [];
   const tp = plan.plan_json?.tp_rows || [];
   const steps: PlanStep[] = [];
   let cum = 0;
