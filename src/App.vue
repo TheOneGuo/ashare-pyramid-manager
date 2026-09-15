@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { onLaunch, onShow, onHide } from "@dcloudio/uni-app";
+import { prefetchAll } from "@/utils/prefetch";
 onLaunch(() => {
   console.log("App Launch");
+  // 启动即静默预热只读数据（持仓/资金流/角色字典），用户切 Tab 时直接命中缓存，避免等待后端读库
+  prefetchAll();
 });
 onShow(() => {
   console.log("App Show");

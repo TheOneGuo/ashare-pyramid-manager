@@ -112,14 +112,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { onShow, onPullDownRefresh } from '@dcloudio/uni-app'
-import { env } from '@/utils/env'
-import { listHoldingProfiles, upsertHoldingProfile } from '@/api/portfolio'
+import { listHoldings, listHoldingProfiles, upsertHoldingProfile } from '@/api/portfolio'
+import { getJson } from '@/utils/request'
 // H5 端 uni-app 不会自动挂载 custom-tab-bar，需手动引入；WeChat 端走 custom:true 自动挂载，此处按条件跳过避免重复
 const isH5 = ref(typeof window !== 'undefined')
 import TabBarComp from '@/custom-tab-bar/index.vue'
-
-// dev 阶段 vite proxy 把 /api 转到 9999；生产环境用 API_BASE_URL（uniCloud / Express）
-const API_BASE = (env.API_BASE_URL && env.API_BASE_URL.length > 0) ? env.API_BASE_URL : ''
+// URL 拼接/超时/重试/错误归一化统一由 utils/request.ts 负责，本页不再自己拼 API_BASE
 
 interface RawNews {
   id: string
@@ -185,24 +183,17 @@ function normalizeCode(c: string) {
 
 async function loadHoldings() {
   try {
+    // 走 api/portfolio 的 listHoldings（带 30s 缓存 + 统一请求层），与 portfolio 页共用同一份数据
+    const list = await listHoldings()
+    holdings.value = (list || []).map((h: any) => ({
+      stock_code: normalizeCode(h.stock_code),
+      short_name: h.short_name || '',
+    }))
     // #ifdef H5
-    console.log('[news] GET', `${API_BASE}/api/holdings`)
+    console.log('[news] holdings loaded:', JSON.stringify(holdings.value))
     // #endif
-    const res = await uni.request({ url: `${API_BASE}/api/holdings`, method: 'GET', timeout: 12000 })
-    const data: any = (res as any).data
-    if (data && data.ok && Array.isArray(data.items)) {
-      holdings.value = data.items.map((h: any) => ({
-        stock_code: normalizeCode(h.stock_code),
-        short_name: h.short_name || '',
-      }))
-      // #ifdef H5
-      console.log('[news] holdings loaded:', JSON.stringify(holdings.value))
-      // #endif
-    } else {
-      console.warn('[news] holdings payload bad', data)
-    }
   } catch (e: any) {
-    console.warn('[news] loadHoldings failed', e?.errMsg || e?.message)
+    console.warn('[news] loadHoldings failed', e?.message || e?.errMsg)
     holdings.value = []
   }
   // 同步持仓关键词画像
@@ -282,15 +273,13 @@ async function fetchNews(showLoading = true, scope: 'all' | 'holding' | null = n
   const useScope = scope || activeScope.value
   if (showLoading) loading.value = true
   try {
-    const q = useScope === 'holding' ? 'limit=100&holding=1' : 'limit=100'
-    const url = `${API_BASE}/api/news?${q}`
+    const query = useScope === 'holding' ? { limit: 100, holding: 1 } : { limit: 100 }
     if (useScope === 'holding') holdingTotal.value = 0
     // #ifdef H5
-    console.log('[news] GET', url)
+    console.log('[news] GET /api/news', JSON.stringify(query))
     // #endif
-    // 超时放宽到 20s：后端读 Turso 偶发变慢，8s 会在数据返回前先超时报错
-    const res = await uni.request({ url, method: 'GET', timeout: 20000 })
-    const data: any = (res as any).data
+    // 新闻流要求新鲜，不进缓存；但超时放宽到 20s（后端读 Turso 偶发变慢，8s 会先超时报错）
+    const data: any = await getJson('/api/news', query, { timeout: 20000 })
     if (data && data.ok && Array.isArray(data.items)) {
       items.value = data.items.map((it: RawNews) => mapItem(it))
       if (useScope === 'holding') holdingTotal.value = data.count ?? data.items.length

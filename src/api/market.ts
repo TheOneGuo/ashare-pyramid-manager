@@ -1,7 +1,10 @@
 // api/market.ts — 行情数据（历史K线/北向/龙虎榜/F10），后端经 provider 抽象层取数
-import { env } from '@/utils/env'
-
-const API_BASE = env.API_BASE_URL && env.API_BASE_URL.length > 0 ? env.API_BASE_URL : ''
+//
+// 2026-09-15 重构：原先这里用裸 fetch —— 微信小程序端没有 fetch，这些接口在微信端直接不可用。
+// 现统一走 utils/request.ts（uni.request，三端通用），并接入 useCache 做 TTL 缓存 + 单飞去重。
+import { getJson } from '@/utils/request'
+import { cached } from '@/utils/useCache'
+import { CACHE_KEYS, CACHE_TTL_MS } from '@/utils/cacheConfig'
 
 export interface KLine {
   date: string
@@ -59,34 +62,33 @@ export interface MarketResp<T> {
   error?: string
 }
 
-function build(path: string): string {
-  if (API_BASE) return API_BASE.replace(/\/$/, '') + path
-  return path
-}
-
 export async function fetchHist(code: string, opts?: { limit?: number; start?: string; end?: string; adjust?: string }): Promise<MarketResp<KLine>> {
-  const p = new URLSearchParams({ code })
-  if (opts?.limit) p.set('limit', String(opts.limit))
-  if (opts?.start) p.set('start', opts.start)
-  if (opts?.end) p.set('end', opts.end || '20500101')
-  if (opts?.adjust) p.set('adjust', opts.adjust)
-  const resp = await fetch(build('/api/market/hist?' + p.toString()))
-  return resp.json()
+  const limit = opts?.limit ?? 0
+  const adjust = opts?.adjust || ''
+  const query: Record<string, any> = { code }
+  if (opts?.limit) query.limit = String(opts.limit)
+  if (opts?.start) query.start = opts.start
+  if (opts?.end) query.end = opts.end || '20500101'
+  if (opts?.adjust) query.adjust = opts.adjust
+
+  const key = `${CACHE_KEYS.hist(code, limit, adjust)}:${opts?.start || ''}:${opts?.end || ''}`
+  return cached(key, CACHE_TTL_MS.market, () => getJson<MarketResp<KLine>>('/api/market/hist', query))
 }
 
 export async function fetchNorth(limit = 60): Promise<MarketResp<NorthFlow>> {
-  const resp = await fetch(build('/api/market/north?limit=' + limit))
-  return resp.json()
+  return cached(CACHE_KEYS.north(limit), CACHE_TTL_MS.market, () =>
+    getJson<MarketResp<NorthFlow>>('/api/market/north', { limit }),
+  )
 }
 
 export async function fetchLhb(date: string, limit = 50): Promise<MarketResp<LhbItem>> {
-  const resp = await fetch(build('/api/market/lhb?date=' + date + '&limit=' + limit))
-  return resp.json()
+  return cached(CACHE_KEYS.lhb(date, limit), CACHE_TTL_MS.market, () =>
+    getJson<MarketResp<LhbItem>>('/api/market/lhb', { date, limit }),
+  )
 }
 
 export async function fetchF10(code: string, kind = 'indicator', limit = 40): Promise<MarketResp<Record<string, any>>> {
-  const p = new URLSearchParams({ code, kind })
-  if (limit) p.set('limit', String(limit))
-  const resp = await fetch(build('/api/market/f10?' + p.toString()))
-  return resp.json()
+  return cached(CACHE_KEYS.f10(code, kind, limit), CACHE_TTL_MS.market, () =>
+    getJson<MarketResp<Record<string, any>>>('/api/market/f10', { code, kind, limit }),
+  )
 }

@@ -52,7 +52,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { onShow } from '@dcloudio/uni-app'
+import { onShow, onPullDownRefresh } from '@dcloudio/uni-app'
 import TabBarComp from '@/custom-tab-bar/index.vue'
 import { fetchFundFlow, type FundFlowResp, type FundType } from '@/api/fundflow'
 import DateBanner from './components/DateBanner.vue'
@@ -71,11 +71,12 @@ const activeType = ref<FundType>('joint')
 
 const activeMetric = computed(() => (data.value ? data.value.metric[activeType.value] : undefined))
 
-async function load() {
+async function load(force = false) {
   loading.value = true
   error.value = ''
   try {
-    const r = await fetchFundFlow()
+    // 默认走 60s 缓存；用户点「重试」时穿透缓存强制拉最新
+    const r = await fetchFundFlow({ force })
     if (!r?.ok) throw new Error(r?.error || '加载失败')
     data.value = r
     const q = getQueryType()
@@ -86,8 +87,13 @@ async function load() {
     loading.value = false
   }
 }
+
+onPullDownRefresh(() => {
+  load(true)
+})
+
 function retry() {
-  load()
+  load(true)
 }
 
 // 切子 tab：零请求（纯前端高亮），并同步 URL query（H5）

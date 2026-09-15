@@ -1,7 +1,12 @@
 // api/portfolio.ts — 持仓分析 / 推荐对比 / 截图识别 后端调用
-import { env } from '@/utils/env'
-
-const API_BASE = (env.API_BASE_URL && env.API_BASE_URL.length > 0) ? env.API_BASE_URL : ''
+//
+// 2026-09-15 重构：原先这里自带一套 request()（硬编码 10s 超时、无重试、不校验 HTTP 状态码），
+// 与 market.ts 的裸 fetch、news 页的裸 uni.request 三套并存。
+// 现统一收敛到 utils/request.ts：URL 拼接 / 超时 / 失败重试 / HTTP 状态校验 / 错误归一化全部复用同一实现。
+// 原 request(path, { method, body, timeoutMs }) 调用点已整体改名为 request(...)，参数语义不变。
+import { request } from '@/utils/request'
+import { cached, invalidate } from '@/utils/useCache'
+import { CACHE_KEYS, CACHE_TTL_MS } from '@/utils/cacheConfig'
 
 // ---- 类型 ----
 export interface Position {
@@ -272,41 +277,26 @@ export interface StockReportItem {
   updated_at: number
 }
 
-// ---- 通用 fetch ----
-async function jget<T>(path: string, opts: { method?: string; body?: any; timeoutMs?: number } = {}): Promise<T> {
-  const url = `${API_BASE}${path}`
-  return new Promise((resolve, reject) => {
-    uni.request({
-      url,
-      method: (opts.method || 'GET') as any,
-      data: opts.body,
-      timeout: opts.timeoutMs || 10000,
-      header: { 'Content-Type': 'application/json' },
-      success: (res: any) => {
-        try {
-          const data = typeof res.data === 'string' ? JSON.parse(res.data) : res.data
-          resolve(data as T)
-        } catch (e) {
-          reject(e as Error)
-        }
-      },
-      fail: (err: any) => reject(new Error(err?.errMsg || err?.message || 'request fail')),
-    })
-  })
-}
-
 // ---- Holdings ----
-export async function listHoldings(): Promise<Holding[]> {
-  const r: any = await jget('/api/holdings')
-  return r.items || []
+// 持仓被多个页面共用（news 页筛相关新闻、portfolio 页展示），缓存 30s 减少重复往返。
+// ⚠️ 任何写操作后必须 invalidate(CACHE_KEYS.holdings)，否则会读到旧持仓。
+export async function listHoldings(opts?: { force?: boolean }): Promise<Holding[]> {
+  const r: any = await cached<any>(CACHE_KEYS.holdings, CACHE_TTL_MS.holdings, () => request('/api/holdings'), {
+    force: !!opts?.force,
+  })
+  return r?.items || []
 }
 
 export async function upsertHolding(body: { stock_code: string; short_name?: string; market?: string; shares: number; cost_basis: number }) {
-  return jget('/api/holdings', { method: 'POST', body })
+  const r = await request('/api/holdings', { method: 'POST', body })
+  invalidate(CACHE_KEYS.holdings)
+  return r
 }
 
 export async function deleteHolding(code: string) {
-  return jget(`/api/holdings/${code}`, { method: 'DELETE' })
+  const r = await request(`/api/holdings/${code}`, { method: 'DELETE' })
+  invalidate(CACHE_KEYS.holdings)
+  return r
 }
 
 // 持仓富化入库：拍照/文件/手动 → 自动补全代码/名称/现价/盈亏
@@ -318,41 +308,44 @@ export async function importHoldings(body: {
   text?: string
   items?: { code?: string; name?: string; cost: number; shares: number }[]
 }) {
-  return jget('/api/portfolio/holdings/import', { method: 'POST', body, timeoutMs: 40000 })
+  const r = await request('/api/portfolio/holdings/import', { method: 'POST', body, timeout: 40000 })
+  invalidate(CACHE_KEYS.holdings)
+  return r
 }
 
 // 代码→名称/现价 实时补全（腾讯行情），给拟新买标的在输入后自动补名称
 export async function resolveStockCode(code: string): Promise<{ ok: boolean; name: string; price: number | null; code: string }> {
-  return jget('/api/portfolio/resolve', { method: 'POST', body: { code }, timeoutMs: 8000 })
+  return request('/api/portfolio/resolve', { method: 'POST', body: { code }, timeout: 8000 })
 }
 
 // ---- Roles + Recommendations ----
+// 角色字典基本静态（很少变更），缓存 10min
 export async function listRoles(): Promise<Record<string, string>> {
-  const r: any = await jget('/api/portfolio/roles')
-  return r.roles || {}
+  const r: any = await cached<any>(CACHE_KEYS.roles, CACHE_TTL_MS.roles, () => request('/api/portfolio/roles'))
+  return r?.roles || {}
 }
 
 export async function listRecommendations(role?: string | null): Promise<Recommendation[]> {
   const path = role ? `/api/portfolio/recommendations?role=${encodeURIComponent(role)}` : '/api/portfolio/recommendations'
-  const r: any = await jget(path)
+  const r: any = await request(path)
   return r.items || []
 }
 
 export async function bulkSetRecommendations(role: string, items: { stock_code: string; stock_name?: string; weight: number; note?: string }[]) {
-  return jget('/api/portfolio/recommendations', { method: 'POST', body: { role, items } })
+  return request('/api/portfolio/recommendations', { method: 'POST', body: { role, items } })
 }
 
 export async function deleteRecommendation(role: string, code: string) {
-  return jget(`/api/portfolio/recommendations/${encodeURIComponent(role)}/${encodeURIComponent(code)}`, { method: 'DELETE' })
+  return request(`/api/portfolio/recommendations/${encodeURIComponent(role)}/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
 
 export async function compareWithRole(role: string): Promise<CompareResult> {
-  return jget(`/api/portfolio/recommendations/compare?role=${encodeURIComponent(role)}`)
+  return request(`/api/portfolio/recommendations/compare?role=${encodeURIComponent(role)}`)
 }
 
 // ---- OCR 截图识别 ----
 export async function extractFromImages(images: string[]): Promise<ExtractResult> {
-  return jget('/api/portfolio/extract', { method: 'POST', body: { images }, timeoutMs: 30000 })
+  return request('/api/portfolio/extract', { method: 'POST', body: { images }, timeout: 30000 })
 }
 
 // ---- Analyze 主入口 ----
@@ -365,7 +358,7 @@ export async function analyzePortfolio(body: {
   fee_confirmed?: boolean
   price_confirmed_codes?: string[]
 }): Promise<AnalyzeReport> {
-  return jget('/api/portfolio/analyze', { method: 'POST', body, timeoutMs: 15000 })
+  return request('/api/portfolio/analyze', { method: 'POST', body, timeout: 15000 })
 }
 
 // ---- AI 研报解读（已持仓标的，十二模块） ----
@@ -374,7 +367,7 @@ export async function researchReport(body: {
   stock_name?: string
   query?: string
 }): Promise<ResearchReport> {
-  return jget('/api/portfolio/research', { method: 'POST', body, timeoutMs: 20000 })
+  return request('/api/portfolio/research', { method: 'POST', body, timeout: 20000 })
 }
 
 // ---- 研报 AI 精读（外部整篇研报入库 + 提炼） ----
@@ -385,15 +378,15 @@ export async function ingestReport(body: {
   source_url?: string
   raw_text: string
 }): Promise<RefinedReport> {
-  return jget('/api/research/ingest', { method: 'POST', body, timeoutMs: 20000 })
+  return request('/api/research/ingest', { method: 'POST', body, timeout: 20000 })
 }
 
 export async function listReports(): Promise<{ ok: boolean; items: RefinedReport[] }> {
-  return jget('/api/research/reports')
+  return request('/api/research/reports')
 }
 
 export async function deleteReport(id: string): Promise<{ ok: boolean }> {
-  return jget(`/api/research/reports/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  return request(`/api/research/reports/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 // 已持仓标的研报持久化
@@ -401,42 +394,42 @@ function parseReport(r: any): ResearchReport | null {
   return r && r.report ? (r.report as ResearchReport) : null
 }
 export async function saveStockReport(stock_code: string, stock_name: string, report: ResearchReport): Promise<{ ok: boolean }> {
-  return jget('/api/research/stock-report', { method: 'POST', body: { stock_code, stock_name, report }, timeoutMs: 15000 })
+  return request('/api/research/stock-report', { method: 'POST', body: { stock_code, stock_name, report }, timeout: 15000 })
 }
 
 export async function listStockReports(): Promise<{ ok: boolean; items: StockReportItem[] }> {
-  const r: any = await jget('/api/research/stock-reports')
+  const r: any = await request('/api/research/stock-reports')
   return { ok: !!r.ok, items: (r.items || []).map((it: any) => ({ ...it, report: parseReport(it) })) }
 }
 
 export async function deleteStockReport(code: string): Promise<{ ok: boolean }> {
-  return jget(`/api/research/stock-reports/${encodeURIComponent(code)}`, { method: 'DELETE' })
+  return request(`/api/research/stock-reports/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
 
 // ---- 账户与保证金账本 ----
 export async function getLedger(): Promise<LedgerState> {
-  return jget('/api/portfolio/ledger')
+  return request('/api/portfolio/ledger')
 }
 
 export async function appendLedgerEvent(type: string, payload: any): Promise<LedgerState> {
-  return jget('/api/portfolio/ledger', { method: 'POST', body: { type, payload }, timeoutMs: 15000 })
+  return request('/api/portfolio/ledger', { method: 'POST', body: { type, payload }, timeout: 15000 })
 }
 
 export async function previewLedgerEvent(type: string, amount?: number, fee_rate_wan?: number): Promise<{ ok: boolean; preview: LedgerPreview; snapshot: LedgerSnapshot }> {
-  return jget('/api/portfolio/ledger/preview', { method: 'POST', body: { type, amount, fee_rate_wan }, timeoutMs: 15000 })
+  return request('/api/portfolio/ledger/preview', { method: 'POST', body: { type, amount, fee_rate_wan }, timeout: 15000 })
 }
 
 export async function clearLedger(): Promise<{ ok: boolean }> {
-  return jget('/api/portfolio/ledger', { method: 'DELETE' })
+  return request('/api/portfolio/ledger', { method: 'DELETE' })
 }
 
 // ---- 持仓方案跟踪 ----
 export async function listPlans(): Promise<{ ok: boolean; items: PlanItem[] }> {
-  return jget('/api/portfolio/plans')
+  return request('/api/portfolio/plans')
 }
 
 export async function deletePlan(code: string): Promise<{ ok: boolean }> {
-  return jget(`/api/portfolio/plans/${encodeURIComponent(code)}`, { method: 'DELETE' })
+  return request(`/api/portfolio/plans/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
 
 // 显式「确认并加入跟踪」：把分析得到的方案写入持仓方案跟踪
@@ -447,7 +440,7 @@ export async function addPlan(item: {
   atr?: number
   plan_json: any
 }): Promise<{ ok: boolean; persisted?: number }> {
-  return jget('/api/portfolio/plans', { method: 'POST', body: item })
+  return request('/api/portfolio/plans', { method: 'POST', body: item })
 }
 
 // ---- 持仓产业链画像（可编辑，间接关联匹配用） ----
@@ -467,15 +460,15 @@ export interface HoldingProfile {
 }
 
 export async function listHoldingProfiles(): Promise<{ ok: boolean; profiles: HoldingProfile[] }> {
-  return jget('/api/portfolio/holding-profiles')
+  return request('/api/portfolio/holding-profiles')
 }
 
 export async function upsertHoldingProfile(body: Partial<HoldingProfile> & { stock_code: string }): Promise<{ ok: boolean }> {
-  return jget('/api/portfolio/holding-profiles', { method: 'POST', body })
+  return request('/api/portfolio/holding-profiles', { method: 'POST', body })
 }
 
 export async function deleteHoldingProfile(code: string): Promise<{ ok: boolean }> {
-  return jget(`/api/portfolio/holding-profiles/${encodeURIComponent(code)}`, { method: 'DELETE' })
+  return request(`/api/portfolio/holding-profiles/${encodeURIComponent(code)}`, { method: 'DELETE' })
 }
 
 // ============================================================================
@@ -510,7 +503,7 @@ export async function searchFxbaogao(params: {
   if (params.startTime) q.set('startTime', params.startTime)
   if (params.pageNum) q.set('pageNum', String(params.pageNum))
   if (params.orgNames?.length) q.set('orgNames', params.orgNames.join(','))
-  return jget(`/api/research/fxbaogao/search?${q.toString()}`, { timeoutMs: 30000 })
+  return request(`/api/research/fxbaogao/search?${q.toString()}`, { timeout: 30000 })
 }
 export interface FxbaogaoParagraphsResp {
   ok: boolean
@@ -522,10 +515,10 @@ export interface FxbaogaoParagraphsResp {
 export async function getFxbaogaoParagraphs(params: { reportId: number; keyword?: string }): Promise<FxbaogaoParagraphsResp> {
   const q = new URLSearchParams({ reportId: String(params.reportId) })
   if (params.keyword) q.set('keyword', params.keyword)
-  return jget(`/api/research/fxbaogao/paragraphs?${q.toString()}`, { timeoutMs: 20000 })
+  return request(`/api/research/fxbaogao/paragraphs?${q.toString()}`, { timeout: 20000 })
 }
 export async function getFxbaogaoPdfUrl(reportId: number): Promise<{ ok: boolean; reportId: number; url: string; viewUrl: string }> {
-  return jget(`/api/research/fxbaogao/pdf-url?reportId=${reportId}`, { timeoutMs: 20000 })
+  return request(`/api/research/fxbaogao/pdf-url?reportId=${reportId}`, { timeout: 20000 })
 }
 export async function ingestFxbaogaoReport(params: { reportId: number; industry?: string }): Promise<{
   ok: boolean
@@ -535,7 +528,7 @@ export async function ingestFxbaogaoReport(params: { reportId: number; industry?
   raw_text_chars?: number
   error?: string
 }> {
-  return jget('/api/research/fxbaogao/ingest', { method: 'POST', body: params, timeoutMs: 120000 })
+  return request('/api/research/fxbaogao/ingest', { method: 'POST', body: params, timeout: 120000 })
 }
 export interface FxbaogaoAutoSearchItem {
   code: string
@@ -548,10 +541,10 @@ export async function autoSearchFxbaogaoForHoldings(params: {
   holdings: { stock_code: string; short_name?: string }[]
   timeRange?: string
 }): Promise<{ ok: boolean; results: FxbaogaoAutoSearchItem[]; timeRange: string }> {
-  return jget('/api/research/fxbaogao/auto-search-holdings', { method: 'POST', body: params, timeoutMs: 90000 })
+  return request('/api/research/fxbaogao/auto-search-holdings', { method: 'POST', body: params, timeout: 90000 })
 }
 export async function getFxbaogaoStatus(): Promise<{ ok: boolean; fxbaogao: { available: boolean; keyTail: string } }> {
-  return jget('/api/research/fxbaogao/status')
+  return request('/api/research/fxbaogao/status')
 }
 
 // ---- 分片同步入库（全量研报 → 数据库） ----
@@ -579,11 +572,11 @@ export interface FxbaogaoSyncResult {
 // 触发同步（异步，轮询 status 拿进度）
 export async function syncFxbaogaoAll(windowDays?: number): Promise<FxbaogaoSyncResult> {
   const q = windowDays ? `?windowDays=${windowDays}` : ''
-  return jget(`/api/research/fxbaogao/sync${q}`, { method: 'POST', timeoutMs: 15000 })
+  return request(`/api/research/fxbaogao/sync${q}`, { method: 'POST', timeout: 15000 })
 }
 // 触发后台 AI 精读批次（fire-and-forget：服务端有 already_running 互斥）
 export async function triggerFxbaogaoRefine(limit = 10): Promise<{ ok: boolean; started?: boolean; reason?: string }> {
-  return jget(`/api/research/fxbaogao/refine-batch?limit=${limit}`, { method: 'POST', body: {}, timeoutMs: 10000 })
+  return request(`/api/research/fxbaogao/refine-batch?limit=${limit}`, { method: 'POST', body: {}, timeout: 10000 })
 }
 // 单条研报的 AI 精读结果（未精读时 refined 为 null）
 export interface FxbaogaoExtract {
@@ -614,7 +607,7 @@ export interface FxbaogaoAiResult {
   extract?: FxbaogaoExtract
 }
 export async function getFxbaogaoAi(reportId: number): Promise<{ ok: boolean; reportId: number; refined: FxbaogaoAiResult | null }> {
-  return jget(`/api/research/fxbaogao/ai/${reportId}`, { timeoutMs: 15000 })
+  return request(`/api/research/fxbaogao/ai/${reportId}`, { timeout: 15000 })
 }
 // 精读库按个股检索：LLM 提取的标的（代码/名称）命中的已精读研报（含精读结果，免重复精读）
 export interface FxbaogaoExtractItem {
@@ -641,11 +634,11 @@ export async function searchFxbaogaoExtract(codes: string[], names: string[]): P
   const q = new URLSearchParams()
   if (codes.length) q.set('codes', codes.join(','))
   if (names.length) q.set('names', names.join(','))
-  return jget(`/api/research/fxbaogao/search-extract?${q.toString()}`, { timeoutMs: 15000 })
+  return request(`/api/research/fxbaogao/search-extract?${q.toString()}`, { timeout: 15000 })
 }
 // 同步进度 + 库存量
 export async function getFxbaogaoSyncStatus(): Promise<FxbaogaoSyncResult> {
-  return jget('/api/research/fxbaogao/sync', { timeoutMs: 10000 })
+  return request('/api/research/fxbaogao/sync', { timeout: 10000 })
 }
 // 从库分页读取全量研报（startMs/endMs 毫秒）
 export interface DbReportItem {
@@ -675,7 +668,7 @@ export async function listFxbaogaoDbReports(params: {
   if (params.pageSize) q.set('pageSize', String(params.pageSize))
   if (params.startMs) q.set('startMs', String(params.startMs))
   if (params.endMs) q.set('endMs', String(params.endMs))
-  return jget(`/api/research/fxbaogao/reports?${q.toString()}`, { timeoutMs: 15000 })
+  return request(`/api/research/fxbaogao/reports?${q.toString()}`, { timeout: 15000 })
 }
 
 // ============================================================================
@@ -725,14 +718,14 @@ export async function listAllReports(params: {
   if (params.keywords) q.set('keywords', params.keywords)
   if (params.startTime) q.set('startTime', params.startTime)
   if (params.pageNum) q.set('pageNum', String(params.pageNum))
-  return jget(`/api/research/fxbaogao/search?${q.toString()}`, { timeoutMs: 30000 })
+  return request(`/api/research/fxbaogao/search?${q.toString()}`, { timeout: 30000 })
 }
 export async function listHoldingReports(params: {
   holdings: { stock_code: string; short_name?: string }[]
   timeRange?: string
   maxPerHolding?: number
 }): Promise<{ ok: boolean; items: HoldingReportItem[]; count: number; timeRange: string }> {
-  return jget('/api/research/reports/by-holdings', { method: 'POST', body: params, timeoutMs: 90000 })
+  return request('/api/research/reports/by-holdings', { method: 'POST', body: params, timeout: 90000 })
 }
 
 export interface DeepSearchByTopic {
@@ -746,7 +739,7 @@ export async function deepSearchForHoldings(params: {
   topics?: ('industry' | 'supplier' | 'buyer' | 'regulation')[]
   timeRange?: string
 }): Promise<{ ok: boolean; results: DeepSearchByTopic[]; timeRange: string; topics: string[] }> {
-  return jget('/api/research/fxbaogao/auto-search-holdings-deep', { method: 'POST', body: params, timeoutMs: 120000 })
+  return request('/api/research/fxbaogao/auto-search-holdings-deep', { method: 'POST', body: params, timeout: 120000 })
 }
 
 // 全部研报列表（带日期/机构筛选）
@@ -760,7 +753,7 @@ export async function getResearchReportsFiltered(params: { dateRange?: string; i
   const q = new URLSearchParams()
   if (params.dateRange) q.set('dateRange', params.dateRange)
   if (params.institution) q.set('institution', params.institution)
-  return jget(`/api/research/reports/filtered?${q.toString()}`)
+  return request(`/api/research/reports/filtered?${q.toString()}`)
 }
 export async function getResearchReportsGroups(): Promise<{
   ok: boolean
@@ -768,7 +761,7 @@ export async function getResearchReportsGroups(): Promise<{
   byBroker: { broker: string; n: number }[]
   total: number
 }> {
-  return jget('/api/research/reports/groups')
+  return request('/api/research/reports/groups')
 }
 export async function getResearchReportView(id: string): Promise<{
   ok: boolean
@@ -779,5 +772,5 @@ export async function getResearchReportView(id: string): Promise<{
   broker?: string
   error?: string
 }> {
-  return jget(`/api/research/reports/${encodeURIComponent(id)}/view`, { timeoutMs: 30000 })
+  return request(`/api/research/reports/${encodeURIComponent(id)}/view`, { timeout: 30000 })
 }

@@ -1,8 +1,9 @@
 // api/fundflow.ts — 资金流向（资金动态）数据封装，风格仿 market.ts
 // v2：真实数据（腾讯行业板块主力净流入 + 东财北向日度成交），口径说明随响应下发
-import { env } from '@/utils/env'
-
-const API_BASE = env.API_BASE_URL && env.API_BASE_URL.length > 0 ? env.API_BASE_URL : ''
+// 2026-09-15 重构：裸 fetch → 统一 request 层（小程序端可用）+ useCache 缓存。
+import { getJson } from '@/utils/request'
+import { cached } from '@/utils/useCache'
+import { CACHE_KEYS, CACHE_TTL_MS } from '@/utils/cacheConfig'
 
 export type FundType = 'joint' | 'public_fund' | 'stabilization' | 'foreign'
 
@@ -63,13 +64,10 @@ export interface FundFlowResp {
   error?: string
 }
 
-function build(path: string): string {
-  if (API_BASE) return API_BASE.replace(/\/$/, '') + path
-  return path
-}
-
 // 单一全量拉取：一次拿 4 类资金口径的 sankey + 板块/个股榜，子 tab 切换零请求（纯前端高亮）
-export async function fetchFundFlow(): Promise<FundFlowResp> {
-  const resp = await fetch(build('/api/fundflow'))
-  return resp.json()
+// 该接口返回体较大且盘中变化不频繁，缓存 60s；下拉刷新传 force 强制穿透。
+export async function fetchFundFlow(opts?: { force?: boolean }): Promise<FundFlowResp> {
+  return cached(CACHE_KEYS.fundflow, CACHE_TTL_MS.fundflow, () => getJson<FundFlowResp>('/api/fundflow'), {
+    force: !!opts?.force,
+  })
 }

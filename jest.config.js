@@ -4,6 +4,10 @@ module.exports = {
   roots: ['<rootDir>/src'],
   testMatch: ['**/?(*.)+(test).ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'json'],
+  // 与 vite/tsconfig 的 @/* 别名保持一致，否则测试里 import '@/utils/...' 无法解析
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/src/$1',
+  },
   transform: {
     '^.+\\.tsx?$': [
       'ts-jest',
